@@ -1,0 +1,48 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="card" style="padding:14px;">
+  <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px;">
+    <div style="font-weight:800;">Questionnaires</div>
+    <div class="text-sm" style="color:#64748b;">Mock data</div>
+  </div>
+
+  <div style="overflow:auto; border-radius:12px; border:1px solid rgba(15,23,42,.08);">
+    <table class="table" style="width:100%;">
+      <thead>
+        <tr>
+          <th>Child</th>
+          <th>Questionnaire</th>
+          <th style="width:140px;">Status</th>
+          <th style="width:160px;">Date</th>
+          <th style="width:160px;"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td style="font-weight:700;">{{ r.child }}</td>
+          <td>{{ r.name }}</td>
+          <td>
+            {% if r.status == 'COMPLETED' %}
+              <span class="pill ok">Completed</span>
+            {% elif r.status == 'PENDING' %}
+              <span class="pill warn">Pending</span>
+            {% else %}
+              <span class="pill">In review</span>
+            {% endif %}
+          </td>
+          <td class="text-sm" style="color:#64748b;">{{ r.when }}</td>
+          <td style="text-align:right;">
+            <a class="btn" href="#" onclick="return false;">Open</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="text-sm" style="color:#64748b; margin-top:10px;">
+  Tip: later you can store responses per child and surface them in the Timeline Journey.
+</div>
+{% endblock %}

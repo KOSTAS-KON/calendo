@@ -1,0 +1,131 @@
+{% extends "layout.html" %}
+{% set header = "Therapist" %}
+{% block content %}
+
+<div class="flex items-start justify-between gap-3 mb-4">
+  <div>
+    <div class="text-xs text-slate-500">Therapist</div>
+    <div class="text-2xl font-extrabold">{{ t.name }}</div>
+    <div class="text-sm text-slate-600">ID {{ t.id }}{% if t.role %} · {{ t.role }}{% endif %}{% if t.phone %} · {{ t.phone }}{% endif %}</div>
+  </div>
+  <div class="flex gap-2">
+    <a class="btn" href="{{ rp }}/therapists">Back to list</a>
+  </div>
+</div>
+
+<div class="grid grid-cols-1 xl:grid-cols-3 gap-5">
+  <section class="xl:col-span-2">
+    <div class="subpanel">
+      <div class="subhead flex items-center justify-between">
+        <div>Weekly availability</div>
+        <div class="flex gap-2">
+          <span class="pill p-gray">Weekly hours: <b>{{ weekly_hours }}</b></span>
+          <span class="pill p-gray">{{ month_label }}: <b>{{ month_hours }}</b></span>
+        </div>
+      </div>
+      <div class="subbody">
+        <form method="post" action="{{ rp }}/therapists/{{ t.id }}/update" class="space-y-4">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label class="label">Name</label>
+              <input name="name" class="input" value="{{ t.name }}" required />
+            </div>
+            <div>
+              <label class="label">Role</label>
+              <input name="role" class="input" value="{{ t.role or '' }}" placeholder="e.g., Speech therapist" />
+            </div>
+            <div>
+              <label class="label">Phone</label>
+              <input name="phone" class="input" value="{{ t.phone or '' }}" placeholder="e.g., +30 69..." />
+            </div>
+            <div>
+              <label class="label">Email</label>
+              <input name="email" class="input" value="{{ t.email or '' }}" placeholder="e.g., name@clinic.gr" />
+            </div>
+          </div>
+
+          <div class="pt-2 border-t border-slate-200"></div>
+
+          <div class="text-sm text-slate-600 mb-2">Set up to two working blocks per day (e.g., 09:00–13:00 and 14:00–18:00).</div>
+
+          <div class="tablewrap">
+            <table class="apptable">
+              <thead>
+                <tr>
+                  <th>Day</th>
+                  <th>Block 1 start</th>
+                  <th>Block 1 end</th>
+                  <th>Block 2 start</th>
+                  <th>Block 2 end</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for key, label in weekdays %}
+                  {% set b1 = (avail.get(key, [])|first) if avail.get(key) else None %}
+                  {% set b2 = (avail.get(key, [])[1]) if avail.get(key) and (avail.get(key)|length > 1) else None %}
+                  <tr>
+                    <td class="font-semibold">{{ label }}</td>
+                    <td><input class="input input-sm" name="{{ key }}_start1" placeholder="09:00" value="{{ b1.start if b1 else '' }}" /></td>
+                    <td><input class="input input-sm" name="{{ key }}_end1" placeholder="13:00" value="{{ b1.end if b1 else '' }}" /></td>
+                    <td><input class="input input-sm" name="{{ key }}_start2" placeholder="14:00" value="{{ b2.start if b2 else '' }}" /></td>
+                    <td><input class="input input-sm" name="{{ key }}_end2" placeholder="18:00" value="{{ b2.end if b2 else '' }}" /></td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+
+          <div class="flex justify-end">
+            <button class="btn" type="submit">Save therapist</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <aside>
+    <div class="card-soft">
+      <div class="font-extrabold mb-2">Annual leave</div>
+      <div class="text-sm text-slate-600 mb-3">Leave days are excluded from monthly working hours and can be used for planning.</div>
+
+      <form method="post" action="{{ rp }}/therapists/{{ t.id }}/leave/add" class="space-y-3">
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="label">Start</label>
+            <input type="date" name="start" class="input" required />
+          </div>
+          <div>
+            <label class="label">End</label>
+            <input type="date" name="end" class="input" required />
+          </div>
+        </div>
+        <div>
+          <label class="label">Reason</label>
+          <input name="reason" class="input" placeholder="e.g., Vacation" />
+        </div>
+        <button class="btn w-full" type="submit">Add leave</button>
+      </form>
+
+      <div class="pt-3 mt-3 border-t border-slate-200"></div>
+
+      <div class="space-y-2">
+        {% for l in leaves %}
+          <div class="flex items-center justify-between gap-2">
+            <div class="text-sm">
+              <div class="font-semibold">{{ l.start }} → {{ l.end }}</div>
+              {% if l.reason %}<div class="text-xs text-slate-500">{{ l.reason }}</div>{% endif %}
+            </div>
+            <form method="post" action="{{ rp }}/therapists/{{ t.id }}/leave/remove">
+              <input type="hidden" name="idx" value="{{ loop.index0 }}" />
+              <button class="btn btn-sm" type="submit">Remove</button>
+            </form>
+          </div>
+        {% else %}
+          <div class="text-sm text-slate-500">No leave entries.</div>
+        {% endfor %}
+      </div>
+    </div>
+  </aside>
+</div>
+
+{% endblock %}

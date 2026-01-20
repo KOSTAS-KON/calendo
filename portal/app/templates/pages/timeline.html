@@ -1,0 +1,177 @@
+{% extends "layout.html" %}
+{% set header = "Timeline Journey" %}
+{% block content %}
+
+{# Journey icons (kept lightweight; no external icon lib) #}
+{% set icons = {
+  'VISIT':'📅',
+  'PAYMENT':'💳',
+  'INVOICE_ISSUED':'🧾',
+  'EXERCISE':'🧠',
+  'COMMUNICATION':'💬',
+  'PARENT_FEEDBACK':'💬',
+  'APPT_CANCELLED':'⛔',
+  'NOTE':'📝',
+  'OTHER':'📝'
+} %}
+
+<div class="grid grid-cols-1 xl:grid-cols-3 gap-5">
+  <section class="xl:col-span-2">
+    <div class="flex items-center justify-between gap-3 mb-4">
+      <div>
+        <div class="text-xs text-slate-500">Virtual patient journey</div>
+        <div class="text-lg font-extrabold">Events across visits, invoices, payments, exercises, communications</div>
+      </div>
+      <div class="flex gap-2">
+        <form method="get" action="{{ rp }}/timeline" class="rowform">
+          <select name="child_id" class="input input-sm" onchange="this.form.submit()">
+            <option value="">All children</option>
+            {% for c in children %}
+              <option value="{{ c.id }}" {% if selected_child_id == c.id %}selected{% endif %}>{{ c.full_name }}</option>
+            {% endfor %}
+          </select>
+          <select name="event_type" class="input input-sm" onchange="this.form.submit()">
+            <option value="ALL" {% if selected_event_type == 'ALL' %}selected{% endif %}>All types</option>
+            {% for t in types %}
+              <option value="{{ t }}" {% if selected_event_type == t %}selected{% endif %}>{{ t }}</option>
+            {% endfor %}
+          </select>
+        </form>
+      </div>
+    </div>
+
+    <div class="t-toolbar">
+      <button type="button" class="btn btn-sm t-btn-light" data-action="timeline-expand">Expand all</button>
+      <button type="button" class="btn btn-sm t-btn-light" data-action="timeline-collapse">Collapse all</button>
+    </div>
+
+    <div class="t-groups" data-component="timeline-groups">
+      {% set ns = namespace(cur_month=None) %}
+      {% for e in events %}
+        {% set month_key = e.occurred_at.strftime("%Y-%m") %}
+        {% set month_label = e.occurred_at.strftime("%B %Y") %}
+
+        {% if month_key != ns.cur_month %}
+          {% if not loop.first %}
+              </div>
+            </div>
+          </details>
+          {% endif %}
+
+          {% set ns.cur_month = month_key %}
+          <details class="t-group" open data-month="{{ month_key }}">
+            <summary class="t-group-summary">
+              <div class="t-group-left">
+                <div class="t-group-title">{{ month_label }}</div>
+                <div class="t-group-sub">
+                  <span class="t-group-count" data-role="t-group-count">—</span>
+                  <span class="text-xs text-slate-400">events</span>
+                </div>
+              </div>
+              <div class="t-group-right">
+                <span class="pill p-gray">{{ (selected_event_type or 'ALL') }}</span>
+                {% if selected_child_id %}
+                  <span class="pill p-gray">Filtered child</span>
+                {% endif %}
+              </div>
+            </summary>
+            <div class="t-group-body">
+              <div class="timeline compact">
+        {% endif %}
+
+        <div class="t-item">
+          <div class="t-dot t-{{ (e.event_type or 'OTHER')|lower }}"></div>
+          <div class="t-card">
+            <div class="t-head">
+              <div class="t-title-row">
+                <div class="t-badge t-{{ (e.event_type or 'OTHER')|lower }}" title="{{ e.event_type }}">
+                  {{ icons.get((e.event_type or 'OTHER'), '📝') }}
+                </div>
+                <div class="t-title">{{ e.title }}</div>
+              </div>
+              <div class="t-meta">
+                <span class="pill p-gray">{{ e.event_type }}</span>
+                <span class="text-xs text-slate-500">{{ e.occurred_at.strftime("%b %d, %Y %I:%M %p") }}</span>
+                <span class="text-xs text-slate-500">·</span>
+                <a class="link" href="{{ rp }}/children/{{ e.child_id }}">{{ e.child.full_name }}</a>
+              </div>
+            </div>
+            {% if e.details %}
+              <div class="t-body">{{ e.details }}</div>
+            {% endif %}
+          </div>
+        </div>
+
+      {% else %}
+        <div class="text-sm text-slate-500">No timeline events yet. Use the panel on the right to add mock events.</div>
+      {% endfor %}
+
+      {% if events and events|length > 0 %}
+              </div>
+            </div>
+          </details>
+      {% endif %}
+    </div>
+  </section>
+
+  <aside class="card-soft space-y-6">
+    <div>
+      <div class="font-extrabold mb-2">Add timeline event</div>
+      <div class="text-sm text-slate-600 mb-3">
+        Use this for demos (invoice issued, payment received, exercise assigned, parent feedback, cancellations...).
+      </div>
+
+      <form method="post" action="{{ rp }}/timeline/create" class="space-y-3">
+        <div>
+          <label class="label">Child</label>
+          <select name="child_id" class="input" required>
+            {% for c in children %}
+              <option value="{{ c.id }}" {% if selected_child_id == c.id %}selected{% endif %}>{{ c.full_name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div>
+          <label class="label">Event type</label>
+          <select name="event_type" class="input" required>
+            {% for t in types %}
+              <option value="{{ t }}">{{ t }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div>
+          <label class="label">Occurred at</label>
+          <input type="datetime-local" name="occurred_at" class="input" required />
+          <div class="text-xs text-slate-500 mt-1">Tip: set to invoice date / payment date / visit time, etc.</div>
+        </div>
+
+        <div>
+          <label class="label">Title</label>
+          <input name="title" class="input" placeholder="e.g. Invoice issued for March" required />
+        </div>
+
+        <div>
+          <label class="label">Details (optional)</label>
+          <textarea name="details" class="input" rows="5" placeholder="Short description to show in the timeline"></textarea>
+        </div>
+
+        <button class="btn w-full" type="submit">Add event</button>
+      </form>
+    </div>
+
+    <div class="legend">
+      <div class="legend-title">Legend</div>
+      <div class="legend-grid">
+        <div class="leg"><span class="dot" style="background:#2563eb"></span> VISIT</div>
+        <div class="leg"><span class="dot" style="background:#22c55e"></span> PAYMENT</div>
+        <div class="leg"><span class="dot" style="background:#eab308"></span> INVOICE_ISSUED</div>
+        <div class="leg"><span class="dot" style="background:#a855f7"></span> EXERCISE</div>
+        <div class="leg"><span class="dot" style="background:#0ea5e9"></span> COMMUNICATION / FEEDBACK</div>
+        <div class="leg"><span class="dot" style="background:#f97316"></span> CANCELLATION</div>
+      </div>
+    </div>
+  </aside>
+</div>
+
+{% endblock %}

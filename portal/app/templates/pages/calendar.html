@@ -1,0 +1,485 @@
+{% extends "layout.html" %}
+{% set header = "Calendar" %}
+{% block content %}
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.css">
+<script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js"></script>
+
+<form method="get" action="{{ rp }}/calendar" class="flex flex-wrap items-end gap-3 mb-4">
+  <div>
+    <label class="label">Filter by child</label>
+    <select name="child_id" class="input" onchange="this.form.submit()">
+      <option value="">All</option>
+      {% for c in children %}
+        <option value="{{ c.id }}" {% if selected_child_id == c.id %}selected{% endif %}>{{ c.full_name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <noscript><button class="btn" type="submit">Apply</button></noscript>
+</form>
+
+<div class="legend">
+  <div class="legend-title">Legend</div>
+  <div class="legend-grid">
+    <div class="leg"><span class="dot" style="background:#16a34a"></span> Appointment Attended</div>
+    <div class="leg"><span class="dot" style="background:#dc2626"></span> Appointment Missed</div>
+    <div class="leg"><span class="dot" style="background:#2563eb"></span> Appointment Confirmed</div>
+    <div class="leg"><span class="dot" style="background:#6b7280"></span> Appointment Unconfirmed</div>
+    <div class="leg"><span class="dot" style="background:#f59e0b"></span> Cancelled by Provider</div>
+    <div class="leg"><span class="dot" style="background:#f97316"></span> Cancelled by Me</div>
+    <div class="leg"><span class="dot" style="background:#22c55e"></span> Billing Paid</div>
+    <div class="leg"><span class="dot" style="background:#eab308"></span> Billing Invoice Created (Unpaid)</div>
+    <div class="leg"><span class="dot" style="background:#a855f7"></span> Billing No Invoice</div>
+    <div class="leg"><span class="dot" style="background:#06b6d4"></span> Journey: Parent Feedback</div>
+    <div class="leg"><span class="dot" style="background:#64748b"></span> Journey: Communication</div>
+    <div class="leg"><span class="dot" style="background:#a855f7"></span> Journey: Exercise</div>
+    <div class="leg"><span class="dot" style="background:#475569"></span> Journey: Note</div>
+  </div>
+</div>
+
+<!-- Calendar (top) with input options as tabs on the right of the header -->
+<div class="subpanel mt-4" id="calendarPanel">
+  <div class="subhead subhead-flex">
+    <div>Calendar</div>
+    <div class="subhead-tabs pillrow pillrow-tight">
+      <button type="button" class="pill active" data-pane="cal-view">🗓️ Calendar</button>
+      <button type="button" class="pill" data-pane="cal-appt">📅 Add appointment</button>
+      <button type="button" class="pill" data-pane="cal-billing">💳 Add billing / invoice</button>
+      <button type="button" class="pill" data-pane="cal-journey">🧭 Add journey item</button>
+      <button type="button" class="btn ghost" id="openQuickCreate">⚡ Quick create</button>
+    </div>
+  </div>
+  <div class="subbody">
+    <div id="calendar"></div>
+    <div class="hint" style="margin-top:10px;">Tip: click a date/time (or drag on week/day view) to open <b>Quick create</b>.</div>
+
+    <!-- Tabs content (each input option is a different tab) -->
+    <div id="cal-view" class="tab-pane active" style="margin-top:14px;">
+      <div class="hint">Select a slot in the calendar to create an item quickly, or use the tabs above to enter details.</div>
+    </div>
+
+    <!-- Appointment tab -->
+    <div id="cal-appt" class="tab-pane" style="margin-top:14px;">
+      <form method="post" action="{{ rp }}/calendar/add_appointment" class="stack">
+        <div class="grid grid-2 gap-2">
+          <div>
+            <label class="label">Child</label>
+            <select name="child_id" class="input" required>
+              {% for c in children %}
+                <option value="{{ c.id }}" {% if selected_child_id == c.id %}selected{% endif %}>{{ c.full_name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label class="label">Start</label>
+            <input class="input" type="datetime-local" name="starts_at" required>
+          </div>
+        </div>
+        <div class="grid grid-2 gap-2">
+          <div>
+            <label class="label">Therapist / Provider</label>
+            <input class="input" type="text" name="therapist_name" list="therapists" placeholder="Therapist" required>
+          </div>
+          <div>
+            <label class="label">Procedure</label>
+            <input class="input" type="text" name="procedure" value="Speech Session">
+          </div>
+        </div>
+        <input type="hidden" name="also_add_timeline" value="YES" />
+        <button class="btn" type="submit">Add appointment</button>
+        <div class="hint">Creates an appointment and a matching Journey (VISIT) item.</div>
+      </form>
+    </div>
+
+    <!-- Billing tab -->
+    <div id="cal-billing" class="tab-pane" style="margin-top:14px;">
+      <form method="post" action="{{ rp }}/calendar/add_billing" class="stack">
+        <div class="grid grid-2 gap-2">
+          <div>
+            <label class="label">Child</label>
+            <select name="child_id" class="input" required>
+              {% for c in children %}
+                <option value="{{ c.id }}" {% if selected_child_id == c.id %}selected{% endif %}>{{ c.full_name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label class="label">Due date</label>
+            <input class="input" type="date" name="billing_due" required>
+          </div>
+        </div>
+        <div class="grid grid-2 gap-2">
+          <div>
+            <label class="label">Amount (€)</label>
+            <input class="input" type="number" step="0.01" name="amount_eur" placeholder="40.00">
+          </div>
+          <div>
+            <label class="label">Description</label>
+            <input class="input" type="text" name="description" placeholder="Monthly sessions">
+          </div>
+        </div>
+        <div class="grid grid-3 gap-2">
+          <div>
+            <label class="label">Invoice created</label>
+            <select class="input" name="invoice_created">
+              <option value="NO">NO</option>
+              <option value="YES">YES</option>
+            </select>
+          </div>
+          <div>
+            <label class="label">Paid</label>
+            <select class="input" name="paid">
+              <option value="NO">NO</option>
+              <option value="YES">YES</option>
+            </select>
+          </div>
+          <div>
+            <label class="label">Parent signed off</label>
+            <select class="input" name="parent_signed_off">
+              <option value="NO">NO</option>
+              <option value="YES">YES</option>
+            </select>
+          </div>
+        </div>
+        <button class="btn" type="submit">Add billing item</button>
+        <div class="hint">Adds billing row + a Journey event (Billing due / Invoice issued / Payment received).</div>
+      </form>
+    </div>
+
+    <!-- Journey tab -->
+    <div id="cal-journey" class="tab-pane" style="margin-top:14px;">
+      <form method="post" action="{{ rp }}/calendar/add_journey" class="stack">
+        <div class="grid grid-2 gap-2">
+          <div>
+            <label class="label">Child</label>
+            <select name="child_id" class="input" required>
+              {% for c in children %}
+                <option value="{{ c.id }}" {% if selected_child_id == c.id %}selected{% endif %}>{{ c.full_name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label class="label">When</label>
+            <input class="input" type="datetime-local" name="occurred_at" required>
+          </div>
+        </div>
+        <div class="grid grid-2 gap-2">
+          <div>
+            <label class="label">Type</label>
+            <select class="input" name="event_type">
+              <option value="VISIT">VISIT</option>
+              <option value="PAYMENT">PAYMENT</option>
+              <option value="INVOICE_ISSUED">INVOICE_ISSUED</option>
+              <option value="EXERCISE">EXERCISE</option>
+              <option value="PARENT_FEEDBACK">PARENT_FEEDBACK</option>
+              <option value="COMMUNICATION">COMMUNICATION</option>
+              <option value="APPT_CANCELLED">APPT_CANCELLED</option>
+              <option value="NOTE">NOTE</option>
+              <option value="OTHER" selected>OTHER</option>
+            </select>
+          </div>
+          <div>
+            <label class="label">Title</label>
+            <input class="input" type="text" name="title" placeholder="e.g., Sent exercise to parents" required>
+          </div>
+        </div>
+        <div>
+          <label class="label">Details</label>
+          <textarea class="input" name="details" rows="3" placeholder="Optional"></textarea>
+        </div>
+        <button class="btn" type="submit">Add journey item</button>
+        <div class="hint">Shows on Timeline Journey and on this Calendar.</div>
+      </form>
+    </div>
+</div>
+
+<!-- Click-to-create modal (Calendar click/drag opens this) -->
+<div id="createModal" class="modal" aria-hidden="true">
+  <div class="modal-backdrop" data-close="1"></div>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="createModalTitle">
+    <div class="modal-head">
+      <div>
+        <div class="modal-kicker">Quick create</div>
+        <div id="createModalTitle" class="modal-title">Add to calendar</div>
+      </div>
+      <button type="button" class="iconbtn" data-close="1" title="Close">✕</button>
+    </div>
+
+    <div class="pillrow" style="margin-top:10px;">
+      <button type="button" class="pill active" data-pane="pane-appt">📅 Appointment</button>
+      <button type="button" class="pill" data-pane="pane-billing">💳 Billing</button>
+      <button type="button" class="pill" data-pane="pane-journey">🧭 Journey</button>
+    </div>
+
+    <div class="modal-body">
+      <!-- Appointment -->
+      <div id="pane-appt" class="modal-pane active">
+        <form method="post" action="{{ rp }}/calendar/add_appointment" class="stack">
+          <div class="grid grid-2 gap-2">
+            <div>
+              <label class="label">Child</label>
+              <select id="m_appt_child" name="child_id" class="input" required>
+                {% for c in children %}
+                  <option value="{{ c.id }}" {% if selected_child_id == c.id %}selected{% endif %}>{{ c.full_name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div>
+              <label class="label">Start</label>
+              <input id="m_appt_start" class="input" type="datetime-local" name="starts_at" required>
+            </div>
+          </div>
+          <div class="grid grid-2 gap-2">
+            <div>
+              <label class="label">Therapist / Provider</label>
+              <input class="input" type="text" name="therapist_name" list="therapists" placeholder="Therapist" required>
+            </div>
+            <div>
+              <label class="label">Procedure</label>
+              <input class="input" type="text" name="procedure" value="Speech Session">
+            </div>
+          </div>
+          <input type="hidden" name="also_add_timeline" value="YES" />
+          <div class="modal-actions">
+            <button type="button" class="btn ghost" data-close="1">Cancel</button>
+            <button class="btn" type="submit">Create appointment</button>
+          </div>
+          <div class="hint">Creates an appointment and a matching Journey (VISIT) item.</div>
+        </form>
+      </div>
+
+      <!-- Billing -->
+      <div id="pane-billing" class="modal-pane">
+        <form method="post" action="{{ rp }}/calendar/add_billing" class="stack">
+          <div class="grid grid-2 gap-2">
+            <div>
+              <label class="label">Child</label>
+              <select id="m_bill_child" name="child_id" class="input" required>
+                {% for c in children %}
+                  <option value="{{ c.id }}" {% if selected_child_id == c.id %}selected{% endif %}>{{ c.full_name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div>
+              <label class="label">Due date</label>
+              <input id="m_bill_due" class="input" type="date" name="billing_due" required>
+            </div>
+          </div>
+          <div class="grid grid-2 gap-2">
+            <div>
+              <label class="label">Amount (€)</label>
+              <input class="input" type="number" step="0.01" name="amount_eur" placeholder="40.00">
+            </div>
+            <div>
+              <label class="label">Description</label>
+              <input class="input" type="text" name="description" placeholder="Monthly sessions">
+            </div>
+          </div>
+          <div class="grid grid-3 gap-2">
+            <div>
+              <label class="label">Invoice created</label>
+              <select class="input" name="invoice_created">
+                <option value="NO">NO</option>
+                <option value="YES">YES</option>
+              </select>
+            </div>
+            <div>
+              <label class="label">Paid</label>
+              <select class="input" name="paid">
+                <option value="NO">NO</option>
+                <option value="YES">YES</option>
+              </select>
+            </div>
+            <div>
+              <label class="label">Parent signed off</label>
+              <select class="input" name="parent_signed_off">
+                <option value="NO">NO</option>
+                <option value="YES">YES</option>
+              </select>
+            </div>
+          </div>
+          <div class="modal-actions">
+            <button type="button" class="btn ghost" data-close="1">Cancel</button>
+            <button class="btn" type="submit">Create billing</button>
+          </div>
+          <div class="hint">Adds billing row + a Journey event (Billing due / Invoice issued / Payment received).</div>
+        </form>
+      </div>
+
+      <!-- Journey -->
+      <div id="pane-journey" class="modal-pane">
+        <form method="post" action="{{ rp }}/calendar/add_journey" class="stack">
+          <div class="grid grid-2 gap-2">
+            <div>
+              <label class="label">Child</label>
+              <select id="m_j_child" name="child_id" class="input" required>
+                {% for c in children %}
+                  <option value="{{ c.id }}" {% if selected_child_id == c.id %}selected{% endif %}>{{ c.full_name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div>
+              <label class="label">When</label>
+              <input id="m_j_when" class="input" type="datetime-local" name="occurred_at" required>
+            </div>
+          </div>
+          <div class="grid grid-2 gap-2">
+            <div>
+              <label class="label">Type</label>
+              <select class="input" name="event_type">
+                <option value="VISIT">VISIT</option>
+                <option value="PAYMENT">PAYMENT</option>
+                <option value="INVOICE_ISSUED">INVOICE_ISSUED</option>
+                <option value="EXERCISE">EXERCISE</option>
+                <option value="PARENT_FEEDBACK">PARENT_FEEDBACK</option>
+                <option value="COMMUNICATION">COMMUNICATION</option>
+                <option value="APPT_CANCELLED">APPT_CANCELLED</option>
+                <option value="NOTE">NOTE</option>
+                <option value="OTHER" selected>OTHER</option>
+              </select>
+            </div>
+            <div>
+              <label class="label">Title</label>
+              <input class="input" type="text" name="title" placeholder="e.g., Sent exercise to parents" required>
+            </div>
+          </div>
+          <div>
+            <label class="label">Details</label>
+            <textarea class="input" name="details" rows="3" placeholder="Optional"></textarea>
+          </div>
+          <div class="modal-actions">
+            <button type="button" class="btn ghost" data-close="1">Cancel</button>
+            <button class="btn" type="submit">Create journey item</button>
+          </div>
+          <div class="hint">Shows on Timeline Journey and on this Calendar.</div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<datalist id="therapists">
+  {% for t in therapists %}
+    <option value="{{ t.name }}"></option>
+  {% endfor %}
+</datalist>
+
+<script>
+(function(){
+  const childId = "{{ selected_child_id if selected_child_id is not none else '' }}";
+  const el = document.getElementById("calendar");
+  const modal = document.getElementById("createModal");
+
+  function pad(n){ return String(n).padStart(2,'0'); }
+  function toLocalDateTimeInput(d){
+    // Convert Date -> yyyy-MM-ddTHH:mm (local)
+    return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+  function toLocalDateInput(d){
+    return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate());
+  }
+  function openModal(startDate){
+    const dt = startDate instanceof Date ? startDate : new Date(startDate);
+    // Prefill fields
+    const apptStart = document.getElementById('m_appt_start');
+    const billDue = document.getElementById('m_bill_due');
+    const jWhen = document.getElementById('m_j_when');
+    if(apptStart) apptStart.value = toLocalDateTimeInput(dt);
+    if(jWhen) jWhen.value = toLocalDateTimeInput(dt);
+    if(billDue) billDue.value = toLocalDateInput(dt);
+
+    // If a child is filtered, ensure modal selects same child
+    if(childId){
+      ['m_appt_child','m_bill_child','m_j_child'].forEach(id => {
+        const sel = document.getElementById(id);
+        if(sel) sel.value = childId;
+      });
+    }
+
+    modal.classList.add('open');
+    modal.setAttribute('aria-hidden','false');
+    document.body.classList.add('modal-open');
+  }
+  function closeModal(){
+    modal.classList.remove('open');
+    modal.setAttribute('aria-hidden','true');
+    document.body.classList.remove('modal-open');
+  }
+
+  // Modal wiring
+  modal.addEventListener('click', (e) => {
+    const t = e.target;
+    if(t && t.getAttribute && t.getAttribute('data-close') === '1') closeModal();
+    if(t && t.classList && t.classList.contains('pill')){
+      const pane = t.getAttribute('data-pane');
+      if(!pane) return;
+      modal.querySelectorAll('.pill').forEach(x => x.classList.remove('active'));
+      t.classList.add('active');
+      modal.querySelectorAll('.modal-pane').forEach(x => x.classList.remove('active'));
+      const p = document.getElementById(pane);
+      if(p) p.classList.add('active');
+    }
+  });
+
+  // Calendar page tabs (tabs are in the Calendar header on the right)
+  const calendarPanel = document.getElementById('calendarPanel');
+  if(calendarPanel){
+    calendarPanel.querySelectorAll('.subhead-tabs .pill[data-pane^="cal-"]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const pane = btn.getAttribute('data-pane');
+        if(!pane) return;
+        calendarPanel.querySelectorAll('.subhead-tabs .pill[data-pane^="cal-"]').forEach(x => x.classList.remove('active'));
+        btn.classList.add('active');
+        calendarPanel.querySelectorAll('.tab-pane').forEach(x => x.classList.remove('active'));
+        const p = document.getElementById(pane);
+        if(p) p.classList.add('active');
+        // Bring the selected pane into view for faster data entry
+        if(pane !== 'cal-view'){
+          const node = document.getElementById(pane);
+          if(node) node.scrollIntoView({behavior:'smooth', block:'start'});
+        }
+      });
+    });
+  }
+
+  const openQuickBtn = document.getElementById('openQuickCreate');
+  if(openQuickBtn){
+    openQuickBtn.addEventListener('click', () => openModal(new Date()));
+  }
+  document.addEventListener('keydown', (e) => {
+    if(e.key === 'Escape' && modal.classList.contains('open')) closeModal();
+  });
+  const cal = new FullCalendar.Calendar(el, {
+    initialView: "dayGridMonth",
+    height: "auto",
+    headerToolbar: { left: "prev,next today", center: "title", right: "dayGridMonth,timeGridWeek,timeGridDay" },
+    navLinks: true,
+    selectable: true,
+    selectMirror: true,
+    eventTimeFormat: { hour: '2-digit', minute: '2-digit', meridiem: true },
+    dateClick: function(info){
+      // On month view, click date => open modal at midday for nicer default
+      const d = new Date(info.date);
+      if(cal.view.type === 'dayGridMonth') d.setHours(12,0,0,0);
+      openModal(d);
+    },
+    select: function(info){
+      // Drag-select (week/day views) => open modal at selection start
+      openModal(info.start);
+    },
+    events: function(fetchInfo, success, failure){
+      const params = new URLSearchParams();
+      params.set("start", fetchInfo.startStr);
+      params.set("end", fetchInfo.endStr);
+      if(childId) params.set("child_id", childId);
+      fetch("{{ rp }}/api/calendar_events?" + params.toString())
+        .then(r => r.json())
+        .then(success)
+        .catch(failure);
+    }
+  });
+  cal.render();
+})();
+</script>
+
+{% endblock %}

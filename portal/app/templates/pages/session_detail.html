@@ -1,0 +1,101 @@
+{% extends "layout.html" %}
+{% set header = "Appointment Detail" %}
+{% block content %}
+
+<div class="grid grid-cols-1 xl:grid-cols-3 gap-5">
+  <section class="xl:col-span-2">
+    <div class="subpanel">
+      <div class="subhead flex items-center justify-between">
+        <div>
+          <div class="text-xs text-slate-500">Appointment</div>
+          <div class="text-lg font-extrabold">{{ appt.child.full_name }}</div>
+          <div class="text-sm text-slate-600">{{ appt.starts_at }} · {{ appt.therapist_name }} · {{ appt.procedure }}</div>
+        </div>
+        <a class="link" href="{{ rp }}/children/{{ appt.child_id }}">Back to child</a>
+      </div>
+      <div class="subbody">
+
+        <div class="flex flex-wrap items-center gap-3 mb-4">
+          <div class="text-sm font-semibold">Attendance:</div>
+          {{ status_chip(appt.attendance_status) | safe }}
+          {% if appt.attendance_marked_at %}
+            <div class="text-xs text-slate-500">Marked: {{ appt.attendance_marked_at }}</div>
+          {% endif %}
+        </div>
+
+        <form method="post" action="{{ rp }}/appointments/{{ appt.id }}/attendance" class="grid md:grid-cols-3 gap-3 mb-6">
+          <div>
+            <label class="label">Set status</label>
+            <select name="attendance_status" class="input" required>
+              {% for s in ["CONFIRMED","UNCONFIRMED","ATTENDED","MISSED","CANCELLED_PROVIDER","CANCELLED_ME"] %}
+                <option value="{{ s }}" {% if appt.attendance_status == s %}selected{% endif %}>{{ s }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="md:col-span-2">
+            <label class="label">Attendance note (optional)</label>
+            <input name="attendance_note" class="input" value="{{ appt.attendance_note or '' }}" placeholder="e.g., arrived late, parent asked to reschedule..." />
+          </div>
+          <div class="md:col-span-3">
+            <button class="btn" type="submit">Save attendance</button>
+          </div>
+        </form>
+
+        <div class="font-extrabold mb-3">Session note</div>
+
+        <form class="space-y-4" method="post" action="{{ rp }}/appointments/{{ appt.id }}/note">
+          <div>
+            <label class="label">Summary</label>
+            <textarea name="summary" rows="3" class="input">{{ note.summary or "" }}</textarea>
+          </div>
+
+          <div class="grid md:grid-cols-2 gap-4">
+            <div>
+              <label class="label">What went wrong</label>
+              <textarea name="what_went_wrong" rows="4" class="input">{{ note.what_went_wrong or "" }}</textarea>
+            </div>
+            <div>
+              <label class="label">Improvements</label>
+              <textarea name="improvements" rows="4" class="input">{{ note.improvements or "" }}</textarea>
+            </div>
+          </div>
+
+          <div>
+            <label class="label">Next steps / homework</label>
+            <textarea name="next_steps" rows="4" class="input">{{ note.next_steps or "" }}</textarea>
+          </div>
+
+          <div class="flex items-center justify-end">
+            <button class="btn" type="submit">Save session note</button>
+          </div>
+        </form>
+
+      </div>
+    </div>
+  </section>
+
+  <aside class="card-soft">
+    <div class="font-extrabold">Documents</div>
+    <div class="text-sm text-slate-600 mt-1">Upload PDF notes and delete when needed.</div>
+
+    <form class="mt-4" method="post" action="{{ rp }}/children/{{ appt.child_id }}/upload" enctype="multipart/form-data">
+      <input type="file" name="file" class="block w-full text-sm" required />
+      <button class="btn w-full mt-3" type="submit">Upload</button>
+    </form>
+
+    <div class="mt-5 space-y-2">
+      {% for u in uploads %}
+        <div class="docrow">
+          <a class="link truncate" style="max-width:70%;" href="{{ rp }}/files/{{ u.id }}">{{ u.original_name }}</a>
+          <form method="post" action="{{ rp }}/attachments/{{ u.id }}/delete" onsubmit="return confirm('Delete this file?');">
+            <button class="btn-danger" type="submit">Delete</button>
+          </form>
+        </div>
+      {% else %}
+        <div class="text-sm text-slate-500 mt-3">No files uploaded yet.</div>
+      {% endfor %}
+    </div>
+  </aside>
+</div>
+
+{% endblock %}

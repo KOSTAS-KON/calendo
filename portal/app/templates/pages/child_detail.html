@@ -1,0 +1,235 @@
+{% extends "layout.html" %}
+{% set header = "Child Record" %}
+{% block content %}
+
+<div class="flex items-start justify-between gap-3 mb-4">
+  <div>
+    <div class="text-xs text-slate-500">Child</div>
+    <div class="text-2xl font-extrabold">{{ child.full_name }}</div>
+    <div class="text-sm text-slate-600">
+      ID {{ child.id }}{% if child.date_of_birth %} · DOB {{ child.date_of_birth }}{% endif %}
+    </div>
+    {% if child.parent1_name or child.parent1_phone or child.parent2_name or child.parent2_phone %}
+      <div class="mt-2 text-sm text-slate-700">
+        <div class="text-xs text-slate-500">Parents / guardians</div>
+        <div class="flex flex-wrap gap-2">
+          {% if child.parent1_name or child.parent1_phone %}
+            <span class="pill p-gray">👪 {{ child.parent1_name or "Parent 1" }}{% if child.parent1_phone %} · {{ child.parent1_phone }}{% endif %}</span>
+          {% endif %}
+          {% if child.parent2_name or child.parent2_phone %}
+            <span class="pill p-gray">👪 {{ child.parent2_name or "Parent 2" }}{% if child.parent2_phone %} · {{ child.parent2_phone }}{% endif %}</span>
+          {% endif %}
+        </div>
+      </div>
+    {% endif %}
+  </div>
+  <div class="flex gap-2">
+    <a class="btn" href="{{ rp }}/calendar?child_id={{ child.id }}">Calendar</a>
+    <a class="btn" href="{{ rp }}/billing?child_id={{ child.id }}">Billing</a>
+    <a class="btn" href="{{ rp }}/timeline?child_id={{ child.id }}">Timeline</a>
+    <a class="link" href="{{ rp }}/children">Back</a>
+  </div>
+</div>
+
+<div class="grid grid-cols-1 xl:grid-cols-3 gap-5">
+  <section class="xl:col-span-2">
+    <div class="subpanel">
+      <div class="subhead">Appointments</div>
+      <div class="subbody">
+        <div class="list">
+          {% for a in appts %}
+            <a class="listrow" href="{{ rp }}/appointments/{{ a.id }}">
+              <div class="flex items-center justify-between gap-2">
+                <div class="font-semibold">{{ a.starts_at.strftime("%b %d, %Y %I:%M %p") }}</div>
+                <div>{{ status_chip(a.attendance_status) | safe }}</div>
+              </div>
+              <div class="text-xs text-slate-500">{{ a.therapist_name }} · {{ a.procedure }}{% if a.session_note %} · ✅ note saved{% endif %}</div>
+            </a>
+          {% else %}
+            <div class="text-sm text-slate-500">No appointments yet.</div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+
+    <div class="subpanel mt-5">
+      <div class="subhead flex items-center justify-between">
+        <div>Timeline journey (latest)</div>
+        <a class="link" href="{{ rp }}/timeline?child_id={{ child.id }}">Open full timeline</a>
+      </div>
+      <div class="subbody">
+        <div class="timeline compact">
+          {% for e in timeline %}
+            <div class="t-item">
+              <div class="t-dot t-{{ (e.event_type or 'OTHER')|lower }}"></div>
+              <div class="t-card">
+                <div class="t-head">
+                  <div class="t-title">{{ e.title }}</div>
+                  <div class="t-meta">
+                    <span class="pill p-gray">{{ e.event_type }}</span>
+                    <span class="text-xs text-slate-500">{{ e.occurred_at.strftime("%b %d, %Y %I:%M %p") }}</span>
+                  </div>
+                </div>
+                {% if e.details %}
+                  <div class="t-body">{{ e.details }}</div>
+                {% endif %}
+              </div>
+            </div>
+          {% else %}
+            <div class="text-sm text-slate-500">No timeline events yet. Add some from the Timeline Journey page.</div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+
+<div class="subpanel mt-5">
+  <div class="subhead flex items-center justify-between">
+    <div>Billing rows</div>
+    <a class="link" href="{{ rp }}/billing?child_id={{ child.id }}">Open full billing</a>
+  </div>
+  <div class="subbody">
+    <div class="tablewrap">
+      <table class="apptable">
+        <thead>
+          <tr>
+            <th>billing due</th>
+            <th>paid</th>
+            <th>invoice created</th>
+            <th>parent signed off</th>
+            <th style="width:120px;">actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for b in bills %}
+          <tr>
+            <td>{{ b.billing_due }}</td>
+            <td>
+              <form method="post" action="{{ rp }}/billing/{{ b.id }}/update" class="rowform">
+                <input type="hidden" name="redirect" value="/children/{{ child.id }}">
+                <select name="paid" class="input input-sm">
+                  <option value="NO" {% if (b.paid or '').upper() != 'YES' %}selected{% endif %}>NO</option>
+                  <option value="YES" {% if (b.paid or '').upper() == 'YES' %}selected{% endif %}>YES</option>
+                </select>
+            </td>
+            <td>
+                <select name="invoice_created" class="input input-sm">
+                  <option value="NO" {% if (b.invoice_created or '').upper() != 'YES' %}selected{% endif %}>NO</option>
+                  <option value="YES" {% if (b.invoice_created or '').upper() == 'YES' %}selected{% endif %}>YES</option>
+                </select>
+            </td>
+            <td>
+                <select name="parent_signed_off" class="input input-sm">
+                  <option value="NO" {% if (b.parent_signed_off or '').upper() != 'YES' %}selected{% endif %}>NO</option>
+                  <option value="YES" {% if (b.parent_signed_off or '').upper() == 'YES' %}selected{% endif %}>YES</option>
+                </select>
+            </td>
+            <td>
+                <button class="btn btn-sm" type="submit">Save</button>
+              </form>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="text-sm text-slate-500">No billing rows.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+
+    <div class="subpanel mt-5">
+      <div class="subhead">Documents (PDFs, notes)</div>
+      <div class="subbody">
+        <div class="space-y-2">
+          {% for u in uploads %}
+            <div class="docrow">
+              <a class="link truncate" style="max-width:70%;" href="{{ rp }}/files/{{ u.id }}">{{ u.original_name }}</a>
+              <div class="flex items-center gap-2">
+                <span class="text-xs text-slate-500">{{ u.created_at }}</span>
+                <form method="post" action="{{ rp }}/attachments/{{ u.id }}/delete" onsubmit="return confirm('Delete this file?');">
+                  <button class="btn-danger" type="submit">Delete</button>
+                </form>
+              </div>
+            </div>
+          {% else %}
+            <div class="text-sm text-slate-500">No uploads yet.</div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <aside class="card-soft space-y-6">
+    <div>
+      <div class="font-extrabold mb-2">Timeline snapshot</div>
+      <div class="text-sm text-slate-600 mb-3">Latest events for this child.</div>
+
+      <div class="timeline timeline-compact">
+        {% for e in timeline %}
+          <div class="t-item">
+            <div class="t-dot t-{{ (e.event_type or 'OTHER')|lower }}"></div>
+            <div class="t-card">
+              <div class="t-head">
+                <div class="t-title">{{ e.title }}</div>
+                <div class="t-meta">
+                  <span class="pill p-gray">{{ e.event_type }}</span>
+                  <span class="text-xs text-slate-500">{{ e.occurred_at.strftime("%b %d, %Y") }}</span>
+                </div>
+              </div>
+              {% if e.details %}
+                <div class="t-body">{{ e.details }}</div>
+              {% endif %}
+            </div>
+          </div>
+        {% else %}
+          <div class="text-sm text-slate-500">No timeline events yet.</div>
+        {% endfor %}
+      </div>
+
+      <a class="link" href="{{ rp }}/timeline?child_id={{ child.id }}">Open full timeline →</a>
+    </div>
+
+    <div>
+      <div class="font-extrabold mb-3">Create appointment</div>
+      <form class="space-y-3" method="post" action="{{ rp }}/children/{{ child.id }}/appointments/create">
+        <div>
+          <label class="label">Date/time</label>
+          <input type="datetime-local" name="starts_at" required class="input" />
+        </div>
+        <div>
+          <label class="label">Therapist</label>
+          <input name="therapist_name" required class="input" list="therapists" placeholder="e.g., James Sawyer" />
+        </div>
+        <div>
+          <label class="label">Procedure</label>
+          <input name="procedure" class="input" placeholder="Office Visit / Speech Session / Physio Session" />
+        </div>
+        <button class="btn w-full" type="submit">Add appointment</button>
+      </form>
+    </div>
+
+    <div>
+      <div class="font-extrabold mb-3">Upload PDF / notes</div>
+      <form method="post" action="{{ rp }}/children/{{ child.id }}/upload" enctype="multipart/form-data">
+        <input type="file" name="file" class="block w-full text-sm" required />
+        <button class="btn w-full mt-3" type="submit">Upload</button>
+      </form>
+    </div>
+
+    <div>
+      <div class="font-extrabold mb-2">Child notes</div>
+      <div class="text-sm text-slate-700 whitespace-pre-wrap">{{ child.notes or "—" }}</div>
+    </div>
+  </aside>
+</div>
+
+<datalist id="therapists">
+  {% for t in therapists %}
+    <option value="{{ t.name }}"></option>
+  {% endfor %}
+</datalist>
+
+{% endblock %}

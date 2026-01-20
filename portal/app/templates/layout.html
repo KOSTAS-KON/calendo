@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>{{ title or "1st Providers Choice" }}</title>
+
+  {# When served behind the nginx gateway under /therapy, FastAPI sets request.scope.root_path.
+     We use it to prefix internal links + static assets so styling works both directly (http://localhost:8010)
+     and behind the gateway (http://localhost:8080/therapy/). #}
+  {% set rp = request.scope.get("root_path", "") %}
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="{{ rp }}/static/css/app.css" />
+  <script defer src="{{ rp }}/static/js/app.js"></script>
+</head>
+
+<body class="bg-slate-100 text-slate-900">
+  <div class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <div class="brand-mark">1st</div>
+        <div>
+          <div class="brand-title">Providers Choice</div>
+          <div class="brand-sub">{{ (clinic.clinic_name if clinic else "Therapy Portal") }}</div>
+        </div>
+      </div>
+
+      <div class="topbar-right">
+        <div class="userbox">
+          <span class="userbox-label">User</span>
+          <span class="userbox-name">{{ user_name or "PAUL PORTAL TEST" }}</span>
+        </div>
+        <a class="logout" href="/sms/">SMS CALENDAR</a>
+        <a class="logout" href="/">HOME</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="page">
+    <aside class="sidebar">
+      <div class="sidehdr">Core</div>
+      <a class="sideitem" href="{{ rp }}/">🏠 Dashboard</a>
+      <a class="sideitem" href="{{ rp }}/calendar">🗓️ Calendar</a>
+      <a class="sideitem" href="{{ rp }}/timeline">🧭 Timeline Journey</a>
+
+      <div class="side-sep"></div>
+      <div class="sidehdr">Operations</div>
+      <a class="sideitem" href="{{ rp }}/billing">💳 Billing</a>
+      <a class="sideitem" href="{{ rp }}/billing/inputs">🧾 Billing inputs</a>
+      <a class="sideitem" href="{{ rp }}/appointments">📅 Past Appointments</a>
+
+      <div class="side-sep"></div>
+      <div class="sidehdr">Records</div>
+      <a class="sideitem" href="{{ rp }}/children">🧒 Children</a>
+      <a class="sideitem" href="{{ rp }}/therapists">🧑‍⚕️ Therapists</a>
+      <a class="sideitem" href="{{ rp }}/messages">✉️ Messages</a>
+      <a class="sideitem" href="{{ rp }}/questionnaires">📝 Questionnaires</a>
+      <a class="sideitem" href="{{ rp }}/profile">👤 Profile</a>
+
+      <div class="side-sep"></div>
+      <div class="sidehdr">System Admin</div>
+      <a class="sideitem" href="{{ rp }}/settings">⚙️ Clinic Setup</a>
+
+      <div class="side-sep"></div>
+      <div class="sidehdr">Apps</div>
+      <a class="sideitem" href="/sms/">📣 SMS Calendar</a>
+      <a class="sideitem muted" href="/">🏠 Landing</a>
+    </aside>
+
+    <main class="content">
+      <div class="content-inner">
+        <div class="panel">
+          <div class="panel-head">
+            <div class="panel-title">{{ header or "Past Appointments" }}</div>
+          </div>
+          <div class="panel-body">
+            {% block content %}{% endblock %}
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

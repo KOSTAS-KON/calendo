@@ -1,0 +1,79 @@
+{% extends "layout.html" %}
+{% block content %}
+<div style="display:grid; grid-template-columns: 360px 1fr; gap:14px; align-items:start;">
+  <div class="card" style="padding:14px;">
+    <div style="font-weight:800; margin-bottom:8px;">Quick message</div>
+    <div class="text-sm" style="color:#64748b; margin-bottom:12px;">
+      Message composer. This screen can send via the SMS service when configured.
+    </div>
+
+    <div style="display:grid; gap:10px;">
+      <div>
+        <div class="text-xs" style="color:#64748b; margin-bottom:6px;">To</div>
+        <input class="input" style="width:100%;" placeholder="Parent of Maria K." />
+      </div>
+      <div>
+        <div class="text-xs" style="color:#64748b; margin-bottom:6px;">Channel</div>
+        <select class="input" style="width:100%;">
+          <option>SMS</option>
+          <option>Email</option>
+          <option>WhatsApp</option>
+        </select>
+      </div>
+      <div>
+        <div class="text-xs" style="color:#64748b; margin-bottom:6px;">Message</div>
+        <textarea class="input" style="width:100%; min-height:120px;" placeholder="Reminder: session tomorrow at 18:10."></textarea>
+      </div>
+      <button type="button" class="btn" style="width:100%;">Send</button>
+    </div>
+  </div>
+
+  <div class="card" style="padding:14px;">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px;">
+      <div style="font-weight:800;">Recent messages</div>
+      <div class="text-sm" style="color:#64748b;">Mock data</div>
+    </div>
+
+    <div style="overflow:auto; border-radius:12px; border:1px solid rgba(15,23,42,.08);">
+      <table class="table" style="width:100%;">
+        <thead>
+          <tr>
+            <th style="width:72px;">Dir</th>
+            <th>To / From</th>
+            <th style="width:90px;">Channel</th>
+            <th>Subject</th>
+            <th style="width:120px;">Status</th>
+            <th style="width:140px;">When</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          <tr>
+            <td>
+              {% if r.direction == 'OUT' %}
+                <span class="badge b-confirmed" title="Outgoing">OUT</span>
+              {% else %}
+                <span class="badge b-unconfirmed" title="Incoming">IN</span>
+              {% endif %}
+            </td>
+            <td>{{ r.to }}</td>
+            <td><span class="pill">{{ r.channel }}</span></td>
+            <td>{{ r.subject }}</td>
+            <td>
+              {% if r.status in ['DELIVERED','SENT'] %}
+                <span class="pill ok">{{ r.status }}</span>
+              {% elif r.status in ['RECEIVED'] %}
+                <span class="pill warn">{{ r.status }}</span>
+              {% else %}
+                <span class="pill">{{ r.status }}</span>
+              {% endif %}
+            </td>
+            <td class="text-sm" style="color:#64748b;">{{ r.when }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

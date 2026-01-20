@@ -1,0 +1,496 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Clinic Suite</title>
+<style>
+body{margin:0;font-family:Arial,Helvetica,sans-serif;background:#f6f7f8;color:#111827;}
+.wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;}
+.card{width:820px;background:#fff;border:1px solid #e5e7eb;border-radius:18px;box-shadow:0 10px 30px rgba(0,0,0,.06);padding:32px;}
+h1{margin:0 0 8px 0;font-size:28px;}
+.subtitle{margin:0 0 22px 0;color:#6b7280;font-size:15px;}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;}
+.btn{display:flex;align-items:center;justify-content:center;gap:10px;text-decoration:none;padding:22px 18px;border-radius:16px;border:1px solid #e5e7eb;font-size:18px;font-weight:700;}
+.btn.smallbtn{padding:14px 14px;font-size:14px;font-weight:800;}
+.btn.primary{background:#111827;color:#fff;border-color:#111827;}
+.btn.primary:hover{background:#0b1220;}
+.btn.secondary{background:#fff;color:#111827;border-color:#111827;}
+.btn.secondary:hover{background:#f3f4f6;}
+.btn.muted{opacity:.45;pointer-events:none;}
+.section{margin-top:18px;padding-top:18px;border-top:1px solid #eef2f7;}
+.section h2{margin:0 0 10px 0;font-size:16px;}
+.note{color:#6b7280;font-size:12px;margin:0 0 12px 0;}
+.iframeWrap{border:1px solid #e5e7eb;border-radius:16px;overflow:hidden;background:#fff;}
+.iframeWrap iframe{width:100%;height:560px;border:0;display:block;background:#fff;}
+.small{margin-top:18px;color:#6b7280;font-size:12px;}
+.pill{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:999px;border:1px solid #e5e7eb;background:#f9fafb;color:#111827;font-size:12px;font-weight:700;}
+.pill.good{border-color:#bbf7d0;background:#f0fdf4;color:#166534;}
+.pill.bad{border-color:#fecaca;background:#fef2f2;color:#991b1b;}
+.muted{opacity:.55;pointer-events:none;}
+.successCard{margin-top:12px;border:1px solid #bbf7d0;background:#f0fdf4;color:#14532d;border-radius:14px;padding:12px 12px;display:none;}
+.successTitle{font-weight:900;font-size:13px;display:flex;align-items:center;gap:8px;}
+.successMeta{margin-top:6px;font-size:12px;color:#166534;opacity:.95;line-height:1.45;}
+@media (max-width:720px){.card{width:100%;}.grid{grid-template-columns:1fr;}}
+
+.tabbtn{border:1px solid #e5e7eb;background:#fff;color:#111827;border-radius:999px;padding:8px 12px;font-size:12px;font-weight:900;cursor:pointer;}
+.tabbtn.active{background:#111827;color:#fff;border-color:#111827;}
+.tabbtn:hover{background:#f3f4f6;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>Clinic Suite</h1>
+    <p class="subtitle">Choose your workspace.</p>
+    <div class="grid">
+      <a id="btnPortal" class="btn primary" href="/therapy/"><span>🗂️</span><span>Therapy Portal</span></a>
+      <a id="btnSMS" class="btn secondary" href="/sms/"><span>📅</span><span>SMS Calendar</span></a>
+    </div>
+
+    <details class="section" id="clinicDetails">
+      <summary style="cursor:pointer;list-style:none;display:flex;align-items:center;justify-content:space-between;gap:12px;">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <span style="font-weight:800;">🏥 Clinic details</span>
+          <span id="licensePill" class="pill" style="margin-left:6px;">🔑 License: loading…</span>
+          <span id="modePill" class="pill">🧩 Mode: loading…</span>
+        </div>
+        <span style="color:#6b7280;font-size:12px;">(click to expand)</span>
+      </summary>
+
+      <p class="note" style="margin-top:12px;">These settings are stored locally (per client installation) and are used by the SMS Calendar automatically.</p>
+
+      <div class="tabs" role="tablist" aria-label="Clinic setup tabs" style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="tabbtn" data-tab="overview" type="button">📌 Overview</button>
+        <button class="tabbtn" data-tab="clinic" type="button">🏥 Clinic</button>
+        <button class="tabbtn" data-tab="infobip" type="button">📣 Infobip</button>
+        <button class="tabbtn" data-tab="license" type="button">🔑 License</button>
+      </div>
+
+      <!-- Overview -->
+      <div class="tabpanel" id="tab-overview" role="tabpanel" style="margin-top:12px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+          <div style="border:1px solid #e5e7eb;border-radius:16px;padding:14px;">
+            <div style="font-size:12px;color:#6b7280;font-weight:700;">Clinic</div>
+            <div id="clinicName" style="font-size:16px;font-weight:900;margin-top:6px;">—</div>
+            <div id="clinicAddress" style="margin-top:6px;color:#374151;font-size:13px;">—</div>
+            <a id="clinicMap" href="#" target="_blank" rel="noopener" style="display:none;margin-top:8px;font-size:12px;font-weight:800;">🗺️ Open in Google Maps</a>
+            <div id="clinicCoords" style="margin-top:8px;color:#6b7280;font-size:12px;">—</div>
+          </div>
+
+          <div style="border:1px solid #e5e7eb;border-radius:16px;padding:14px;">
+            <div style="font-size:12px;color:#6b7280;font-weight:700;">SMS Provider</div>
+            <div id="smsProvider" style="font-size:14px;font-weight:900;margin-top:6px;">Infobip</div>
+            <div id="smsSender" style="margin-top:6px;color:#374151;font-size:13px;">Sender: —</div>
+            <div style="margin-top:10px;color:#6b7280;font-size:12px;">Tip: Use the tabs above to edit settings without leaving the Home page.</div>
+          </div>
+        </div>
+
+        <div id="activationSuccess" class="successCard">
+          <div class="successTitle">🎉 Activation successful</div>
+          <div id="activationSuccessMeta" class="successMeta">—</div>
+        </div>
+      </div>
+
+      <!-- Clinic tab -->
+      <div class="tabpanel" id="tab-clinic" role="tabpanel" style="margin-top:12px;display:none;">
+        <div style="border:1px solid #e5e7eb;border-radius:16px;padding:14px;">
+          <div style="font-weight:900;margin-bottom:10px;">🏥 Clinic details</div>
+          <div class="grid3">
+            <div>
+              <div style="font-size:12px;color:#6b7280;font-weight:800;margin-bottom:6px;">Clinic name</div>
+              <input id="f_clinic_name" type="text" style="width:100%;padding:12px;border:1px solid #e5e7eb;border-radius:12px;font-size:13px;" />
+            </div>
+            <div style="grid-column:span 2;">
+              <div style="font-size:12px;color:#6b7280;font-weight:800;margin-bottom:6px;">Address</div>
+              <input id="f_address" type="text" placeholder="Street, City, Postcode" style="width:100%;padding:12px;border:1px solid #e5e7eb;border-radius:12px;font-size:13px;" />
+              <div style="margin-top:6px;color:#6b7280;font-size:11px;">A Google Maps link will be generated safely from the address (preferred) or from coordinates.</div>
+            </div>
+            <div>
+              <div style="font-size:12px;color:#6b7280;font-weight:800;margin-bottom:6px;">Latitude</div>
+              <input id="f_lat" type="number" step="any" style="width:100%;padding:12px;border:1px solid #e5e7eb;border-radius:12px;font-size:13px;" />
+            </div>
+            <div>
+              <div style="font-size:12px;color:#6b7280;font-weight:800;margin-bottom:6px;">Longitude</div>
+              <input id="f_lng" type="number" step="any" style="width:100%;padding:12px;border:1px solid #e5e7eb;border-radius:12px;font-size:13px;" />
+            </div>
+          </div>
+          <div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+            <button id="saveClinicBtn" class="btn smallbtn primary" type="button" style="width:auto;border:none;cursor:pointer;">💾 Save clinic</button>
+            <div id="saveClinicMsg" style="font-size:12px;color:#6b7280;"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Infobip tab -->
+      <div class="tabpanel" id="tab-infobip" role="tabpanel" style="margin-top:12px;display:none;">
+        <div style="border:1px solid #e5e7eb;border-radius:16px;padding:14px;">
+          <div style="font-weight:900;margin-bottom:10px;">📣 Infobip SMS</div>
+          <div class="grid3">
+            <div>
+              <div style="font-size:12px;color:#6b7280;font-weight:800;margin-bottom:6px;">Base URL</div>
+              <input id="f_infobip_base" type="text" placeholder="4kvd9p.api.infobip.com" style="width:100%;padding:12px;border:1px solid #e5e7eb;border-radius:12px;font-size:13px;" />
+            </div>
+            <div>
+              <div style="font-size:12px;color:#6b7280;font-weight:800;margin-bottom:6px;">From (Sender)</div>
+              <input id="f_infobip_from" type="text" placeholder="MyClinic" style="width:100%;padding:12px;border:1px solid #e5e7eb;border-radius:12px;font-size:13px;" />
+            </div>
+            <div>
+              <div style="font-size:12px;color:#6b7280;font-weight:800;margin-bottom:6px;">API key</div>
+              <input id="f_infobip_key" type="password" placeholder="my_api_key" style="width:100%;padding:12px;border:1px solid #e5e7eb;border-radius:12px;font-size:13px;" />
+            </div>
+            <div>
+              <div style="font-size:12px;color:#6b7280;font-weight:800;margin-bottom:6px;">Username (optional)</div>
+              <input id="f_infobip_user" type="text" placeholder="konstantinou.kostas" style="width:100%;padding:12px;border:1px solid #e5e7eb;border-radius:12px;font-size:13px;" />
+            </div>
+            <div>
+              <div style="font-size:12px;color:#6b7280;font-weight:800;margin-bottom:6px;">UserKey (optional)</div>
+              <input id="f_infobip_userkey" type="text" placeholder="..." style="width:100%;padding:12px;border:1px solid #e5e7eb;border-radius:12px;font-size:13px;" />
+            </div>
+          </div>
+          <div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+            <button id="saveInfobipBtn" class="btn smallbtn primary" type="button" style="width:auto;border:none;cursor:pointer;">💾 Save Infobip</button>
+            <a class="btn smallbtn secondary" href="/therapy/settings/env" style="width:auto;">⬇️ Download client.env</a>
+            <div id="saveInfobipMsg" style="font-size:12px;color:#6b7280;"></div>
+          </div>
+          <div style="margin-top:10px;color:#6b7280;font-size:12px;">Note: For security, the API key is never shown back after saving.</div>
+        </div>
+      </div>
+
+      <!-- License tab -->
+      <div class="tabpanel" id="tab-license" role="tabpanel" style="margin-top:12px;display:none;">
+        <div style="border:1px solid #e5e7eb;border-radius:16px;padding:14px;">
+          <div style="font-weight:900;margin-bottom:10px;">🔑 License & activation</div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+            <div>
+              <div style="font-size:12px;color:#6b7280;font-weight:800;margin-bottom:6px;">Product mode</div>
+              <select id="f_mode" style="width:100%;padding:12px;border:1px solid #e5e7eb;border-radius:12px;font-size:13px;">
+                <option value="BOTH">Therapy Portal + SMS Calendar</option>
+                <option value="PORTAL">Therapy Portal only</option>
+                <option value="SMS">SMS Calendar only</option>
+              </select>
+            </div>
+            <div>
+              <div style="font-size:12px;color:#6b7280;font-weight:800;margin-bottom:6px;">Action</div>
+              <select id="f_action" style="width:100%;padding:12px;border:1px solid #e5e7eb;border-radius:12px;font-size:13px;">
+                <option value="TRIAL">Start / Extend trial (weeks)</option>
+                <option value="RENEW_WEEKS">Renew (weeks)</option>
+                <option value="RENEW_YEAR">Renew (1 year)</option>
+              </select>
+            </div>
+            <div>
+              <div style="font-size:12px;color:#6b7280;font-weight:800;margin-bottom:6px;">Weeks</div>
+              <input id="f_weeks" type="number" min="1" value="4" style="width:100%;padding:12px;border:1px solid #e5e7eb;border-radius:12px;font-size:13px;" />
+            </div>
+          </div>
+
+          <div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+            <button id="applyLicenseBtn" class="btn smallbtn primary" type="button" style="width:auto;border:none;cursor:pointer;">✅ Apply</button>
+            <div id="applyLicenseMsg" style="font-size:12px;color:#6b7280;"></div>
+          </div>
+
+          <div style="margin-top:14px;padding-top:14px;border-top:1px dashed #e5e7eb;">
+            <div style="font-size:12px;color:#6b7280;font-weight:800;margin-bottom:8px;">Activation code (vendor-issued)</div>
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+              <input id="activationCode" type="text" placeholder="Paste activation code…" style="flex:1;min-width:260px;padding:12px 12px;border:1px solid #e5e7eb;border-radius:12px;font-size:13px;" />
+              <button id="activateBtn" type="button" class="btn smallbtn primary" style="width:auto;border:none;cursor:pointer;">✅ Activate</button>
+            </div>
+            <div id="activationMsg" style="margin-top:8px;font-size:12px;color:#6b7280;"></div>
+          </div>
+        </div>
+      </div>
+    </details>
+
+    <div class="small">Tip: Use <b>Clinic details</b> only when you need to configure the installation.</div>
+  </div>
+</div>
+
+<script>
+(async function(){
+  const pill = document.getElementById('licensePill');
+  const modePill = document.getElementById('modePill');
+  const btnPortal = document.getElementById('btnPortal');
+  const btnSMS = document.getElementById('btnSMS');
+
+  const clinicDetails = document.getElementById('clinicDetails');
+  const activationSuccess = document.getElementById('activationSuccess');
+  const activationSuccessMeta = document.getElementById('activationSuccessMeta');
+
+  function setDisabled(el, disabled){
+    if(!el) return;
+    if(disabled){ el.classList.add('muted'); el.setAttribute('aria-disabled','true'); el.href = '#'; }
+    else{ el.classList.remove('muted'); el.removeAttribute('aria-disabled'); }
+  }
+
+  function pickMapQuery(address, lat, lng){
+    const addr = (address||'').trim();
+    if(addr) return addr;
+    if(lat!==null && lat!==undefined && lng!==null && lng!==undefined && lat!=='' && lng!=='') return `${lat},${lng}`;
+    return '';
+  }
+
+  async function refreshLicense(){
+    const r = await fetch('/therapy/api/license', {cache:'no-store'});
+    const data = await r.json();
+    const active = !!data.active;
+    const pm = (data.product_mode||'BOTH').toUpperCase();
+    pill.textContent = active ? '✅ License active' : '⛔ License expired';
+    pill.classList.toggle('good', active);
+    pill.classList.toggle('bad', !active);
+
+    let modeLabel = 'Therapy Portal + SMS Calendar';
+    if(pm==='PORTAL') modeLabel = 'Therapy Portal only';
+    if(pm==='SMS') modeLabel = 'SMS Calendar only';
+    modePill.textContent = '🧩 Mode: ' + modeLabel;
+
+    setDisabled(btnPortal, !active || pm==='SMS');
+    setDisabled(btnSMS, !active || pm==='PORTAL');
+    return {active, pm, data};
+  }
+
+  async function refreshClinic(){
+    const cs = await fetch('/therapy/api/clinic_settings', {cache:'no-store'});
+    const c = await cs.json();
+    document.getElementById('clinicName').textContent = c.clinic_name || '—';
+    document.getElementById('clinicAddress').textContent = c.address || '—';
+    const lat = (c.lat!==undefined && c.lat!==null) ? c.lat : '';
+    const lng = (c.lng!==undefined && c.lng!==null) ? c.lng : '';
+    document.getElementById('clinicCoords').textContent = (lat!=='' && lng!=='') ? (`Lat ${lat} · Lng ${lng}`) : '—';
+
+    const q = pickMapQuery(c.address, lat, lng);
+    const mapEl = document.getElementById('clinicMap');
+    if(q){
+      mapEl.href = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
+      mapEl.style.display = 'inline-flex';
+    } else {
+      mapEl.style.display = 'none';
+    }
+
+    document.getElementById('smsProvider').textContent = (c.sms_provider || 'infobip');
+    document.getElementById('smsSender').textContent = 'Sender: ' + (c.infobip_sender || '—');
+
+    // fill forms
+    const fcn = document.getElementById('f_clinic_name');
+    const fa = document.getElementById('f_address');
+    const flat = document.getElementById('f_lat');
+    const flng = document.getElementById('f_lng');
+    if(fcn) fcn.value = c.clinic_name || '';
+    if(fa) fa.value = c.address || '';
+    if(flat) flat.value = (lat!=='' ? lat : '');
+    if(flng) flng.value = (lng!=='' ? lng : '');
+
+    // infobip public fields
+    const ibBase = document.getElementById('f_infobip_base');
+    const ibFrom = document.getElementById('f_infobip_from');
+    if(ibBase) ibBase.value = (c.infobip_base_url || '');
+    if(ibFrom) ibFrom.value = (c.infobip_sender || '');
+  }
+
+  async function refreshInfobipPublic(){
+    const r = await fetch('/therapy/api/infobip_settings', {cache:'no-store'});
+    if(!r.ok) return;
+    const d = await r.json();
+    const u = document.getElementById('f_infobip_user');
+    const uk = document.getElementById('f_infobip_userkey');
+    if(u) u.value = d.infobip_username || '';
+    if(uk) uk.value = d.infobip_userkey || '';
+  }
+
+  async function init(){
+    await refreshClinic();
+    await refreshInfobipPublic();
+    const st = await refreshLicense();
+    // set defaults in license form
+    const fmode = document.getElementById('f_mode');
+    if(fmode && st && st.pm) fmode.value = st.pm;
+  }
+
+  // Tabs
+  function selectTab(tab){
+    document.querySelectorAll('.tabbtn').forEach(b=>b.classList.toggle('active', b.dataset.tab===tab));
+    document.querySelectorAll('.tabpanel').forEach(p=>{
+      p.style.display = (p.id === 'tab-' + tab) ? '' : 'none';
+    });
+  }
+  document.querySelectorAll('.tabbtn').forEach(btn=>{
+    btn.addEventListener('click', ()=>selectTab(btn.dataset.tab));
+  });
+  selectTab('overview');
+
+  // Save clinic
+  const saveClinicBtn = document.getElementById('saveClinicBtn');
+  const saveClinicMsg = document.getElementById('saveClinicMsg');
+  if(saveClinicBtn){
+    saveClinicBtn.addEventListener('click', async ()=>{
+      saveClinicMsg.textContent = 'Saving…';
+      saveClinicBtn.disabled = true;
+      try{
+        const payload = {
+          clinic_name: (document.getElementById('f_clinic_name').value||'').trim(),
+          address: (document.getElementById('f_address').value||'').trim(),
+          lat: document.getElementById('f_lat').value,
+          lng: document.getElementById('f_lng').value,
+        };
+        const r = await fetch('/therapy/api/clinic_settings', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify(payload)
+        });
+        if(!r.ok){
+          const t = await r.json().catch(()=>({detail:'save_failed'}));
+          saveClinicMsg.textContent = 'Save failed: ' + (t.detail||'error');
+          return;
+        }
+        saveClinicMsg.textContent = '✅ Saved.';
+        await refreshClinic();
+      } finally {
+        saveClinicBtn.disabled = false;
+      }
+    });
+  }
+
+  // Save Infobip
+  const saveInfobipBtn = document.getElementById('saveInfobipBtn');
+  const saveInfobipMsg = document.getElementById('saveInfobipMsg');
+  if(saveInfobipBtn){
+    saveInfobipBtn.addEventListener('click', async ()=>{
+      saveInfobipMsg.textContent = 'Saving…';
+      saveInfobipBtn.disabled = true;
+      try{
+        const payload = {
+          infobip_base_url: (document.getElementById('f_infobip_base').value||'').trim(),
+          infobip_sender: (document.getElementById('f_infobip_from').value||'').trim(),
+          infobip_api_key: (document.getElementById('f_infobip_key').value||'').trim(),
+          infobip_username: (document.getElementById('f_infobip_user').value||'').trim(),
+          infobip_userkey: (document.getElementById('f_infobip_userkey').value||'').trim(),
+        };
+        const r = await fetch('/therapy/api/infobip_settings', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify(payload)
+        });
+        if(!r.ok){
+          const t = await r.json().catch(()=>({detail:'save_failed'}));
+          saveInfobipMsg.textContent = 'Save failed: ' + (t.detail||'error');
+          return;
+        }
+        saveInfobipMsg.textContent = '✅ Saved.';
+        // clear API key field after save
+        const k = document.getElementById('f_infobip_key');
+        if(k) k.value = '';
+        await refreshClinic();
+      } finally {
+        saveInfobipBtn.disabled = false;
+      }
+    });
+  }
+
+  // Manual license apply
+  const applyLicenseBtn = document.getElementById('applyLicenseBtn');
+  const applyLicenseMsg = document.getElementById('applyLicenseMsg');
+  if(applyLicenseBtn){
+    applyLicenseBtn.addEventListener('click', async ()=>{
+      applyLicenseMsg.textContent = 'Applying…';
+      applyLicenseBtn.disabled = true;
+      try{
+        const payload = {
+          product_mode: document.getElementById('f_mode').value,
+          action: document.getElementById('f_action').value,
+          weeks: parseInt(document.getElementById('f_weeks').value||'4',10) || 4,
+        };
+        const r = await fetch('/therapy/api/license/manual', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify(payload)
+        });
+        if(!r.ok){
+          const t = await r.json().catch(()=>({detail:'apply_failed'}));
+          applyLicenseMsg.textContent = 'Apply failed: ' + (t.detail||'error');
+          return;
+        }
+        applyLicenseMsg.textContent = '✅ Updated.';
+        const st = await refreshLicense();
+        if(st && st.data){
+          // show success card summary too
+          const d = st.data;
+          const clientId = (d.client_id||'').trim() || '—';
+          const endIso = d.license_end || d.trial_end || null;
+          let endLabel = '—';
+          if(endIso){
+            const dt = new Date(endIso);
+            endLabel = isNaN(dt.getTime()) ? String(endIso) : dt.toLocaleDateString(undefined, {year:'numeric',month:'short',day:'2-digit'});
+          }
+          const daysLeft = (d.days_left!==undefined && d.days_left!==null) ? d.days_left : null;
+          const pm = (d.product_mode||'BOTH').toUpperCase();
+          activationSuccess.style.display = 'block';
+          activationSuccessMeta.innerHTML = `<b>Client:</b> ${clientId} &nbsp; | &nbsp; <b>Mode:</b> ${pm} &nbsp; | &nbsp; <b>Ends:</b> ${endLabel}` + (daysLeft!==null ? ` &nbsp; | &nbsp; <b>Days left:</b> ${daysLeft}` : '');
+        }
+      } finally {
+        applyLicenseBtn.disabled = false;
+      }
+    });
+  }
+
+  // Activation
+  const activationMsg = document.getElementById('activationMsg');
+  const activationCode = document.getElementById('activationCode');
+  const activateBtn = document.getElementById('activateBtn');
+  async function activate(){
+    const code = (activationCode.value||'').trim();
+    activationMsg.textContent = '';
+    if(activationSuccess){ activationSuccess.style.display = 'none'; }
+    if(!code){ activationMsg.textContent = 'Please paste an activation code.'; return; }
+    activateBtn.disabled = true;
+    activateBtn.style.opacity = 0.7;
+    activationMsg.textContent = 'Activating…';
+    try{
+      const r = await fetch('/therapy/api/license/activate', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({activation_code: code})
+      });
+      if(!r.ok){
+        const t = await r.json().catch(()=>({detail:'activation_failed'}));
+        activationMsg.textContent = 'Activation failed: ' + (t.detail || 'invalid_code');
+        return;
+      }
+      activationMsg.textContent = '✅ Activated. Refreshing…';
+      const st = await refreshLicense();
+      await refreshClinic();
+
+      if(clinicDetails){ clinicDetails.open = true; }
+      try{
+        const d = (st && st.data) ? st.data : {};
+        const clientId = (d.client_id || '').trim() || '—';
+        const endIso = d.license_end || d.trial_end || null;
+        let endLabel = '—';
+        if(endIso){
+          const dt = new Date(endIso);
+          endLabel = isNaN(dt.getTime()) ? String(endIso) : dt.toLocaleDateString(undefined, {year:'numeric',month:'short',day:'2-digit'});
+        }
+        const daysLeft = (d.days_left!==undefined && d.days_left!==null) ? d.days_left : null;
+        const pm = (d.product_mode || 'BOTH').toUpperCase();
+
+        if(activationSuccess){
+          activationSuccess.style.display = 'block';
+          activationSuccessMeta.innerHTML = `<b>Client:</b> ${clientId} &nbsp; | &nbsp; <b>Mode:</b> ${pm} &nbsp; | &nbsp; <b>Ends:</b> ${endLabel}` + (daysLeft!==null ? ` &nbsp; | &nbsp; <b>Days left:</b> ${daysLeft}` : '');
+        }
+      } catch(e){ /* ignore */ }
+
+      // Switch back to overview so the user sees the success card
+      selectTab('overview');
+    } finally {
+      activateBtn.disabled = false;
+      activateBtn.style.opacity = 1;
+    }
+  }
+  if(activateBtn){ activateBtn.addEventListener('click', activate); }
+  if(activationCode){ activationCode.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); activate(); } }); }
+
+  await init();
+})();
+</script>
+</body>
+</html>

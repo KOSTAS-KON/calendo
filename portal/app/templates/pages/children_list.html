@@ -1,0 +1,61 @@
+{% extends "layout.html" %}
+{% set header = "Children" %}
+{% block content %}
+
+<div class="grid grid-cols-1 xl:grid-cols-3 gap-5">
+  <section class="xl:col-span-2">
+    <div class="mb-3 text-sm text-slate-600">Select a child to view records, documents, appointments, and billing.</div>
+
+    <div class="list">
+      {% for c in children %}
+        <a class="listrow" href="{{ rp }}/children/{{ c.id }}">
+          <div class="font-semibold">{{ c.full_name }}</div>
+          <div class="text-xs text-slate-500">ID {{ c.id }}{% if c.date_of_birth %} · DOB {{ c.date_of_birth }}{% endif %}</div>
+        </a>
+      {% else %}
+        <div class="text-sm text-slate-500">No children yet.</div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <aside class="card-soft">
+    <div class="font-extrabold mb-3">Add child</div>
+    <form class="space-y-3" method="post" action="{{ rp }}/children/create">
+      <div>
+        <label class="label">Full name</label>
+        <input name="full_name" required class="input" placeholder="e.g., John D." />
+      </div>
+      <div>
+        <label class="label">Date of birth</label>
+        <input type="date" name="date_of_birth" class="input" />
+      </div>
+      <div>
+        <label class="label">Notes</label>
+        <textarea name="notes" rows="4" class="input" placeholder="Goals, background, etc."></textarea>
+      </div>
+
+      <div class="pt-2 border-t border-slate-200"></div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div>
+          <label class="label">Parent/Guardian 1 name</label>
+          <input name="parent1_name" class="input" placeholder="e.g., Maria Papadopoulou" />
+        </div>
+        <div>
+          <label class="label">Parent/Guardian 1 phone</label>
+          <input name="parent1_phone" class="input" placeholder="e.g., +30 69..." />
+        </div>
+        <div>
+          <label class="label">Parent/Guardian 2 name</label>
+          <input name="parent2_name" class="input" placeholder="optional" />
+        </div>
+        <div>
+          <label class="label">Parent/Guardian 2 phone</label>
+          <input name="parent2_phone" class="input" placeholder="optional" />
+        </div>
+      </div>
+      <button class="btn w-full" type="submit">Create</button>
+    </form>
+  </aside>
+</div>
+
+{% endblock %}

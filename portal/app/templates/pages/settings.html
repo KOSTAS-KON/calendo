@@ -1,0 +1,179 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="tabs" style="margin-bottom:14px;">
+  <button class="tab is-active" data-tab="clinic">🏥 Clinic</button>
+  <button class="tab" data-tab="infobip">📣 Infobip SMS</button>
+  <button class="tab" data-tab="license">🔑 License</button>
+</div>
+
+<div id="tab-clinic" class="tabpanel">
+  <div class="card">
+    <div class="card-title">Clinic Details</div>
+    <div class="card-sub">These values are stored locally in the database (per client installation).</div>
+
+    {% set rp = request.scope.get("root_path", "") %}
+    <form method="post" action="{{ rp }}/settings/clinic" class="grid2">
+      <div>
+        <label class="lbl">Clinic name</label>
+        <input class="inp" name="clinic_name" value="{{ clinic.clinic_name }}" placeholder="e.g. 1st Providers Choice" />
+      </div>
+      <div>
+        <label class="lbl">Address</label>
+        <input class="inp" name="address" value="{{ clinic.address }}" placeholder="Street, City, Postcode" />
+      </div>
+      <div>
+        <label class="lbl">Latitude</label>
+        <input class="inp" name="lat" value="{{ clinic.lat if clinic.lat is not none else '' }}" placeholder="40.523" />
+      </div>
+      <div>
+        <label class="lbl">Longitude</label>
+        <input class="inp" name="lng" value="{{ clinic.lng if clinic.lng is not none else '' }}" placeholder="22.202" />
+      </div>
+      <div style="grid-column:1 / -1; display:flex; gap:10px; align-items:center;">
+        <button class="btn" type="submit">Save clinic settings</button>
+        <span class="muted">Updated: {{ clinic.updated_at.strftime('%Y-%m-%d %H:%M') if clinic.updated_at else '-' }}</span>
+      </div>
+    </form>
+  </div>
+
+  <div class="card" style="margin-top:12px;">
+    <div class="card-title">Google Maps</div>
+    <div class="card-sub">We generate a safe Maps link from either the address or the coordinates.</div>
+    {% if google_maps_link %}
+      <a class="btn" href="{{ google_maps_link }}" target="_blank" rel="noopener" style="width:fit-content;">🗺️ Open clinic location</a>
+    {% else %}
+      <div class="muted">Add either an Address or both Latitude/Longitude to enable the link.</div>
+    {% endif %}
+  </div>
+
+  {% if clinic.lat is not none and clinic.lng is not none %}
+  <div class="card" style="margin-top:12px;">
+    <div class="card-title">Map Coordinates</div>
+    <div class="card-sub">Use these coordinates for navigation and documentation.</div>
+    <div class="chip" style="display:inline-flex;">
+      <span>📍 {{ clinic.lat }}, {{ clinic.lng }}</span>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+<div id="tab-infobip" class="tabpanel" style="display:none;">
+  <div class="card">
+    <div class="card-title">Infobip Credentials</div>
+    <div class="card-sub">Per client: base URL, API key, sender ID. API key is stored locally and not displayed via API.</div>
+
+    {% set rp = request.scope.get("root_path", "") %}
+    <form method="post" action="{{ rp }}/settings/infobip" class="grid2">
+      <div style="grid-column:1 / -1;">
+        <label class="lbl">Infobip base URL</label>
+        <input class="inp" name="infobip_base_url" value="{{ clinic.infobip_base_url }}" placeholder="https://api.infobip.com" />
+      </div>
+      <div>
+        <label class="lbl">Sender ID</label>
+        <input class="inp" name="infobip_sender" value="{{ clinic.infobip_sender }}" placeholder="YourSender" />
+      </div>
+      <div>
+        <label class="lbl">API Key</label>
+        <input class="inp" name="infobip_api_key" value="{{ clinic.infobip_api_key }}" placeholder="(paste API key)" />
+      </div>
+      <div>
+        <label class="lbl">Username (optional)</label>
+        <input class="inp" name="infobip_username" value="{{ clinic.infobip_username if clinic.infobip_username is defined else '' }}" placeholder="e.g. user@domain" />
+      </div>
+      <div>
+        <label class="lbl">User key (optional)</label>
+        <input class="inp" name="infobip_userkey" value="{{ clinic.infobip_userkey if clinic.infobip_userkey is defined else '' }}" placeholder="(optional)" />
+      </div>
+      <div style="grid-column:1 / -1; display:flex; gap:10px; align-items:center;">
+        <button class="btn" type="submit">Save Infobip settings</button>
+        <span class="muted">Keep API key private</span>
+      </div>
+    </form>
+  </div>
+
+  <div class="card" style="margin-top:12px;">
+    <div class="card-title">Export .env for the client</div>
+    <div class="card-sub">Copy/paste this into a <b>.env</b> file in the product folder (or click download).</div>
+    <textarea class="inp" style="width:100%;min-height:190px;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;" readonly>{{ env_preview }}</textarea>
+    <div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+      <a class="btn" href="{{ rp }}/settings/env" style="width:fit-content;">⬇️ Download client.env</a>
+      <span class="muted">Rename to <b>.env</b> in the product folder if you want Compose to pick it up.</span>
+    </div>
+  </div>
+</div>
+
+<div id="tab-license" class="tabpanel" style="display:none;">
+  <div class="card">
+    <div class="card-title">License / Trial</div>
+    <div class="card-sub">Option A: paste an activation code issued by the vendor (offline signed). Manual trial controls are still available for demos.</div>
+
+    {% if request.query_params.get('ok') == 'activated' %}
+      <div class="pill good" style="margin-top:10px; width:fit-content;">✅ Activated successfully</div>
+    {% endif %}
+    {% if request.query_params.get('err') == 'invalid_code' %}
+      <div class="pill bad" style="margin-top:10px; width:fit-content;">⛔ Invalid or expired activation code</div>
+    {% endif %}
+    {% if request.query_params.get('err') == 'missing_code' %}
+      <div class="pill bad" style="margin-top:10px; width:fit-content;">⛔ Please paste an activation code</div>
+    {% endif %}
+
+    {% set rp = request.scope.get("root_path", "") %}
+    <form method="post" action="{{ rp }}/settings/activate" style="margin-top:12px;">
+      <label class="lbl">Activation code</label>
+      <input class="inp" name="activation_code" placeholder="e.g. TSL1.<payload>.<signature>" />
+      <div style="margin-top:10px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <button class="btn" type="submit">Activate</button>
+        <span class="muted">Current: <b>{{ 'activation' if license.activation_token else 'manual' }}</b>{% if license.client_id %} · Client ID: <b>{{ license.client_id }}</b>{% endif %}</span>
+      </div>
+      <div class="muted" style="margin-top:8px; font-size:12px;">Plan mapping: 1 = 1 week trial, 2 = 1 month trial, 3 = 1 year license.</div>
+    </form>
+  </div>
+
+  <div class="card" style="margin-top:12px;">
+    <div class="card-title">Manual controls</div>
+    <div class="card-sub">Use this only for internal demos. For real clients use Activation codes.</div>
+
+    <form method="post" action="{{ rp }}/settings/license" class="grid2">
+      <div>
+        <label class="lbl">Product mode</label>
+        <select class="inp" name="product_mode">
+          <option value="BOTH" {% if license.product_mode == 'BOTH' %}selected{% endif %}>Therapy Portal + SMS Calendar</option>
+          <option value="PORTAL" {% if license.product_mode == 'PORTAL' %}selected{% endif %}>Therapy Portal only</option>
+          <option value="SMS" {% if license.product_mode == 'SMS' %}selected{% endif %}>SMS Calendar only</option>
+        </select>
+      </div>
+      <div>
+        <label class="lbl">Action</label>
+        <select class="inp" name="action">
+          <option value="TRIAL">Start / Extend trial (weeks)</option>
+          <option value="RENEW_WEEKS">Renew license (weeks)</option>
+          <option value="RENEW_YEAR">Renew license (1 year)</option>
+        </select>
+      </div>
+      <div>
+        <label class="lbl">Weeks</label>
+        <input class="inp" name="weeks" type="number" min="1" value="4" />
+      </div>
+      <div style="grid-column:1 / -1; display:flex; gap:10px; align-items:center;">
+        <button class="btn" type="submit">Apply</button>
+        <span class="muted">Trial end: {{ license.trial_end.strftime('%Y-%m-%d') if license.trial_end else '-' }} · License end: {{ license.license_end.strftime('%Y-%m-%d') if license.license_end else '-' }}</span>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+  (function(){
+    const tabs = document.querySelectorAll('.tab');
+    function show(name){
+      tabs.forEach(t=>t.classList.toggle('is-active', t.dataset.tab===name));
+      document.querySelectorAll('.tabpanel').forEach(p=>p.style.display='none');
+      const el = document.getElementById('tab-'+name);
+      if(el) el.style.display='block';
+    }
+    tabs.forEach(t=>t.addEventListener('click', ()=>show(t.dataset.tab)));
+  })();
+</script>
+
+{% endblock %}

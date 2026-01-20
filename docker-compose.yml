@@ -1,0 +1,53 @@
+services:
+  db:
+    image: postgres:16
+    container_name: therapy_sms_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: therapy_sms
+    volumes:
+      - therapy_sms_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d therapy_sms"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  portal:
+    build:
+      context: ./portal
+    container_name: therapy_portal
+    environment:
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@db:5432/therapy_sms
+      SECRET_KEY: change-me
+      LICENSE_PUBLIC_KEY: "${LICENSE_PUBLIC_KEY:-}"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  sms:
+    build:
+      context: ./sms
+    container_name: sms_tool
+    environment:
+      THERAPY_PORTAL_URL: http://portal:8010
+      INTERNAL_TOKEN: change-me
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@db:5432/therapy_sms
+    depends_on:
+      - portal
+
+  gateway:
+    image: nginx:alpine
+    container_name: therapy_sms_gateway
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/html:/usr/share/nginx/html:ro
+    depends_on:
+      - sms
+      - portal
+
+volumes:
+  therapy_sms_db:

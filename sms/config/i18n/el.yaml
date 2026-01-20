@@ -1,0 +1,67 @@
+app:
+  title: "sms3 — Ημερολόγιο, Ασθενείς & Μηνύματα"
+
+nav:
+  calendar: "Ημερολόγιο"
+  customers: "Ασθενείς"
+  send_center: "Κέντρο Αποστολών"
+  templates: "Πρότυπα Μηνυμάτων"
+
+calendar:
+  appointment_default_title: "Ραντεβού"
+  hint: "Κάντε κλικ σε ώρα για νέο ραντεβού"
+  moved: "Το ραντεβού μετακινήθηκε."
+  cancelled: "Το ραντεβού ακυρώθηκε."
+  created: "Το ραντεβού δημιουργήθηκε."
+
+appointment:
+  panel_title_new: "Νέο Ραντεβού"
+  panel_title_edit: "Επεξεργασία Ραντεβού"
+  patient: "Ασθενής"
+  service: "Υπηρεσία"
+  date: "Ημερομηνία"
+  start: "Ώρα Έναρξης"
+  end: "Ώρα Λήξης"
+  notes: "Σημειώσεις"
+  save: "Αποθήκευση"
+  delete: "Διαγραφή"
+  cancel: "Ακύρωση"
+
+sms:
+  section: "SMS για αυτό το ραντεβού"
+  send_now: "Αποστολή τώρα"
+  reminder_1d: "Υπενθύμιση 1 ημέρα πριν"
+  reminder_2h: "Υπενθύμιση 2 ώρες πριν"
+  final_text: "Τελικό μήνυμα (αποθηκεύεται)"
+  template_for_action: "Πρότυπο για ενέργεια"
+  preview: "Προεπισκόπηση / Επεξεργασία"
+
+customers:
+  title: "Ασθενείς"
+  search: "Αναζήτηση"
+  add: "Προσθήκη ασθενή"
+  edit: "Επεξεργασία"
+  delete: "Διαγραφή"
+  name: "Ονοματεπώνυμο"
+  phone: "Τηλέφωνο (κινητό)"
+  email: "Email"
+  save: "Αποθήκευση"
+
+send_center:
+  title: "Κέντρο Αποστολών"
+  kpi_queued: "Σε αναμονή"
+  kpi_scheduled: "Προγραμματισμένα"
+  kpi_sent: "Εστάλη"
+  kpi_failed: "Απέτυχε"
+  kpi_cancelled: "Ακυρώθηκε"
+  allow_send: "Επιτρέπεται η αποστολή"
+  export_csv: "Εξαγωγή CSV"
+  retry_failed: "Επανάληψη αποτυχημένων"
+  mark_sent_demo: "Σήμανση ως εστάλη"
+
+status:
+  queued: "Σε αναμονή"
+  scheduled: "Προγραμματισμένο"
+  sent: "Εστάλη"
+  failed: "Απέτυχε"
+  cancelled: "Ακυρώθηκε"

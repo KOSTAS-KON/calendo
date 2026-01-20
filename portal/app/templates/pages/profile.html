@@ -1,0 +1,55 @@
+{% extends "layout.html" %}
+{% block content %}
+<div style="display:grid; grid-template-columns: 1fr 420px; gap:14px;">
+  <div class="card" style="padding:14px;">
+    <div style="font-weight:800; margin-bottom:10px;">User profile</div>
+
+    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
+      <div>
+        <div class="text-xs" style="color:#64748b; margin-bottom:6px;">Display name</div>
+        <div style="font-weight:700;">{{ p.display_name }}</div>
+      </div>
+      <div>
+        <div class="text-xs" style="color:#64748b; margin-bottom:6px;">Role</div>
+        <div style="font-weight:700;">{{ p.role }}</div>
+      </div>
+      <div>
+        <div class="text-xs" style="color:#64748b; margin-bottom:6px;">Clinic</div>
+        <div style="font-weight:700;">{{ p.clinic }}</div>
+      </div>
+      <div>
+        <div class="text-xs" style="color:#64748b; margin-bottom:6px;">Timezone</div>
+        <div style="font-weight:700;">{{ p.timezone }}</div>
+      </div>
+    </div>
+
+    <div style="margin-top:14px;" class="text-sm">
+      <span class="pill">Theme: Portal</span>
+      <span class="pill">Notifications: Enabled</span>
+      <span class="pill">Default channel: {{ p.default_channel }}</span>
+    </div>
+  </div>
+
+  <div class="card" style="padding:14px;">
+    <div style="font-weight:800; margin-bottom:10px;">Clinic settings</div>
+    <div class="text-sm" style="color:#64748b; margin-bottom:12px;">
+      This is mock content so the page is not empty. Wire it to your user table later.
+    </div>
+
+    <div style="display:grid; gap:10px;">
+      <div>
+        <div class="text-xs" style="color:#64748b; margin-bottom:6px;">Default session length</div>
+        <div><span class="pill">50 min</span></div>
+      </div>
+      <div>
+        <div class="text-xs" style="color:#64748b; margin-bottom:6px;">Billing cycle</div>
+        <div><span class="pill">Monthly</span> <span class="pill warn">Parent sign-off required</span></div>
+      </div>
+      <div>
+        <div class="text-xs" style="color:#64748b; margin-bottom:6px;">Communication channels</div>
+        <div><span class="pill ok">SMS</span> <span class="pill">Email</span> <span class="pill">WhatsApp</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

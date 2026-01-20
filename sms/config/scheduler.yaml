@@ -1,0 +1,15 @@
+timezone: Europe/Athens
+reminders:
+  enabled: true
+  modes:
+  - name: reminder_1d
+    offset_minutes: 1440
+    window_minutes: 10
+    template: 'Γεια σου {name}, υπενθύμιση: έχεις ραντεβού {when}.'
+  - name: reminder_2h
+    offset_minutes: 120
+    window_minutes: 10
+    template: 'Γεια σου {name}, υπενθύμιση: έχεις ραντεβού σε 2 ώρες ({when}).'
+sending:
+  enabled: true
+  send_after_queue: false

@@ -1,0 +1,28 @@
+<div class="tablewrap">
+  <table class="apptable">
+    <thead>
+      <tr>
+        <th style="width:58px;">&nbsp;</th>
+        <th>Office</th>
+        <th>Provider/Room</th>
+        <th>Date</th>
+        <th>Time</th>
+        <th>Procedure</th>
+        <th style="width:120px;">Note</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for a in past or rows %}
+      <tr>
+        <td class="statuscell">{{ status_badge(a.attendance_status) | safe }}</td>
+        <td>1st Providers Choice</td>
+        <td>{{ a.therapist_name }}</td>
+        <td>{{ a.starts_at.strftime("%b %d, %Y") }}</td>
+        <td>{{ a.starts_at.strftime("%I:%M %p") }}</td>
+        <td>{{ a.procedure }}</td>
+        <td><a class="link" href="{{ rp }}/appointments/{{ a.id }}">Open</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>

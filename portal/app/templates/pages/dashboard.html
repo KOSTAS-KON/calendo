@@ -1,0 +1,33 @@
+{% extends "layout.html" %}
+{% set header = "Portal Overview" %}
+{% block content %}
+
+<div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-5">
+  <div class="metric">
+    <div class="metric-label">Children</div>
+    <div class="metric-value">{{ children_count }}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Appointments</div>
+    <div class="metric-value">{{ appt_count }}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Documents</div>
+    <div class="metric-value">{{ uploads_count }}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Billing rows</div>
+    <div class="metric-value">{{ billing_count }}</div>
+  </div>
+</div>
+
+<div class="flex flex-wrap gap-2 mb-4">
+  <a class="btn" href="{{ rp }}/calendar">Open Calendar</a>
+  <a class="btn" href="{{ rp }}/billing">Open Billing</a>
+  <a class="btn" href="{{ rp }}/children">Open Children</a>
+</div>
+
+<div class="font-extrabold mb-2">Recent appointments</div>
+{% include "pages/_appointments_table.html" %}
+
+{% endblock %}

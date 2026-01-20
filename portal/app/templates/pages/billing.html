@@ -1,0 +1,122 @@
+{% extends "layout.html" %}
+{% set header = "Billing" %}
+{% block content %}
+
+<div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+  <div class="text-sm text-slate-600">
+    Billing rows (also shown in Calendar with colors).
+  </div>
+  <a class="btn" href="{{ rp }}/billing/inputs">Billing inputs (recurring)</a>
+</div>
+
+<div class="tabs mb-4">
+  <a class="tab {% if mode != 'edit' %}active{% endif %}" href="{{ rp }}/billing?{% if selected_child_id %}child_id={{ selected_child_id }}&{% endif %}mode=display">Display</a>
+  <a class="tab {% if mode == 'edit' %}active{% endif %}" href="{{ rp }}/billing?{% if selected_child_id %}child_id={{ selected_child_id }}&{% endif %}mode=edit">Edit</a>
+</div>
+
+<form method="get" action="{{ rp }}/billing" class="flex flex-wrap items-end gap-3 mb-4">
+  <input type="hidden" name="mode" value="{{ mode }}" />
+  <div>
+    <label class="label">Filter by child</label>
+    <select name="child_id" class="input" onchange="this.form.submit()">
+      <option value="">All</option>
+      {% for c in children %}
+        <option value="{{ c.id }}" {% if selected_child_id == c.id %}selected{% endif %}>{{ c.full_name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <noscript><button class="btn" type="submit">Apply</button></noscript>
+</form>
+
+<div class="tablewrap">
+  <table class="apptable">
+    <thead>
+      <tr>
+        <th>child name</th>
+        <th>billing due</th>
+        <th>paid</th>
+        <th>invoice created</th>
+        <th>parent signed off</th>
+        {% if mode == 'edit' %}
+          <th style="width:120px;">actions</th>
+        {% endif %}
+      </tr>
+    </thead>
+
+    <tbody>
+      {% for b in items %}
+      <tr>
+        <td>{{ b.child.full_name }}</td>
+        <td>{{ b.billing_due.strftime("%d %b %Y") if b.billing_due else "" }}</td>
+
+        {% if mode == 'edit' %}
+          <td>
+            <form method="post" action="{{ rp }}/billing/{{ b.id }}/update" class="rowform">
+              <input type="hidden" name="child_id" value="{{ selected_child_id or '' }}">
+              <input type="hidden" name="redirect" value="/billing?{% if selected_child_id %}child_id={{ selected_child_id }}&{% endif %}mode=edit">
+              <select name="paid" class="input input-sm">
+                <option value="NO" {% if (b.paid or '').upper() != 'YES' %}selected{% endif %}>NO</option>
+                <option value="YES" {% if (b.paid or '').upper() == 'YES' %}selected{% endif %}>YES</option>
+              </select>
+          </td>
+
+          <td>
+              <select name="invoice_created" class="input input-sm">
+                <option value="NO" {% if (b.invoice_created or '').upper() != 'YES' %}selected{% endif %}>NO</option>
+                <option value="YES" {% if (b.invoice_created or '').upper() == 'YES' %}selected{% endif %}>YES</option>
+              </select>
+          </td>
+
+          <td>
+              <select name="parent_signed_off" class="input input-sm">
+                <option value="NO" {% if (b.parent_signed_off or '').upper() != 'YES' %}selected{% endif %}>NO</option>
+                <option value="YES" {% if (b.parent_signed_off or '').upper() == 'YES' %}selected{% endif %}>YES</option>
+              </select>
+          </td>
+
+          <td>
+              <button class="btn btn-sm" type="submit">Save</button>
+            </form>
+          </td>
+        {% else %}
+          <td>
+            {% if (b.paid or '').upper() == 'YES' %}
+              <span class="pill p-green">YES</span>
+            {% else %}
+              <span class="pill p-red">NO</span>
+            {% endif %}
+          </td>
+
+          <td>
+            {% if (b.invoice_created or '').upper() == 'YES' %}
+              <span class="pill p-blue">YES</span>
+            {% else %}
+              <span class="pill p-gray">NO</span>
+            {% endif %}
+          </td>
+
+          <td>
+            {% if (b.parent_signed_off or '').upper() == 'YES' %}
+              <span class="pill p-green">YES</span>
+            {% else %}
+              <span class="pill p-red">NO</span>
+            {% endif %}
+          </td>
+        {% endif %}
+      </tr>
+      {% else %}
+      <tr><td colspan="{% if mode == 'edit' %}6{% else %}5{% endif %}" class="text-sm text-slate-500">No billing rows.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="mt-3 text-xs text-slate-500">
+  Calendar colors:
+  <span class="pill p-green">Paid</span>,
+  <span class="pill p-yellow">Invoice created (unpaid)</span>,
+  <span class="pill p-purple">No invoice</span>.
+  Attendance is also color-coded.
+</div>
+
+{% endblock %}

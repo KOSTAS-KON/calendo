@@ -1,0 +1,122 @@
+{% extends "layout.html" %}
+{% set header = "Billing Inputs (Recurring)" %}
+{% block content %}
+
+<div class="text-sm text-slate-600 mb-4">
+  Create recurring billing rows per child:
+  <ul class="list-disc ml-6 mt-2 space-y-1">
+    <li><b>Weekly</b>: every X weeks</li>
+    <li><b>Monthly</b>: every Z day of month</li>
+    <li>End on a specific date <b>or</b> run indefinitely (we auto-generate a 12-month horizon for operational planning)</li>
+  </ul>
+</div>
+
+<form method="post" action="{{ rp }}/billing/inputs/create" class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+  <div class="lg:col-span-1">
+    <label class="label">Child</label>
+    <select name="child_id" class="input" required>
+      {% for c in children %}
+        <option value="{{ c.id }}">{{ c.full_name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="lg:col-span-1">
+    <label class="label">Frequency</label>
+    <select name="frequency" class="input" required onchange="toggleFreq(this.value)">
+      <option value="weekly">weekly</option>
+      <option value="monthly" selected>monthly</option>
+    </select>
+  </div>
+
+  <div class="lg:col-span-1">
+    <label class="label">Start date</label>
+    <input type="date" name="start_date" class="input" required />
+  </div>
+
+  <div id="weeklyBox" class="lg:col-span-1" style="display:none;">
+    <label class="label">Every N weeks</label>
+    <input type="number" min="1" max="52" name="every_n_weeks" class="input" value="2" />
+  </div>
+
+  <div id="monthlyBox" class="lg:col-span-1">
+    <label class="label">Day of month (1-28 recommended)</label>
+    <input type="number" min="1" max="31" name="day_of_month" class="input" value="1" />
+  </div>
+
+  <div class="lg:col-span-1">
+    <label class="label">Until date (optional)</label>
+    <input type="date" name="until_date" class="input" />
+  </div>
+
+  <div class="lg:col-span-1">
+    <label class="label">Indefinitely</label>
+    <select name="indefinitely" class="input">
+      <option value="NO" selected>NO</option>
+      <option value="YES">YES</option>
+    </select>
+  </div>
+
+  <div class="lg:col-span-3">
+    <label class="label">Description (optional)</label>
+    <input name="description" class="input" placeholder="e.g., Weekly therapy invoice" />
+  </div>
+
+  <div class="lg:col-span-3">
+    <button class="btn" type="submit">Create recurring plan + generate billing rows</button>
+    <a class="link ml-3" href="{{ rp }}/billing">Back to billing</a>
+  </div>
+</form>
+
+<div class="subpanel mt-6">
+  <div class="subhead">Existing billing plans</div>
+  <div class="subbody">
+    <div class="tablewrap">
+      <table class="apptable">
+        <thead>
+          <tr>
+            <th>child</th>
+            <th>frequency</th>
+            <th>start</th>
+            <th>until</th>
+            <th>indefinitely</th>
+            <th>details</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in plans %}
+          <tr>
+            <td>{{ p.child.full_name }}</td>
+            <td>{{ p.frequency }}</td>
+            <td>{{ p.start_date }}</td>
+            <td>{{ p.until_date or "—" }}</td>
+            <td>{{ "YES" if p.indefinitely else "NO" }}</td>
+            <td>
+              {% if p.frequency == "weekly" %}
+                every {{ p.every_n_weeks }} week(s)
+              {% else %}
+                day {{ p.day_of_month }} of month
+              {% endif %}
+              {% if p.description %} · {{ p.description }}{% endif %}
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6" class="text-sm text-slate-500">No plans yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+function toggleFreq(v){
+  const w = document.getElementById("weeklyBox");
+  const m = document.getElementById("monthlyBox");
+  if(v === "weekly"){ w.style.display="block"; m.style.display="none"; }
+  else { w.style.display="none"; m.style.display="block"; }
+}
+toggleFreq("monthly");
+</script>
+
+{% endblock %}
