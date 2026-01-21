@@ -2022,7 +2022,7 @@ def main() -> None:
     # Cross-app navigation
     # - On-prem Docker gateway: Portal is typically under /therapy/ on the same origin.
     # - SaaS (Render): Portal is on a different origin (set PORTAL_APP_URL or PORTAL_BASE_URL).
-    import os
+    
     _portal = (os.getenv("PORTAL_APP_URL") or os.getenv("PORTAL_BASE_URL") or "").strip().rstrip("/")
     _portal_suite = f"{_portal}/suite" if _portal else "/therapy/suite"
     _portal_home = f"{_portal}/" if _portal else "/therapy/"
