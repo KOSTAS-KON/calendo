@@ -1,42 +1,30 @@
 $ErrorActionPreference = "Stop"
 
-# One-command launcher (Windows fallback) for: Portal (FastAPI) + SMS Tool (Streamlit)
-# Runs: Portal on http://127.0.0.1:8010  |  SMS Tool on http://localhost:8501
+Write-Host "Starting Therapy Portal + SMS Calendar..." -ForegroundColor Cyan
 
-$root = Split-Path -Parent $MyInvocation.MyCommand.Path
-Set-Location $root
-
-$venv = Join-Path $root ".venv"
-$py   = Join-Path $venv "Scripts\python.exe"
-
-if (-not (Test-Path $py)) {
-  py -3.11 -m venv .venv
+# Prefer docker compose if available
+function HasCommand($name) {
+  return [bool](Get-Command $name -ErrorAction SilentlyContinue)
 }
 
-& $py -m pip install --upgrade pip | Out-Null
-& $py -m pip install -r "portal\requirements.txt" | Out-Null
-& $py -m pip install -r "sms\requirements.txt" | Out-Null
+if (-not (HasCommand "docker")) {
+  Write-Host "Docker not found. Please install Docker Desktop first." -ForegroundColor Red
+  exit 1
+}
 
-# Start Portal
-$portalLog = Join-Path $root "portal.log"
-$portalCmd = "-m uvicorn app.main:app --host 127.0.0.1 --port 8010"
-$portalProc = Start-Process -FilePath $py -ArgumentList $portalCmd -WorkingDirectory (Join-Path $root "portal") -PassThru -WindowStyle Minimized -RedirectStandardOutput $portalLog -RedirectStandardError $portalLog
+# Compose file in current folder
+$composeFile = Join-Path $PSScriptRoot "docker-compose.yml"
+if (-not (Test-Path $composeFile)) {
+  Write-Host "docker-compose.yml not found in: $PSScriptRoot" -ForegroundColor Red
+  exit 1
+}
 
-# Start SMS Tool
-$env:THERAPY_PORTAL_URL = "http://127.0.0.1:8010"
-$smsLog = Join-Path $root "sms.log"
-$smsArgs = "-m streamlit run apps/fullcalendar_app.py --server.port 8501 --server.address 127.0.0.1"
-$smsProc = Start-Process -FilePath $py -ArgumentList $smsArgs -WorkingDirectory (Join-Path $root "sms") -PassThru -WindowStyle Minimized -RedirectStandardOutput $smsLog -RedirectStandardError $smsLog
+# Start stack
+docker compose -f $composeFile up -d --build
 
-# Store PIDs for Stop.ps1
-@{
-  portal_pid = $portalProc.Id
-  sms_pid    = $smsProc.Id
-} | ConvertTo-Json | Set-Content -Encoding UTF8 (Join-Path $root ".pids.json")
-
-Start-Sleep -Seconds 2
-Start-Process "http://localhost:8501"
-Start-Process "http://127.0.0.1:8010/timeline"
-
-Write-Host "Started Portal (8010) + SMS Tool (8501)."
-Write-Host "Logs: portal.log, sms.log"
+Write-Host ""
+Write-Host "Services starting..." -ForegroundColor Green
+Write-Host "Portal (after containers are healthy): http://localhost:8080/" -ForegroundColor Yellow
+Write-Host "SMS Calendar (if exposed):           http://localhost:8501/" -ForegroundColor Yellow
+Write-Host ""
+Write-Host "Tip: Use 'docker compose ps' to verify status." -ForegroundColor DarkGray

@@ -14,6 +14,6 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY . /app
 
-EXPOSE 8010
-
-CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8010", "--root-path", "/therapy"]
+# Render injects $PORT at runtime. Bind uvicorn to it.
+# Locally, it will default to 8010 if PORT is not set.
+CMD ["sh", "-lc", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8010}"]
