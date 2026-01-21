@@ -50,6 +50,7 @@ def _render(request: Request, template_name: str, ctx: dict, db: Session):
         "user_name": "PAUL PORTAL TEST",
         "clinic": clinic,
         "license": lic,
+        "sms_app_url": (settings.SMS_APP_URL.strip() or "/sms/"),
     }
     base.update(ctx)
     return templates.TemplateResponse(template_name, base)
@@ -106,6 +107,11 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         "uploads_count": db.query(Attachment).count(),
         "billing_count": db.query(BillingItem).count(),
     }, db)
+
+
+@router.get("/suite", response_class=HTMLResponse)
+def clinic_suite(request: Request, db: Session = Depends(get_db)):
+    return _render(request, "pages/suite.html", {}, db)
 
 @router.get("/calendar", response_class=HTMLResponse)
 def calendar_view(request: Request, child_id: int | None = None, db: Session = Depends(get_db)):
@@ -969,6 +975,7 @@ def settings_view(request: Request, db: Session = Depends(get_db)):
             "children": children,
             "clinic": clinic,
             "license": lic,
+            "sms_app_url": (settings.SMS_APP_URL.strip() or "/sms/"),
             "google_maps_link": maps_link(),
             "env_preview": env_preview(),
         },
@@ -1582,3 +1589,34 @@ def billing_inputs_create(
 
 
 
+@router.get("/api/internal/clinic_settings")
+def api_internal_clinic_settings(request: Request, db: Session = Depends(get_db)):
+    """Internal endpoint used by the SMS service to fetch clinic settings.
+
+    Security:
+      - Requires header: X-Internal-Key matching settings.INTERNAL_API_KEY
+      - Do NOT expose this key to end users.
+    """
+    key = request.headers.get("X-Internal-Key", "").strip()
+    expected = (settings.INTERNAL_API_KEY or "").strip()
+    if not expected or key != expected:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    clinic, lic = _get_singletons(db)
+    return {
+        "clinic": {
+            "name": clinic.name or "",
+            "address": clinic.address or "",
+            "map_url": getattr(clinic, "map_url", "") or "",
+            "sms_provider": clinic.sms_provider or "infobip",
+            "infobip_base_url": clinic.infobip_base_url or "",
+            "infobip_api_key": clinic.infobip_api_key or "",
+            "infobip_sender": clinic.infobip_sender or "",
+            "infobip_username": getattr(clinic, "infobip_username", "") or "",
+            "infobip_userkey": getattr(clinic, "infobip_userkey", "") or "",
+        },
+        "license": {
+            "product_mode": getattr(lic, "product_mode", "") or "",
+            "trial_end": (lic.trial_end.isoformat() if getattr(lic, "trial_end", None) else ""),
+        },
+    }

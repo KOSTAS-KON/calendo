@@ -31,7 +31,7 @@
           <span class="userbox-label">User</span>
           <span class="userbox-name">{{ user_name or "PAUL PORTAL TEST" }}</span>
         </div>
-        <a class="logout" href="/sms/">SMS CALENDAR</a>
+        <a class="logout" href="{{ sms_app_url }}">SMS CALENDAR</a>
         <a class="logout" href="/">HOME</a>
       </div>
     </div>
@@ -64,7 +64,7 @@
 
       <div class="side-sep"></div>
       <div class="sidehdr">Apps</div>
-      <a class="sideitem" href="/sms/">📣 SMS Calendar</a>
+      <a class="sideitem" href="{{ sms_app_url }}">📣 SMS Calendar</a>
       <a class="sideitem muted" href="/">🏠 Landing</a>
     </aside>
 

@@ -2019,20 +2019,27 @@ def main() -> None:
     app_tz = get_app_tz()
     templates = load_templates()
 
-    # Cross-app navigation (Docker gateway uses one origin: http://localhost:8080)
+    # Cross-app navigation
+    # - On-prem Docker gateway: Portal is typically under /therapy/ on the same origin.
+    # - SaaS (Render): Portal is on a different origin (set PORTAL_APP_URL or PORTAL_BASE_URL).
+    import os
+    _portal = (os.getenv("PORTAL_APP_URL") or os.getenv("PORTAL_BASE_URL") or "").strip().rstrip("/")
+    _portal_suite = f"{_portal}/suite" if _portal else "/therapy/suite"
+    _portal_home = f"{_portal}/" if _portal else "/therapy/"
+
     st.sidebar.markdown("### 🔁 Switch apps")
     st.sidebar.markdown(
-        '<a href="/therapy/" target="_self" '
+        f'<a href="{_portal_home}" target="_self" '
         'style="display:block; padding:10px 12px; border-radius:12px; '
         'background:rgba(15,23,42,.06); text-decoration:none; font-weight:700;">'
         '🗂️ Therapy Portal</a>',
         unsafe_allow_html=True,
     )
     st.sidebar.markdown(
-        '<a href="/" target="_self" '
+        f'<a href="{_portal_suite}" target="_self" '
         'style="display:block; margin-top:8px; padding:10px 12px; border-radius:12px; '
         'background:rgba(15,23,42,.06); text-decoration:none; font-weight:700;">'
-        '🏠 Landing</a>',
+        '🏠 Home</a>',
         unsafe_allow_html=True,
     )
     st.sidebar.markdown("---")

@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, date
 
 from fastapi import FastAPI, Response
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
@@ -21,6 +22,13 @@ app = FastAPI(title="Therapy Archive Portal", version="0.3.0")
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 app.include_router(auth_router)
 app.include_router(web_router)
+
+# Compatibility routes: older deployments and the SMS app may link to /therapy/
+@app.get('/therapy')
+@app.get('/therapy/')
+def therapy_root():
+    return RedirectResponse(url='/suite', status_code=307)
+
 
 
 def ensure_schema():

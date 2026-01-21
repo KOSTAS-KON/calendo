@@ -14,4 +14,13 @@ class Settings(BaseSettings):
     # the manual trial controls.
     LICENSE_PUBLIC_KEY: str = ""
 
+    # Cross-app navigation (SaaS deployments)
+    # If set to a full URL, the Portal will link out to the SMS Calendar service.
+    # If left empty, defaults to /sms/ (works for the on-prem Docker gateway).
+    SMS_APP_URL: str = ""
+
+    # Internal service-to-service authentication (Portal <-> SMS)
+    # Set this in Render for BOTH services. Keep it secret.
+    INTERNAL_API_KEY: str = ""
+
 settings = Settings()
