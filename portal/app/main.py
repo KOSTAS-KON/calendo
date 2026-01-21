@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta, date
-
+import os
 from fastapi import FastAPI, Response
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -124,7 +124,7 @@ def seed_if_empty():
             db.commit()
 
         # Optional sample content
-        import os
+        
 
         if os.getenv("PORTAL_SEED_SAMPLE", "0") != "1":
             return
