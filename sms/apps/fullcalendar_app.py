@@ -740,6 +740,7 @@ def send_via_provider(to_e164: str, body: str, channel: str = "sms") -> Tuple[st
 
 
 def process_due_outbox(limit: int = 200) -> Tuple[int, int, int]:
+    print('SMS_OUTBOX: process_due_outbox called', flush=True)
     df = outbox_state_df()
     if df.empty:
         return (0, 0, 0)
@@ -772,6 +773,7 @@ def process_due_outbox(limit: int = 200) -> Tuple[int, int, int]:
             outbox_mark(oid, status=status, provider=prov, provider_msgid=msgid, provider_status=pstatus, error="")
             sent += 1
         except Exception as e:
+            print(f"SMS_OUTBOX: send failed oid={oid} err={str(e)}", flush=True)
             outbox_mark(oid, status="failed", provider=effective_provider(), error=str(e))
             provider_log(
                 {
@@ -794,6 +796,7 @@ def send_due_now_feedback(prefix: str = "") -> Tuple[int, int, int]:
     `prefix` is used by move/cancel flows so the user can see which action triggered the send.
     """
     sent, failed, due_seen = process_due_outbox()
+    print(f"SMS_OUTBOX: due_seen={due_seen} sent={sent} failed={failed} provider={effective_provider()}", flush=True)
     if due_seen > 0:
         p = (prefix or "").strip()
         if p:
@@ -1935,43 +1938,117 @@ def provider_diagnostics() -> Dict[str, Any]:
     return d
 
 
-def _fetch_portal_json(path: str, headers: Dict[str, str] | None = None) -> Dict[str, Any] | None:
-    """Fetch JSON from the portal service (server-side).
+def _portal_base_url() -> str:
+    """Return the Portal base URL for SaaS/on-prem.
 
-    Uses THERAPY_PORTAL_URL from env, intended for docker-compose runtime.
+    Priority:
+      1) PORTAL_APP_URL
+      2) PORTAL_BASE_URL
+      3) THERAPY_PORTAL_URL (legacy / docker-compose)
     """
-    base = (os.getenv("THERAPY_PORTAL_URL") or "").rstrip("/")
+    for k in ("PORTAL_APP_URL", "PORTAL_BASE_URL", "THERAPY_PORTAL_URL"):
+        v = (os.getenv(k) or "").strip().rstrip("/")
+        if v:
+            return v
+    return ""
+
+
+def _fetch_portal_json(path: str, headers: Dict[str, str] | None = None) -> Dict[str, Any] | None:
+    """Fetch JSON from the Therapy Portal (server-side).
+
+    This runs inside the SMS container, so it can call the Portal directly.
+    We log failures to stdout so Render "Application logs" show what happened.
+    """
+    base = _portal_base_url()
     if not base:
+        print("PORTAL_FETCH: no portal base url set (PORTAL_APP_URL/PORTAL_BASE_URL/THERAPY_PORTAL_URL).", flush=True)
         return None
+
     url = base + path
     try:
         req = urllib.request.Request(url, headers=headers or {})
-        with urllib.request.urlopen(req, timeout=3) as resp:
+        with urllib.request.urlopen(req, timeout=8) as resp:
             raw = resp.read().decode("utf-8")
             return json.loads(raw)
-    except Exception:
+    except urllib.error.HTTPError as e:
+        try:
+            body = e.read().decode("utf-8")
+        except Exception:
+            body = ""
+        print(f"PORTAL_FETCH: HTTPError url={url} status={getattr(e,'code',None)} body={(body or '')[:400]}", flush=True)
+        return None
+    except Exception as e:
+        print(f"PORTAL_FETCH: failed url={url} err={repr(e)}", flush=True)
         return None
 
-
 def _apply_portal_settings_to_env() -> Dict[str, Any]:
-    """Pull clinic + Infobip settings from the portal DB and apply to this app."""
+    """Pull clinic + Infobip settings from the portal and apply to this app.
+
+    We support two internal auth mechanisms (both used in this repo):
+      - INTERNAL_API_KEY via /api/internal/clinic_settings  (header: X-Internal-Key)
+      - INTERNAL_TOKEN  via /api/internal/infobip          (header: x-internal-token)
+
+    We log what we managed to load so you can debug from Render "Application logs".
+    """
     out: Dict[str, Any] = {}
+
+    # Clinic display name (non-secret)
     clinic = _fetch_portal_json("/api/clinic_settings") or {}
     if clinic.get("clinic_name"):
         out["clinic_name"] = clinic.get("clinic_name")
 
-    # Fetch Infobip credentials (internal endpoint protected by shared token)
+    # 1) Preferred: fetch everything from /api/internal/clinic_settings using INTERNAL_API_KEY
+    internal_key = (os.getenv("INTERNAL_API_KEY") or "").strip()
+    if internal_key:
+        data = _fetch_portal_json("/api/internal/clinic_settings", headers={"X-Internal-Key": internal_key}) or {}
+        clinic_obj = (data.get("clinic") or {}) if isinstance(data, dict) else {}
+        if clinic_obj:
+            base_url = str(clinic_obj.get("infobip_base_url") or "").strip()
+            sender = str(clinic_obj.get("infobip_sender") or "").strip()
+            api_key = str(clinic_obj.get("infobip_api_key") or "").strip()
+            if base_url:
+                os.environ["INFOBIP_BASE_URL"] = base_url
+            if sender:
+                os.environ["INFOBIP_FROM"] = sender
+                os.environ["INFOBIP_SENDER"] = sender
+            if api_key:
+                os.environ["INFOBIP_API_KEY"] = api_key
+
+            print(
+                "PORTAL_APPLY: clinic_settings loaded "
+                f"base_url={'yes' if bool(base_url) else 'no'} "
+                f"sender={'yes' if bool(sender) else 'no'} "
+                f"api_key={'yes' if bool(api_key) else 'no'}",
+                flush=True,
+            )
+            return out
+
+    # 2) Fallback: /api/internal/infobip using INTERNAL_TOKEN (matches Portal SECRET_KEY)
     tok = (os.getenv("INTERNAL_TOKEN") or "").strip()
-    creds = _fetch_portal_json("/api/internal/infobip", headers={"x-internal-token": tok}) or {}
-    if creds.get("infobip_base_url"):
-        os.environ["INFOBIP_BASE_URL"] = str(creds.get("infobip_base_url"))
-    if creds.get("infobip_sender"):
-        os.environ["INFOBIP_FROM"] = str(creds.get("infobip_sender"))
-    if creds.get("infobip_api_key"):
-        os.environ["INFOBIP_API_KEY"] = str(creds.get("infobip_api_key"))
+    if tok:
+        creds = _fetch_portal_json("/api/internal/infobip", headers={"x-internal-token": tok}) or {}
+        base_url = str(creds.get("infobip_base_url") or "").strip()
+        sender = str(creds.get("infobip_sender") or "").strip()
+        api_key = str(creds.get("infobip_api_key") or "").strip()
+        if base_url:
+            os.environ["INFOBIP_BASE_URL"] = base_url
+        if sender:
+            os.environ["INFOBIP_FROM"] = sender
+            os.environ["INFOBIP_SENDER"] = sender
+        if api_key:
+            os.environ["INFOBIP_API_KEY"] = api_key
 
+        print(
+            "PORTAL_APPLY: infobip loaded via /api/internal/infobip "
+            f"base_url={'yes' if bool(base_url) else 'no'} "
+            f"sender={'yes' if bool(sender) else 'no'} "
+            f"api_key={'yes' if bool(api_key) else 'no'}",
+            flush=True,
+        )
+        return out
+
+    print("PORTAL_APPLY: no INTERNAL_API_KEY or INTERNAL_TOKEN set; cannot fetch Infobip creds.", flush=True)
     return out
-
 
 def main() -> None:
     load_dotenv_simple(
@@ -1998,6 +2075,9 @@ def main() -> None:
             st.stop()
 
     clinic_name = portal_applied.get("clinic_name") or os.getenv("CLINIC_NAME", "Clinic")
+    _portal = _portal_base_url()
+    portal_suite = f"{_portal}/suite" if _portal else "/suite"
+    portal_therapy = f"{_portal}/therapy/" if _portal else "/therapy/"
     st.markdown(
         f"""
 <div class="sms-topbar">
@@ -2006,8 +2086,8 @@ def main() -> None:
     <div class="subtitle">Scheduling • reminders • billing & attendance flags</div>
   </div>
   <div class="links">
-    <a class="sms-pilllink" href="/" target="_self">🏠 Home</a>
-    <a class="sms-pilllink" href="/therapy/" target="_self">🗂️ Therapy Portal</a>
+    <a class="sms-pilllink" href="{portal_suite}" target="_self">🏠 Home</a>
+    <a class="sms-pilllink" href="{portal_therapy}" target="_self">🗂️ Therapy Portal</a>
   </div>
 </div>
         """,
