@@ -621,13 +621,31 @@ def normalize_infobip_base_url(raw: str) -> str:
 
 
 def effective_provider() -> str:
+    """Resolve which SMS provider to use.
+
+    Priority:
+      1) UI override (session_state) if set to mock/infobip
+      2) SMS_PROVIDER environment variable if set
+      3) If Infobip credentials are present (after portal apply), use infobip
+      4) Fallback to mock
+    """
     ov_raw = str(st.session_state.get(PROVIDER_OVERRIDE_KEY, "")).strip()
     ov = ov_raw.lower()
     if ov in ("mock", "infobip"):
         return ov
-    if ov_raw == "(use env)" or ov == "":
-        return (os.getenv("SMS_PROVIDER") or "mock").strip().lower()
-    return (os.getenv("SMS_PROVIDER") or "mock").strip().lower()
+
+    env_provider = (os.getenv("SMS_PROVIDER") or "").strip().lower()
+    if env_provider in ("mock", "infobip"):
+        return env_provider
+
+    # If Infobip creds are present, prefer Infobip automatically.
+    base = normalize_infobip_base_url(os.getenv("INFOBIP_BASE_URL") or "")
+    key = (os.getenv("INFOBIP_API_KEY") or "").strip()
+    from_ = (os.getenv("INFOBIP_FROM") or "").strip()
+    if base and key and from_:
+        return "infobip"
+
+    return "mock"
 
 
 def send_sms_mock(to_e164: str, body: str) -> str:

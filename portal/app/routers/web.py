@@ -1408,6 +1408,32 @@ async def api_activate_license(request: Request, db: Session = Depends(get_db)):
     return api_license(db)
 
 
+
+@router.get("/api/internal/clinic_settings")
+def api_internal_clinic_settings(request: Request, db: Session = Depends(get_db)):
+    """Internal endpoint used by the SMS app to read non-sensitive clinic settings.
+
+    Uses the same shared token as /api/internal/infobip (SECRET_KEY).
+    Returns clinic name, address, map coordinates, and SMS provider metadata.
+    """
+    token = request.headers.get("x-internal-token", "") or request.headers.get("X-Internal-Key", "")
+    if token != (settings.SECRET_KEY or ""):
+        raise HTTPException(403, "Forbidden")
+    try:
+        clinic, _lic = _get_singletons(db)
+    except Exception as e:
+        print(f"INTERNAL_CLINIC_SETTINGS_ERROR: {e!r}", flush=True)
+        raise HTTPException(500, "Internal Server Error")
+    return {
+        "clinic_name": clinic.clinic_name,
+        "address": clinic.address,
+        "lat": clinic.lat,
+        "lng": clinic.lng,
+        "sms_provider": getattr(clinic, "sms_provider", "infobip"),
+        "infobip_base_url": clinic.infobip_base_url,
+        "infobip_sender": clinic.infobip_sender,
+    }
+
 @router.get("/api/internal/infobip")
 def api_internal_infobip(request: Request, db: Session = Depends(get_db)):
     """Internal endpoint used by the SMS app to read Infobip creds.
@@ -1588,6 +1614,7 @@ def billing_inputs_create(
     return RedirectResponse(url=f"{rp}/billing/inputs", status_code=303)
 
 
+<<<<<<< HEAD
 
 @router.get("/api/internal/clinic_settings")
 def api_internal_clinic_settings(request: Request, db: Session = Depends(get_db)):
@@ -1620,3 +1647,5 @@ def api_internal_clinic_settings(request: Request, db: Session = Depends(get_db)
             "trial_end": (lic.trial_end.isoformat() if getattr(lic, "trial_end", None) else ""),
         },
     }
+=======
+>>>>>>> d518c0e (Fix: internal clinic settings endpoint + auto Infobip provider)
