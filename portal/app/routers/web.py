@@ -1614,7 +1614,7 @@ def billing_inputs_create(
     return RedirectResponse(url=f"{rp}/billing/inputs", status_code=303)
 
 
-<<<<<<< HEAD
+
 
 @router.get("/api/internal/clinic_settings")
 def api_internal_clinic_settings(request: Request, db: Session = Depends(get_db)):
@@ -1647,5 +1647,4 @@ def api_internal_clinic_settings(request: Request, db: Session = Depends(get_db)
             "trial_end": (lic.trial_end.isoformat() if getattr(lic, "trial_end", None) else ""),
         },
     }
-=======
->>>>>>> d518c0e (Fix: internal clinic settings endpoint + auto Infobip provider)
+
