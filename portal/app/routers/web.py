@@ -26,14 +26,15 @@ router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
 
 
-def _get_singletons(db: Session):
-    clinic = db.get(ClinicSettings, 1)
+def _get_singletons(db: Session, tenant_id: str):
+    clinic = db.query(ClinicSettings).filter(ClinicSettings.tenant_id == tenant_id).first()
     if not clinic:
-        clinic = ClinicSettings(id=1)
+        clinic = ClinicSettings(tenant_id=tenant_id)
         db.add(clinic)
         db.commit()
         db.refresh(clinic)
 
+    # Back-compat local license row (global). SaaS licensing uses Subscription/Plan.
     lic = db.get(AppLicense, 1)
     if not lic:
         lic = AppLicense(id=1, product_mode="BOTH")
@@ -43,6 +44,22 @@ def _get_singletons(db: Session):
     return clinic, lic
 
 
+def _render(request: Request, template_name: str, ctx: dict, db: Session, tenant_slug: str | None = None):
+    from app.tenancy import resolve_tenant
+    tctx = resolve_tenant(db, request, tenant_slug=tenant_slug)
+
+    clinic, lic = _get_singletons(db, tctx.tenant_id)
+
+    base_ctx = {
+        "request": request,
+        "clinic": clinic,
+        "license": lic,
+        "tenant_slug": tctx.tenant_slug,
+        "tenant_name": tctx.tenant_name,
+        "sms_app_url": (settings.SMS_APP_URL or "/sms").rstrip("/") + f"?tenant={tctx.tenant_slug}",
+    }
+    base_ctx.update(ctx or {})
+    return templates.TemplateResponse(template_name, base_ctx)
 def _render(request: Request, template_name: str, ctx: dict, db: Session):
     clinic, lic = _get_singletons(db)
     base = {
@@ -58,6 +75,11 @@ def _render(request: Request, template_name: str, ctx: dict, db: Session):
 
 def _rp(request: Request) -> str:
     """Return the URL prefix when served behind the nginx gateway.
+
+
+def _tenant_id(db: Session, request: Request, tenant_slug: str | None = None) -> str:
+    from app.tenancy import resolve_tenant
+    return resolve_tenant(db, request, tenant_slug=tenant_slug).tenant_id
 
     With the Docker gateway we serve this app under /therapy and start uvicorn with
     --root-path /therapy. In direct mode (http://localhost:8010) root_path is empty.
@@ -99,11 +121,11 @@ templates.env.globals["status_chip"] = status_chip
 
 @router.get("/", response_class=HTMLResponse)
 def dashboard(request: Request, db: Session = Depends(get_db)):
-    past = db.query(Appointment).order_by(Appointment.starts_at.desc()).limit(25).all()
+    past = db.query(Appointment).filter(Appointment.tenant_id == _tenant_id(db, request)).order_by(Appointment.starts_at.desc()).limit(25).all()
     return _render(request, "pages/dashboard.html", {
         "past": past,
-        "children_count": db.query(Child).count(),
-        "appt_count": db.query(Appointment).count(),
+        "children_count": db.query(Child).filter(Child.tenant_id == _tenant_id(db, request)).count(),
+        "appt_count": db.query(Appointment).filter(Appointment.tenant_id == _tenant_id(db, request)).count(),
         "uploads_count": db.query(Attachment).count(),
         "billing_count": db.query(BillingItem).count(),
     }, db)
@@ -115,8 +137,8 @@ def clinic_suite(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/calendar", response_class=HTMLResponse)
 def calendar_view(request: Request, child_id: int | None = None, db: Session = Depends(get_db)):
-    children = db.query(Child).order_by(Child.full_name.asc()).all()
-    therapists = db.query(Therapist).order_by(Therapist.name.asc()).all()
+    children = db.query(Child).filter(Child.tenant_id == _tenant_id(db, request)).order_by(Child.full_name.asc()).all()
+    therapists = db.query(Therapist).filter(Therapist.tenant_id == _tenant_id(db, request)).order_by(Therapist.name.asc()).all()
     return _render(request, "pages/calendar.html", {
         "children": children,
         "selected_child_id": child_id,
@@ -131,7 +153,7 @@ def calendar_events(request: Request, start: str | None = None, end: str | None 
 
     rp = _rp(request)
 
-    aq = db.query(Appointment).filter(Appointment.starts_at >= start_dt, Appointment.starts_at < end_dt)
+    aq = db.query(Appointment).filter(Appointment.tenant_id == _tenant_id(db, request)).filter(Appointment.starts_at >= start_dt, Appointment.starts_at < end_dt)
     if child_id is not None:
         aq = aq.filter(Appointment.child_id == child_id)
     for a in aq.all():
@@ -229,6 +251,7 @@ def calendar_add_appointment(
         raise HTTPException(404, "Child not found")
     dt = datetime.strptime(starts_at, "%Y-%m-%dT%H:%M")
     appt = Appointment(
+        tenant_id=_tenant_id(db, request),
         child_id=child_id,
         starts_at=dt,
         therapist_name=therapist_name.strip(),
@@ -358,11 +381,11 @@ def calendar_add_journey(
 
 @router.get("/appointments", response_class=HTMLResponse)
 def past_appointments(request: Request, child_id: int | None = None, db: Session = Depends(get_db)):
-    q = db.query(Appointment)
+    q = db.query(Appointment).filter(Appointment.tenant_id == _tenant_id(db, request))
     if child_id is not None:
         q = q.filter(Appointment.child_id == child_id)
     rows = q.order_by(Appointment.starts_at.desc()).limit(200).all()
-    children = db.query(Child).order_by(Child.full_name.asc()).all()
+    children = db.query(Child).filter(Child.tenant_id == _tenant_id(db, request)).order_by(Child.full_name.asc()).all()
     return templates.TemplateResponse("pages/past_appointments.html", {
         "request": request,
         "rows": rows,
@@ -412,7 +435,7 @@ def mark_attendance(request: Request, appt_id: int, attendance_status: str = For
 
 @router.get("/billing", response_class=HTMLResponse)
 def billing_view(request: Request, child_id: int | None = None, mode: str = "display", db: Session = Depends(get_db)):
-    children = db.query(Child).order_by(Child.full_name.asc()).all()
+    children = db.query(Child).filter(Child.tenant_id == _tenant_id(db, request)).order_by(Child.full_name.asc()).all()
     q = db.query(BillingItem).order_by(BillingItem.billing_due.asc())
     if child_id is not None:
         q = q.filter(BillingItem.child_id == child_id)
@@ -502,15 +525,14 @@ def billing_update(
 
 @router.get("/children", response_class=HTMLResponse)
 def children_list(request: Request, q: str | None = None, db: Session = Depends(get_db)):
-    query = db.query(Child)
+    from app.tenancy import resolve_tenant
+    tctx = resolve_tenant(db, request)
+
+    query = db.query(Child).filter(Child.tenant_id == _tenant_id(db, request)).filter(Child.tenant_id == tctx.tenant_id)
     if q:
         query = query.filter(Child.full_name.ilike(f"%{q}%"))
     children = query.order_by(Child.full_name.asc()).limit(300).all()
-    return _render(request, "pages/children_list.html", {
-        "children": children,
-        "q": q or "",
-    }, db)
-
+    return _render(request, "pages/children_list.html", {"children": children, "q": q or ""}, db)
 @router.post("/children/create")
 def children_create(
     request: Request,
@@ -526,7 +548,7 @@ def children_create(
     dob = None
     if date_of_birth.strip():
         dob = datetime.strptime(date_of_birth, "%Y-%m-%d").date()
-    c = Child(
+    c = Child(tenant_id=_tenant_id(db, request), 
         full_name=full_name.strip(),
         date_of_birth=dob,
         notes=notes.strip() or None,
@@ -546,12 +568,12 @@ def child_detail(request: Request, child_id: int, db: Session = Depends(get_db))
     if not child:
         raise HTTPException(404, "Child not found")
 
-    appts = db.query(Appointment).filter(Appointment.child_id == child_id).order_by(Appointment.starts_at.desc()).limit(200).all()
+    appts = db.query(Appointment).filter(Appointment.tenant_id == _tenant_id(db, request)).filter(Appointment.child_id == child_id).order_by(Appointment.starts_at.desc()).limit(200).all()
     uploads = db.query(Attachment).filter(Attachment.child_id == child_id).order_by(Attachment.created_at.desc()).limit(200).all()
     bills = db.query(BillingItem).filter(BillingItem.child_id == child_id).order_by(BillingItem.billing_due.asc()).limit(200).all()
     timeline = db.query(TimelineEvent).filter(TimelineEvent.child_id == child_id).order_by(TimelineEvent.occurred_at.desc()).limit(20).all()
 
-    therapists = db.query(Therapist).order_by(Therapist.name.asc()).all()
+    therapists = db.query(Therapist).filter(Therapist.tenant_id == _tenant_id(db, request)).order_by(Therapist.name.asc()).all()
     return _render(request, "pages/child_detail.html", {
         "child": child,
         "appts": appts,
@@ -652,7 +674,10 @@ def _month_hours(avail: dict, leaves: list[dict], year: int, month: int) -> floa
 
 @router.get("/therapists", response_class=HTMLResponse)
 def therapists_list(request: Request, db: Session = Depends(get_db)):
-    therapists = db.query(Therapist).order_by(Therapist.name.asc()).all()
+    from app.tenancy import resolve_tenant
+    tctx = resolve_tenant(db, request)
+
+    therapists = db.query(Therapist).filter(Therapist.tenant_id == _tenant_id(db, request)).filter(Therapist.tenant_id == tctx.tenant_id).order_by(Therapist.name.asc()).all()
     return _render(request, "pages/therapists.html", {
         "therapists": therapists,
         "weekdays": WEEKDAYS,
@@ -661,11 +686,14 @@ def therapists_list(request: Request, db: Session = Depends(get_db)):
 
 @router.post("/therapists/create")
 async def therapist_create(request: Request, db: Session = Depends(get_db)):
+    from app.tenancy import resolve_tenant
+    tctx = resolve_tenant(db, request)
     form = await request.form()
     name = (form.get("name") or "").strip()
     if not name:
         raise HTTPException(400, "Name is required")
-    t = Therapist(
+    t = Therapist(tenant_id=_tenant_id(db, request), 
+        tenant_id=tctx.tenant_id,
         name=name,
         phone=(form.get("phone") or "").strip() or None,
         email=(form.get("email") or "").strip() or None,
@@ -783,7 +811,7 @@ TIMELINE_TYPES = [
 
 @router.get("/timeline", response_class=HTMLResponse)
 def timeline_view(request: Request, child_id: int | None = None, event_type: str | None = None, db: Session = Depends(get_db)):
-    children = db.query(Child).order_by(Child.full_name.asc()).all()
+    children = db.query(Child).filter(Child.tenant_id == _tenant_id(db, request)).order_by(Child.full_name.asc()).all()
     # Important: apply filters BEFORE limit/offset.
     # SQLAlchemy raises InvalidRequestError if filter() is called after limit().
     q = db.query(TimelineEvent)
@@ -846,7 +874,7 @@ def appointment_create(request: Request, child_id: int, starts_at: str = Form(..
     if not db.get(Child, child_id):
         raise HTTPException(404, "Child not found")
     dt = datetime.strptime(starts_at, "%Y-%m-%dT%H:%M")
-    appt = Appointment(child_id=child_id, starts_at=dt, therapist_name=therapist_name.strip(), procedure=procedure.strip() or "Office Visit", attendance_status="UNCONFIRMED")
+    appt = Appointment(tenant_id=_tenant_id(db, request), child_id=child_id, starts_at=dt, therapist_name=therapist_name.strip(), procedure=procedure.strip() or "Office Visit", attendance_status="UNCONFIRMED")
     db.add(appt)
     db.commit()
     rp = _rp(request)
@@ -943,7 +971,7 @@ def questionnaires(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/settings", response_class=HTMLResponse)
 def settings_view(request: Request, db: Session = Depends(get_db)):
-    children = db.query(Child).order_by(Child.full_name.asc()).all()
+    children = db.query(Child).filter(Child.tenant_id == _tenant_id(db, request)).order_by(Child.full_name.asc()).all()
     clinic, lic = _get_singletons(db)
 
     def maps_link() -> str:
@@ -1409,58 +1437,71 @@ async def api_activate_license(request: Request, db: Session = Depends(get_db)):
 
 
 
-@router.get("/api/internal/clinic_settings")
-def api_internal_clinic_settings(request: Request, db: Session = Depends(get_db)):
-    """Internal endpoint used by the SMS app to read non-sensitive clinic settings.
 
-    Uses the same shared token as /api/internal/infobip (SECRET_KEY).
-    Returns clinic name, address, map coordinates, and SMS provider metadata.
+@router.get("/api/internal/clinic_settings")
+def api_internal_clinic_settings(
+    request: Request,
+    tenant: str | None = None,
+    db: Session = Depends(get_db),
+):
+    """Internal endpoint used by the SMS app to read tenant clinic settings.
+
+    Auth: accepts either:
+      - X-Internal-Key: settings.INTERNAL_API_KEY
+      - x-internal-token: settings.SECRET_KEY (legacy)
+    Tenant: ?tenant=<tenant_slug> (recommended). Falls back to session/default.
     """
-    token = request.headers.get("x-internal-token", "") or request.headers.get("X-Internal-Key", "")
-    if token != (settings.SECRET_KEY or ""):
-        raise HTTPException(403, "Forbidden")
-    try:
-        clinic, _lic = _get_singletons(db)
-    except Exception as e:
-        print(f"INTERNAL_CLINIC_SETTINGS_ERROR: {e!r}", flush=True)
-        raise HTTPException(500, "Internal Server Error")
+    token = (request.headers.get("X-Internal-Key") or request.headers.get("x-internal-key") or request.headers.get("x-internal-token") or "").strip()
+    if not token or (token != (settings.INTERNAL_API_KEY or "").strip() and token != (settings.SECRET_KEY or "").strip()):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    from app.tenancy import resolve_tenant
+    tctx = resolve_tenant(db, request, tenant_slug=tenant)
+    clinic, _lic = _get_singletons(db, tctx.tenant_id)
+
     return {
+        "tenant_slug": tctx.tenant_slug,
         "clinic_name": clinic.clinic_name,
         "address": clinic.address,
+        "google_maps_link": getattr(clinic, "google_maps_link", "") or "",
         "lat": clinic.lat,
         "lng": clinic.lng,
-        "sms_provider": getattr(clinic, "sms_provider", "infobip"),
-        "infobip_base_url": clinic.infobip_base_url,
+        "sms_provider": clinic.sms_provider,
         "infobip_sender": clinic.infobip_sender,
     }
+
 
 @router.get("/api/internal/infobip")
-def api_internal_infobip(request: Request, db: Session = Depends(get_db)):
-    """Internal endpoint used by the SMS app to read Infobip creds.
+def api_internal_infobip(
+    request: Request,
+    tenant: str | None = None,
+    db: Session = Depends(get_db),
+):
+    """Internal endpoint used by SMS app to fetch SMS provider credentials.
 
-    Protected by a shared token (SECRET_KEY) set in docker-compose env. This is
-    not meant as strong security, only to avoid exposing the API key publicly.
+    Same auth and tenant resolution as /api/internal/clinic_settings.
     """
-    token = request.headers.get("x-internal-token", "")
-    if token != (settings.SECRET_KEY or ""):
-        raise HTTPException(403, "Forbidden")
-    clinic, _lic = _get_singletons(db)
+    token = (request.headers.get("X-Internal-Key") or request.headers.get("x-internal-key") or request.headers.get("x-internal-token") or "").strip()
+    if not token or (token != (settings.INTERNAL_API_KEY or "").strip() and token != (settings.SECRET_KEY or "").strip()):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    from app.tenancy import resolve_tenant
+    tctx = resolve_tenant(db, request, tenant_slug=tenant)
+    clinic, _lic = _get_singletons(db, tctx.tenant_id)
+
     return {
-        "sms_provider": getattr(clinic, "sms_provider", "infobip"),
+        "tenant_slug": tctx.tenant_slug,
+        "sms_provider": clinic.sms_provider,
         "infobip_base_url": clinic.infobip_base_url,
-        "infobip_sender": clinic.infobip_sender,
         "infobip_api_key": clinic.infobip_api_key,
-        "infobip_username": getattr(clinic, "infobip_username", ""),
-        "infobip_userkey": getattr(clinic, "infobip_userkey", ""),
+        "infobip_sender": clinic.infobip_sender,
+        "infobip_username": clinic.infobip_username,
+        "infobip_userkey": clinic.infobip_userkey,
     }
 
-
-# -----------------
-# Billing inputs (recurring plans)
-# -----------------
 @router.get("/billing/inputs", response_class=HTMLResponse)
 def billing_inputs(request: Request, db: Session = Depends(get_db)):
-    children = db.query(Child).order_by(Child.full_name.asc()).all()
+    children = db.query(Child).filter(Child.tenant_id == _tenant_id(db, request)).order_by(Child.full_name.asc()).all()
     plans = db.query(BillingPlan).order_by(BillingPlan.id.desc()).limit(200).all()
     return templates.TemplateResponse("pages/billing_inputs.html", {
         "request": request,

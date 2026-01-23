@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 import pandas as pd
 
 OUTBOX_COLUMNS = [
-    "outbox_id","ts_iso","scheduled_for_iso","to","customer_id","appointment_id",
+    "tenant_slug","outbox_id","ts_iso","scheduled_for_iso","to","customer_id","appointment_id",
     "message_type","text","status","confirmed","provider","provider_status",
     "provider_message_id","error","dedupe_key"
 ]
@@ -55,3 +55,10 @@ class OutboxStore:
         df["confirmed"] = df["confirmed"].apply(_normalize_boolish).astype(int)
         df.to_csv(self.path, index=False, encoding="utf-8")
 
+
+
+def store_for_tenant(base_dir: Path, tenant_slug: str) -> OutboxStore:
+    """Create an outbox store path that is isolated per-tenant."""
+    safe = (tenant_slug or "default").strip().lower()
+    safe = "".join(ch for ch in safe if ch.isalnum() or ch in ("-","_")) or "default"
+    return OutboxStore(path=base_dir / f"outbox_{safe}.csv")

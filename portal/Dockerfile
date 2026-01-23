@@ -16,4 +16,4 @@ COPY . /app
 
 # Render injects $PORT at runtime. Bind uvicorn to it.
 # Locally, it will default to 8010 if PORT is not set.
-CMD ["sh", "-lc", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8010}"]
+CMD ["sh", "-lc", "alembic -c alembic.ini upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8010}"]

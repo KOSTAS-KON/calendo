@@ -1,0 +1,3 @@
+<%text>
+# template placeholder
+</%text>

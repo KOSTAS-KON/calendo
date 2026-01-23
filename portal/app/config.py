@@ -23,4 +23,7 @@ class Settings(BaseSettings):
     # Set this in Render for BOTH services. Keep it secret.
     INTERNAL_API_KEY: str = ""
 
+    # Super-admin access key for /admin pages (set in SaaS)
+    ADMIN_KEY: str = ""
+
 settings = Settings()

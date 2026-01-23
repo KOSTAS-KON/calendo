@@ -8,6 +8,7 @@ from sqlalchemy import text
 from app.db import Base, engine, SessionLocal
 from app.routers.web import router as web_router
 from app.routers.auth import router as auth_router
+from app.routers.admin import router as admin_router
 
 from app.models.child import Child
 from app.models.appointment import Appointment
@@ -22,6 +23,7 @@ app = FastAPI(title="Therapy Archive Portal", version="0.3.0")
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 app.include_router(auth_router)
 app.include_router(web_router)
+app.include_router(admin_router)
 
 # Compatibility routes: older deployments and the SMS app may link to /therapy/
 @app.get('/therapy')
@@ -98,7 +100,8 @@ def ensure_schema():
         pass
 
 
-def seed_if_empty():
+def seed_if_empty()
+    seed_saas_defaults():
     """Ensure required singleton rows exist.
 
     By default, the database starts empty for production use.
@@ -171,7 +174,56 @@ def root_head():
 
 
 @app.on_event("startup")
+
+
+def seed_saas_defaults():
+    """Seed default tenant + plans for multi-tenant SaaS."""
+    from app.models.tenant import Tenant
+    from app.models.licensing import Plan, Subscription
+    import uuid
+    db = SessionLocal()
+    try:
+        # Default tenant
+        t = db.query(Tenant).filter(Tenant.slug == "default").first()
+        if not t:
+            t = Tenant(id=str(uuid.uuid4()), slug="default", name="Default Tenant", status="active")
+            db.add(t)
+            db.commit()
+            db.refresh(t)
+
+        # Plans
+        def ensure_plan(code: str, name: str, days: int):
+            p = db.query(Plan).filter(Plan.code == code).first()
+            if not p:
+                p = Plan(code=code, name=name, duration_days=days, features_json="{}")
+                db.add(p)
+                db.commit()
+            return p
+
+        p_trial = ensure_plan("TRIAL_7D", "7-day Trial", 7)
+        ensure_plan("MONTHLY_30D", "Monthly", 30)
+        ensure_plan("YEARLY_365D", "Yearly", 365)
+
+        # Ensure a trial subscription exists for default tenant
+        sub = db.query(Subscription).filter(Subscription.tenant_id == t.id).order_by(Subscription.starts_at.desc()).first()
+        if not sub:
+            sub = Subscription(
+                id=str(uuid.uuid4()),
+                tenant_id=t.id,
+                plan_id=p_trial.id,
+                status="active",
+                starts_at=datetime.utcnow(),
+                ends_at=datetime.utcnow() + timedelta(days=p_trial.duration_days),
+                source="manual",
+            )
+            db.add(sub)
+            db.commit()
+    finally:
+        db.close()
+
+
 def on_startup():
     Base.metadata.create_all(bind=engine)
     ensure_schema()
     seed_if_empty()
+    seed_saas_defaults()

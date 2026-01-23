@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, Integer, String
+from sqlalchemy import DateTime, Float, Integer, String, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -13,10 +13,13 @@ class ClinicSettings(Base):
 
     __tablename__ = "clinic_settings"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    tenant_id: Mapped[str] = mapped_column(String(36), ForeignKey("tenants.id"), index=True)
 
     clinic_name: Mapped[str] = mapped_column(String(200), default="Therapy Portal")
     address: Mapped[str] = mapped_column(String(300), default="")
+    google_maps_link: Mapped[str] = mapped_column(String(500), default="")
     lat: Mapped[float | None] = mapped_column(Float, nullable=True)
     lng: Mapped[float | None] = mapped_column(Float, nullable=True)
 
@@ -41,7 +44,9 @@ class AppLicense(Base):
 
     __tablename__ = "app_license"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    tenant_id: Mapped[str] = mapped_column(String(36), ForeignKey("tenants.id"), index=True)
 
     # PORTAL / SMS / BOTH
     product_mode: Mapped[str] = mapped_column(String(20), default="BOTH")

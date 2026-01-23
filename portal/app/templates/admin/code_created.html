@@ -1,0 +1,13 @@
+{% extends "admin/_admin_base.html" %}{% set title="Activation code created" %}
+{% block admin_content %}
+<div class="card">
+  <div style="font-weight:800;">Share this code with the client (shown once)</div>
+  <div style="margin-top:10px; font-size:22px;"><code>{{ raw_code }}</code></div>
+  <div style="margin-top:8px; opacity:.8;">
+    Tenant: <code>{{ tenant.slug }}</code> • Plan: <code>{{ plan.code }}</code>
+  </div>
+  <div style="margin-top:14px;">
+    <a class="btn" href="/admin/licensing?admin_key={{ request.query_params.get('admin_key','') }}">Back to licensing</a>
+  </div>
+</div>
+{% endblock %}

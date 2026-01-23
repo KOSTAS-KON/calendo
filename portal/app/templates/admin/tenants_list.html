@@ -1,0 +1,27 @@
+{% extends "admin/_admin_base.html" %}{% set title="Tenants" %}
+{% block admin_content %}
+<div class="card">
+  <div style="display:flex; justify-content:space-between; align-items:center;">
+    <div style="font-weight:800;">Tenants</div>
+    <a class="btn" href="/admin/tenants/new?admin_key={{ request.query_params.get('admin_key','') }}">New tenant</a>
+  </div>
+  <div style="margin-top:10px;">
+    <table class="table">
+      <thead><tr><th>Slug</th><th>Name</th><th>Status</th><th>Created</th></tr></thead>
+      <tbody>
+        {% for t in tenants %}
+        <tr>
+          <td><code>{{ t.slug }}</code></td>
+          <td>{{ t.name }}</td>
+          <td>{{ t.status }}</td>
+          <td>{{ t.created_at }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+<div style="margin-top:14px;">
+  <a class="btn" href="/admin/licensing?admin_key={{ request.query_params.get('admin_key','') }}">Licensing</a>
+</div>
+{% endblock %}

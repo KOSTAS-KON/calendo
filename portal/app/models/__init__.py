@@ -6,3 +6,6 @@ from app.models.billing import BillingItem
 from app.models.billing_plan import BillingPlan
 from app.models.timeline import TimelineEvent
 from app.models.therapist import Therapist
+
+from .tenant import Tenant
+from .licensing import Plan, Subscription, ActivationCode, LicenseAuditLog

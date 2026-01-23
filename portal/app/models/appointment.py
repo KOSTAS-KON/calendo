@@ -7,6 +7,7 @@ class Appointment(Base):
     __tablename__ = "appointments"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(36), ForeignKey("tenants.id"), index=True)
     child_id: Mapped[int] = mapped_column(ForeignKey("children.id"), index=True)
 
     starts_at: Mapped[datetime] = mapped_column(DateTime, index=True)

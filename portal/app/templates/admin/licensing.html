@@ -1,0 +1,48 @@
+{% extends "admin/_admin_base.html" %}{% set title="Licensing" %}
+{% block admin_content %}
+<div class="card">
+  <div style="font-weight:800; margin-bottom:10px;">Generate activation code</div>
+  <form method="post" action="/admin/licensing/generate?admin_key={{ request.query_params.get('admin_key','') }}">
+    <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:12px;">
+      <div>
+        <div class="label">Tenant</div>
+        <select class="input" name="tenant_slug" required>
+          {% for t in tenants %}<option value="{{ t.slug }}">{{ t.slug }} — {{ t.name }}</option>{% endfor %}
+        </select>
+      </div>
+      <div>
+        <div class="label">Plan</div>
+        <select class="input" name="plan_code" required>
+          {% for p in plans %}<option value="{{ p.code }}">{{ p.code }} ({{ p.duration_days }} days)</option>{% endfor %}
+        </select>
+      </div>
+      <div>
+        <div class="label">Note</div>
+        <input class="input" name="note" placeholder="optional" />
+      </div>
+    </div>
+    <div style="margin-top:12px;">
+      <button class="btn" type="submit">Generate</button>
+      <a class="btn btn-secondary" href="/admin/tenants?admin_key={{ request.query_params.get('admin_key','') }}">Back</a>
+    </div>
+  </form>
+</div>
+
+<div class="card" style="margin-top:14px;">
+  <div style="font-weight:800; margin-bottom:10px;">Current subscriptions</div>
+  <table class="table">
+    <thead><tr><th>Tenant</th><th>Plan</th><th>Status</th><th>Ends</th></tr></thead>
+    <tbody>
+      {% for t in tenants %}
+        {% set s = subs.get(t.id) %}
+        <tr>
+          <td><code>{{ t.slug }}</code></td>
+          <td>{{ s.plan_id if s else "-" }}</td>
+          <td>{{ s.status if s else "-" }}</td>
+          <td>{{ s.ends_at if s else "-" }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
