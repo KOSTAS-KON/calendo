@@ -1,20 +1,20 @@
-{% extends "admin/_admin_base.html" %}{% set title="Create tenant" %}
-{% block admin_content %}
-<form class="card" method="post" action="/admin/tenants/new?admin_key={{ request.query_params.get('admin_key','') }}">
-  <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
-    <div>
-      <div class="label">Tenant Slug</div>
-      <input class="input" name="slug" placeholder="e.g. veria-maria-001" required />
-      <div style="opacity:.75; font-size:12px; margin-top:6px;">Used in URLs and SMS app tenant selector.</div>
-    </div>
-    <div>
-      <div class="label">Tenant Name</div>
-      <input class="input" name="name" placeholder="e.g. Maria Speech Clinic (Veria)" />
-    </div>
-  </div>
+{% extends "layout.html" %}
+{% block content %}
+<h1>Create Tenant</h1>
+<form method="post" action="/admin/tenants/new?admin_key={{admin_key}}">
+  <label>Tenant slug (e.g. clinic-veria-001)</label>
+  <input name="slug" required style="width:360px" />
+  <label>Tenant name</label>
+  <input name="name" required style="width:360px" />
+  <label>Start plan</label>
+  <select name="plan_code">
+    {% for p in plans %}
+      <option value="{{p.code}}">{{p.code}} ({{p.duration_days}} days)</option>
+    {% endfor %}
+  </select>
   <div style="margin-top:12px;">
     <button class="btn" type="submit">Create</button>
-    <a class="btn btn-secondary" href="/admin/tenants?admin_key={{ request.query_params.get('admin_key','') }}">Cancel</a>
+    <a class="btn secondary" href="/admin/tenants?admin_key={{admin_key}}">Cancel</a>
   </div>
 </form>
 {% endblock %}

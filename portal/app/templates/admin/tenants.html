@@ -1,0 +1,23 @@
+{% extends "layout.html" %}
+{% block content %}
+<h1>Tenants</h1>
+<p><a class="btn" href="/admin/tenants/new?admin_key={{admin_key}}">Create tenant</a>
+<a class="btn" href="/admin/licensing?admin_key={{admin_key}}">Licensing</a></p>
+
+<table class="table">
+  <thead><tr><th>Slug</th><th>Name</th><th>Status</th><th>Links</th></tr></thead>
+  <tbody>
+  {% for t in tenants %}
+    <tr>
+      <td><strong>{{t.slug}}</strong></td>
+      <td>{{t.name}}</td>
+      <td>{{t.status}}</td>
+      <td>
+        <a href="{{base_url}}/t/{{t.slug}}/suite" target="_blank">Portal</a> |
+        <a href="{{ (base_url.replace('calendo-3ktr.onrender.com','calendo-sms.onrender.com')) }}/sms?tenant={{t.slug}}" target="_blank">SMS</a>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
