@@ -25,7 +25,7 @@ app.include_router(web_router)
 app.include_router(admin_router)
 
 
-# Compatibility routes: older deployments and the SMS app may link to /therapy/
+# Compatibility routes: older deployments and some links may use /therapy
 @app.get("/therapy")
 @app.get("/therapy/")
 def therapy_root():
@@ -33,10 +33,9 @@ def therapy_root():
 
 
 def ensure_schema():
-    """Lightweight schema patching for older client DBs.
-
-    NOTE: In the new Alembic-based SaaS path, this becomes less necessary.
-    Keeping it as a safety net for legacy installs / older DBs.
+    """
+    Lightweight schema patching for legacy DBs.
+    In SaaS mode you should rely on Alembic, but this remains a safe fallback.
     """
     try:
         with engine.begin() as conn:
@@ -59,42 +58,23 @@ def ensure_schema():
                     "ADD COLUMN IF NOT EXISTS infobip_userkey VARCHAR(300) DEFAULT ''"
                 )
             )
-
-            # app_license: activation fields
             conn.execute(
                 text(
-                    "ALTER TABLE app_license "
-                    "ADD COLUMN IF NOT EXISTS client_id VARCHAR(120) DEFAULT ''"
+                    "ALTER TABLE clinic_settings "
+                    "ADD COLUMN IF NOT EXISTS google_maps_link VARCHAR(1000) DEFAULT ''"
                 )
             )
-            conn.execute(
-                text(
-                    "ALTER TABLE app_license "
-                    "ADD COLUMN IF NOT EXISTS activation_token VARCHAR(2000) DEFAULT ''"
-                )
-            )
-            conn.execute(text("ALTER TABLE app_license ADD COLUMN IF NOT EXISTS plan INTEGER DEFAULT 0"))
-            conn.execute(text("ALTER TABLE app_license ADD COLUMN IF NOT EXISTS activated_at TIMESTAMP"))
-
-            # children: parent/guardian fields
-            conn.execute(text("ALTER TABLE children ADD COLUMN IF NOT EXISTS parent1_name VARCHAR(200)"))
-            conn.execute(text("ALTER TABLE children ADD COLUMN IF NOT EXISTS parent1_phone VARCHAR(80)"))
-            conn.execute(text("ALTER TABLE children ADD COLUMN IF NOT EXISTS parent2_name VARCHAR(200)"))
-            conn.execute(text("ALTER TABLE children ADD COLUMN IF NOT EXISTS parent2_phone VARCHAR(80)"))
-
     except Exception:
-        # If DB isn't ready yet, create_all will handle fresh installs.
         pass
 
 
 def seed_saas_defaults():
-    """Seed default tenant + plans + a trial subscription (multi-tenant SaaS).
-
-    Safe to call repeatedly.
+    """
+    Seed default tenant + default plans + a trial subscription.
+    Safe to call repeatedly. Does NOT crash if licensing models aren't present.
     """
     db = SessionLocal()
     try:
-        # Import inside to avoid circular imports at app import-time
         from app.models.tenant import Tenant
         from app.models.licensing import Plan, Subscription
 
@@ -132,41 +112,39 @@ def seed_saas_defaults():
             .first()
         )
         if not sub:
-            sub = Subscription(
-                id=str(uuid.uuid4()),
-                tenant_id=t.id,
-                plan_id=p_trial.id,
-                status="active",
-                starts_at=datetime.utcnow(),
-                ends_at=datetime.utcnow() + timedelta(days=p_trial.duration_days),
-                source="manual",
+            db.add(
+                Subscription(
+                    id=str(uuid.uuid4()),
+                    tenant_id=t.id,
+                    plan_id=p_trial.id,
+                    status="active",
+                    starts_at=datetime.utcnow(),
+                    ends_at=datetime.utcnow() + timedelta(days=p_trial.duration_days),
+                    source="manual",
+                )
             )
-            db.add(sub)
+            db.commit()
+
+        # Ensure tenant clinic settings row exists
+        cs = db.query(ClinicSettings).filter(ClinicSettings.tenant_id == t.id).first()
+        if not cs:
+            db.add(ClinicSettings(tenant_id=t.id))
             db.commit()
 
     except Exception:
-        # If licensing models aren't present in some older build, don't crash startup.
         pass
     finally:
         db.close()
 
 
-def seed_if_empty():
-    """Ensure required singleton rows exist (legacy single-tenant mode support).
-
-    By default, the database starts empty for production use.
-    If you want to load sample content for training/testing, set:
-        PORTAL_SEED_SAMPLE=1
+def seed_legacy_singletons():
+    """
+    Legacy single-tenant support:
+    keep minimal singleton rows for older UI parts that still read AppLicense id=1.
     """
     db = SessionLocal()
     try:
-        # Ensure singleton settings rows exist (legacy pattern)
-        if not db.get(ClinicSettings, 1):
-            db.add(ClinicSettings(id=1))
-            db.commit()
-
         if not db.get(AppLicense, 1):
-            # Default: 4-week trial, BOTH apps enabled
             db.add(
                 AppLicense(
                     id=1,
@@ -176,7 +154,7 @@ def seed_if_empty():
             )
             db.commit()
 
-        # Optional sample content
+        # Optional sample content for legacy demo/testing
         if os.getenv("PORTAL_SEED_SAMPLE", "0") != "1":
             return
 
@@ -221,14 +199,13 @@ def root_head():
 
 @app.on_event("startup")
 def on_startup():
-    # Create tables for any non-Alembic legacy installs
+    # For non-alembic legacy installs
     Base.metadata.create_all(bind=engine)
 
-    # Backward-compatible patching for older DBs
     ensure_schema()
 
-    # Legacy seed (single-tenant-ish)
-    seed_if_empty()
-
-    # SaaS seed (multi-tenant + licensing)
+    # Seeds for new SaaS (multi-tenant)
     seed_saas_defaults()
+
+    # Back-compat legacy singletons
+    seed_legacy_singletons()
