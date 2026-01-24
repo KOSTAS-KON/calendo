@@ -43,9 +43,16 @@ class Child(Base):
         passive_deletes=True,
     )
 
-    # FIX: BillingPlan.child uses back_populates="billing_plans" :contentReference[oaicite:3]{index=3}
     billing_plans = relationship(
         "BillingPlan",
+        back_populates="child",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+    # FIX: TimelineEvent.child expects back_populates="timeline_events"
+    timeline_events = relationship(
+        "TimelineEvent",
         back_populates="child",
         cascade="all, delete-orphan",
         passive_deletes=True,
