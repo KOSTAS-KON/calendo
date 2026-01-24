@@ -11,7 +11,7 @@ class Child(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
-    # Tenant scoping already present :contentReference[oaicite:5]{index=5}
+    # Keep existing column exactly :contentReference[oaicite:2]{index=2}
     tenant_id: Mapped[str] = mapped_column(String(36), ForeignKey("tenants.id"), index=True)
 
     full_name: Mapped[str] = mapped_column(String(200), index=True)
@@ -23,7 +23,7 @@ class Child(Base):
     parent2_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     parent2_phone: Mapped[str | None] = mapped_column(String(80), nullable=True)
 
-    # Keep existing appointments relationship but make it consistent with Appointment.child back_populates :contentReference[oaicite:6]{index=6}
+    # Existing relationship kept, but add safe delete behavior
     appointments = relationship(
         "Appointment",
         back_populates="child",
@@ -31,9 +31,17 @@ class Child(Base):
         passive_deletes=True,
     )
 
-    # FIX: Add missing property that Attachment.child expects (back_populates="attachments") :contentReference[oaicite:7]{index=7}
+    # FIX: Attachment.child uses back_populates="attachments" :contentReference[oaicite:3]{index=3}
     attachments = relationship(
         "Attachment",
+        back_populates="child",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+    # FIX: BillingItem.child expects Child.billing_items (your current crash)
+    billing_items = relationship(
+        "BillingItem",
         back_populates="child",
         cascade="all, delete-orphan",
         passive_deletes=True,

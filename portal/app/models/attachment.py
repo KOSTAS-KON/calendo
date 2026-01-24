@@ -11,7 +11,7 @@ class Attachment(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
-    # Keep existing columns exactly :contentReference[oaicite:2]{index=2}
+    # Keep same columns, but add ondelete rules (safe)
     child_id: Mapped[int] = mapped_column(
         ForeignKey("children.id", ondelete="CASCADE"),
         index=True,
@@ -28,9 +28,8 @@ class Attachment(Base):
 
     created_at: Mapped[str] = mapped_column(DateTime, server_default=func.now())
 
-    # Relationships must match the other side names:
-    # Child must provide `attachments` (we add it in child.py) :contentReference[oaicite:3]{index=3}
+    # Must match Child.attachments
     child = relationship("Child", back_populates="attachments")
 
-    # SessionNote must provide `attachments` (your session_note.py should have it) :contentReference[oaicite:4]{index=4}
+    # Must match SessionNote.attachments (and it DOES in your loaded SessionNote) :contentReference[oaicite:5]{index=5}
     session_note = relationship("SessionNote", back_populates="attachments")
