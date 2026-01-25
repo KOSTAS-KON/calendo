@@ -12,7 +12,6 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.tenancy import tenant_query
 from app.models.tenant import Tenant
 from app.models.clinic_settings import ClinicSettings
 from app.models.licensing import Plan, Subscription, ActivationCode, LicenseAuditLog
@@ -23,12 +22,6 @@ templates = Jinja2Templates(directory="app/templates")
 
 
 def _require_admin(request: Request) -> None:
-    """Simple super-admin guard.
-    Use either:
-      - query param ?admin_key=...
-      - header X-Admin-Key: ...
-    The value must match env ADMIN_KEY.
-    """
     expected = (os.getenv("ADMIN_KEY") or "").strip()
     if not expected:
         raise HTTPException(status_code=403, detail="ADMIN_KEY not configured")
@@ -45,11 +38,28 @@ def _hash_code(code: str) -> str:
     return hashlib.sha256(code.encode("utf-8")).hexdigest()
 
 
+def _portal_base(request: Request) -> str:
+    return str(request.base_url).rstrip("/")
+
+
+def _sms_base() -> str:
+    return (os.getenv("SMS_APP_URL") or "").strip().rstrip("/")
+
+
+def _sms_url_for_tenant(slug: str) -> str:
+    base = _sms_base()
+    if not base:
+        return ""
+    if base.endswith("/sms"):
+        return f"{base}?tenant={slug}"
+    return f"{base}/sms?tenant={slug}"
+
+
 @router.get("/admin/tenants", response_class=HTMLResponse)
 def admin_tenants(request: Request, db: Session = Depends(get_db)):
     _require_admin(request)
     tenants = db.query(Tenant).order_by(Tenant.created_at.desc()).all()
-    base_url = str(request.base_url).rstrip("/")
+    base_url = _portal_base(request)
     return templates.TemplateResponse(
         "admin/tenants.html",
         {"request": request, "tenants": tenants, "base_url": base_url, "admin_key": request.query_params.get("admin_key","")},
@@ -87,17 +97,14 @@ def admin_tenants_create(
     db.commit()
     db.refresh(t)
 
-    # Ensure settings row
     cs = ClinicSettings(tenant_id=t.id)
     db.add(cs)
     db.commit()
 
-    # Ensure plan
     plan = db.query(Plan).filter(Plan.code == plan_code).first()
     if not plan:
         raise HTTPException(400, "Unknown plan")
 
-    # Start trial subscription
     sub = Subscription(
         id=secrets.token_hex(16),
         tenant_id=t.id,
@@ -108,13 +115,15 @@ def admin_tenants_create(
         source="manual",
     )
     db.add(sub)
-    db.add(LicenseAuditLog(
-        id=secrets.token_hex(16),
-        tenant_id=t.id,
-        event_type="tenant_created",
-        details_json=f'{{"slug":"{slug}","plan":"{plan.code}"}}',
-        created_at=datetime.utcnow(),
-    ))
+    db.add(
+        LicenseAuditLog(
+            id=secrets.token_hex(16),
+            tenant_id=t.id,
+            event_type="tenant_created",
+            details_json=f'{{"slug":"{slug}","plan":"{plan.code}"}}',
+            created_at=datetime.utcnow(),
+        )
+    )
     db.commit()
 
     ak = request.query_params.get("admin_key","")
@@ -169,7 +178,6 @@ def admin_generate_code(
     if not plan:
         raise HTTPException(400, "Plan not found")
 
-    # Generate a human-friendly code
     raw = f"{tenant_slug.upper()}-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}"
     code_hash = _hash_code(raw)
 
@@ -186,15 +194,51 @@ def admin_generate_code(
         note="",
     )
     db.add(ac)
-    db.add(LicenseAuditLog(
-        id=secrets.token_hex(16),
-        tenant_id=t.id,
-        event_type="code_generated",
-        details_json=f'{{"plan":"{plan.code}"}}',
-        created_at=datetime.utcnow(),
-    ))
+    db.add(
+        LicenseAuditLog(
+            id=secrets.token_hex(16),
+            tenant_id=t.id,
+            event_type="code_generated",
+            details_json=f'{{"plan":"{plan.code}"}}',
+            created_at=datetime.utcnow(),
+        )
+    )
     db.commit()
 
-    # Show code once via redirect query param
     ak = request.query_params.get("admin_key","")
     return RedirectResponse(url=f"/admin/licensing?tenant={tenant_slug}&admin_key={ak}&code={raw}", status_code=303)
+
+
+# NEW: Admin Links page
+@router.get("/admin/links", response_class=HTMLResponse)
+def admin_links(request: Request, db: Session = Depends(get_db)):
+    _require_admin(request)
+
+    base_url = _portal_base(request)
+    ak = request.query_params.get("admin_key", "")
+    tenants = db.query(Tenant).order_by(Tenant.slug.asc()).all()
+
+    rows = []
+    for t in tenants:
+        rows.append(
+            {
+                "slug": t.slug,
+                "name": t.name,
+                "suite_url": f"{base_url}/t/{t.slug}/suite",
+                "sms_url": _sms_url_for_tenant(t.slug),
+            }
+        )
+
+    return templates.TemplateResponse(
+        "admin/links.html",
+        {
+            "request": request,
+            "admin_key": ak,
+            "base_url": base_url,
+            "sms_base": _sms_base(),
+            "admin_tenants_url": f"{base_url}/admin/tenants?admin_key={ak}",
+            "admin_licensing_url": f"{base_url}/admin/licensing?admin_key={ak}",
+            "admin_links_url": f"{base_url}/admin/links?admin_key={ak}",
+            "tenants": rows,
+        },
+    )
