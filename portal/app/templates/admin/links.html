@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h1 style="margin:0 0 10px 0;">Admin Links</h1>
+
+<div class="card" style="padding:14px; margin-bottom:14px;">
+  <div style="display:flex; gap:12px; flex-wrap:wrap;">
+    <a class="btn" href="{{ admin_tenants_url }}">Tenants</a>
+    <a class="btn" href="{{ admin_licensing_url }}">Licensing</a>
+    <a class="btn" href="{{ admin_links_url }}">Links</a>
+  </div>
+
+  <div style="margin-top:10px; opacity:.85; font-size:14px;">
+    <div><b>Portal Base:</b> <span id="portalBase">{{ portal_base }}</span></div>
+    <div><b>SMS Base:</b> <span id="smsBase">{{ sms_base or "Not set (SMS_APP_URL env var)" }}</span></div>
+  </div>
+</div>
+
+<div class="card" style="padding:14px;">
+  <h2 style="margin:0 0 10px 0;">Tenant Links</h2>
+
+  <table style="width:100%; border-collapse:collapse;">
+    <thead>
+      <tr style="text-align:left; border-bottom:1px solid #e5e7eb;">
+        <th style="padding:8px;">Slug</th>
+        <th style="padding:8px;">Clinic</th>
+        <th style="padding:8px;">Portal Suite</th>
+        <th style="padding:8px;">SMS</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for t in tenants %}
+      <tr style="border-bottom:1px solid #f1f5f9;">
+        <td style="padding:8px; font-family:monospace;">{{ t.slug }}</td>
+        <td style="padding:8px;">{{ t.name }}</td>
+
+        <td style="padding:8px;">
+          <a href="{{ t.suite_url }}" target="_blank">{{ t.suite_url }}</a>
+          <button class="btn btn-small" type="button" onclick="copyText('{{ t.suite_url }}')">Copy</button>
+        </td>
+
+        <td style="padding:8px;">
+          {% if t.sms_url %}
+            <a href="{{ t.sms_url }}" target="_blank">{{ t.sms_url }}</a>
+            <button class="btn btn-small" type="button" onclick="copyText('{{ t.sms_url }}')">Copy</button>
+          {% else %}
+            <span style="opacity:.7;">Set SMS_APP_URL env var</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<script>
+  function copyText(txt){
+    navigator.clipboard.writeText(txt).then(()=>{
+      // quick tiny feedback
+      console.log("copied");
+    });
+  }
+</script>
+
+{% endblock %}
