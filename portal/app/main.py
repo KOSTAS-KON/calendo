@@ -25,6 +25,7 @@ if not _session_secret:
     # Fallback for local dev (do NOT rely on this in production)
     _session_secret = "dev-secret-key-change-me"
 
+# Install sessions middleware (requires itsdangerous in requirements.txt)
 app.add_middleware(
     SessionMiddleware,
     secret_key=_session_secret,
@@ -57,19 +58,28 @@ def root_head():
 
 
 # ----------------------------
-# Simple login (env-based) for now
+# Session helpers (SAFE)
 # ----------------------------
+def _session_dict(request: Request) -> dict:
+    # If SessionMiddleware is not attached for any reason, avoid crashing.
+    return request.scope.get("session") if isinstance(request.scope.get("session"), dict) else {}
+
+
 def _is_logged_in(request: Request) -> bool:
-    return bool(request.session.get("portal_user"))
+    return bool(_session_dict(request).get("portal_user"))
 
 
 def _login_user(request: Request, username: str) -> None:
-    request.session["portal_user"] = username
-    request.session["logged_in_at"] = datetime.utcnow().isoformat()
+    if "session" not in request.scope:
+        return
+    request.scope["session"]["portal_user"] = username
+    request.scope["session"]["logged_in_at"] = datetime.utcnow().isoformat()
 
 
 def _logout_user(request: Request) -> None:
-    request.session.clear()
+    if "session" not in request.scope:
+        return
+    request.scope["session"].clear()
 
 
 def _safe_next(next_path: str) -> str:
@@ -86,9 +96,13 @@ def _safe_next(next_path: str) -> str:
     return nxt
 
 
+# ----------------------------
+# Login (env-based)
+# ----------------------------
 @app.get("/login", response_class=HTMLResponse)
 def login_get(request: Request, next: str = "/t/default/suite", error: str = ""):
     next_path = _safe_next(next)
+
     banner = ""
     if error:
         banner = """
@@ -110,6 +124,7 @@ def login_get(request: Request, next: str = "/t/default/suite", error: str = "")
           input{{width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,.18); background:#0b1220; color:#e5e7eb; margin-top:8px;}}
           button{{margin-top:12px; padding:10px 14px; border-radius:10px; border:none; background:#2563eb; color:white; font-weight:800; width:100%;}}
           .hint{{margin-top:10px; opacity:.8; font-size:13px;}}
+          code{{background:rgba(255,255,255,.08); padding:2px 6px; border-radius:6px;}}
         </style>
       </head>
       <body>
@@ -144,11 +159,10 @@ def login_post(
 ):
     expected_user = (os.getenv("PORTAL_LOGIN_USER") or "").strip()
     expected_pass = (os.getenv("PORTAL_LOGIN_PASS") or "").strip()
-
     next_path = _safe_next(next)
 
+    # If env not set, fail closed
     if not expected_user or not expected_pass:
-        # If env not set, fail closed
         return RedirectResponse(url=f"/login?next={quote(next_path)}&error=1", status_code=303)
 
     if username.strip() != expected_user or password != expected_pass:
@@ -217,7 +231,7 @@ def landing(request: Request):
 
 
 # ----------------------------
-# Subscription enforcement (your existing logic)
+# Subscription enforcement
 # ----------------------------
 def _extract_tenant_slug(path: str) -> str:
     parts = [p for p in path.split("/") if p]
@@ -253,40 +267,8 @@ def _is_subscription_active(tenant_slug: str) -> bool:
         db.close()
 
 
-@app.middleware("http")
-async def login_and_subscription_gate(request: Request, call_next):
-    path = request.url.path or ""
-
-    # Allowlist (public)
-    if (
-        path.startswith("/static")
-        or path.startswith("/health")
-        or path.startswith("/login")
-        or path.startswith("/logout")
-        or path.startswith("/activate")
-        or path == "/"
-    ):
-        return await call_next(request)
-
-    # Admin pages are protected by ADMIN_KEY in admin.py; allow through
-    if path.startswith("/admin"):
-        return await call_next(request)
-
-    # Require login for tenant routes
-    if path.startswith("/t/"):
-        if not _is_logged_in(request):
-            return RedirectResponse(url=f"/login?next={quote(path)}", status_code=303)
-
-        tenant_slug = _extract_tenant_slug(path)
-        if not _is_subscription_active(tenant_slug):
-            next_url = quote(path)
-            return RedirectResponse(url=f"/activate?tenant={tenant_slug}&next={next_url}", status_code=307)
-
-    return await call_next(request)
-
-
 # ----------------------------
-# Activation (your existing redeem logic + banners)
+# Activation (redeem logic + banners)
 # ----------------------------
 _ERROR_MESSAGES = {
     "missing": "Please enter an activation code.",
@@ -471,6 +453,41 @@ def activate_post(
         return bounce("internal")
     finally:
         db.close()
+
+
+# ----------------------------
+# Middleware: login + subscription gate
+# ----------------------------
+@app.middleware("http")
+async def login_and_subscription_gate(request: Request, call_next):
+    path = request.url.path or ""
+
+    # Allowlist (public)
+    if (
+        path.startswith("/static")
+        or path.startswith("/health")
+        or path.startswith("/login")
+        or path.startswith("/logout")
+        or path.startswith("/activate")
+        or path == "/"
+    ):
+        return await call_next(request)
+
+    # Admin pages are protected by ADMIN_KEY in admin.py; allow through
+    if path.startswith("/admin"):
+        return await call_next(request)
+
+    # Require login + active subscription for tenant routes
+    if path.startswith("/t/"):
+        if not _is_logged_in(request):
+            return RedirectResponse(url=f"/login?next={quote(path)}", status_code=303)
+
+        tenant_slug = _extract_tenant_slug(path)
+        if not _is_subscription_active(tenant_slug):
+            next_url = quote(path)
+            return RedirectResponse(url=f"/activate?tenant={tenant_slug}&next={next_url}", status_code=307)
+
+    return await call_next(request)
 
 
 # ----------------------------
