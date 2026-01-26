@@ -55,6 +55,24 @@ def _sms_url_for_tenant(slug: str) -> str:
     return f"{base}/sms?tenant={slug}"
 
 
+def ensure_default_plans(db: Session) -> None:
+    """
+    Ensure the plan codes used by the UI exist.
+    This prevents Create Tenant from 500'ing when plan_code isn't found.
+    """
+    defaults = [
+        ("TRIAL_7D", "7-day Trial", 7),
+        ("MONTHLY_30D", "Monthly (30 days)", 30),
+        ("YEARLY_365D", "Yearly (365 days)", 365),
+    ]
+
+    for code, name, days in defaults:
+        p = db.query(Plan).filter(Plan.code == code).first()
+        if not p:
+            db.add(Plan(code=code, name=name, duration_days=days, features_json="{}"))
+    db.commit()
+
+
 @router.get("/admin/tenants", response_class=HTMLResponse)
 def admin_tenants(request: Request, db: Session = Depends(get_db)):
     _require_admin(request)
@@ -62,17 +80,26 @@ def admin_tenants(request: Request, db: Session = Depends(get_db)):
     base_url = _portal_base(request)
     return templates.TemplateResponse(
         "admin/tenants.html",
-        {"request": request, "tenants": tenants, "base_url": base_url, "admin_key": request.query_params.get("admin_key","")},
+        {
+            "request": request,
+            "tenants": tenants,
+            "base_url": base_url,
+            "admin_key": request.query_params.get("admin_key", ""),
+        },
     )
 
 
 @router.get("/admin/tenants/new", response_class=HTMLResponse)
 def admin_tenants_new(request: Request, db: Session = Depends(get_db)):
     _require_admin(request)
+
+    # Make sure plans exist before showing dropdown
+    ensure_default_plans(db)
+
     plans = db.query(Plan).order_by(Plan.duration_days.asc()).all()
     return templates.TemplateResponse(
         "admin/tenant_new.html",
-        {"request": request, "plans": plans, "admin_key": request.query_params.get("admin_key","")},
+        {"request": request, "plans": plans, "admin_key": request.query_params.get("admin_key", "")},
     )
 
 
@@ -85,54 +112,81 @@ def admin_tenants_create(
     db: Session = Depends(get_db),
 ):
     _require_admin(request)
+
+    # Ensure required plan codes exist
+    ensure_default_plans(db)
+
     slug = slug.strip().lower()
     if not slug or " " in slug:
-        raise HTTPException(400, "Invalid slug")
+        raise HTTPException(400, "Invalid slug (no spaces)")
 
     if db.query(Tenant).filter(Tenant.slug == slug).first():
         raise HTTPException(400, "Slug already exists")
 
-    t = Tenant(id=secrets.token_hex(16), slug=slug, name=name.strip(), status="active")
-    db.add(t)
-    db.commit()
-    db.refresh(t)
+    try:
+        # Create tenant
+        t = Tenant(id=secrets.token_hex(16), slug=slug, name=name.strip(), status="active")
 
-    cs = ClinicSettings(tenant_id=t.id)
-    db.add(cs)
-    db.commit()
+        # If Tenant model has created_at column, set it safely (no kwargs to avoid TypeError)
+        if hasattr(t, "created_at"):
+            setattr(t, "created_at", datetime.utcnow())
 
-    plan = db.query(Plan).filter(Plan.code == plan_code).first()
-    if not plan:
-        raise HTTPException(400, "Unknown plan")
+        db.add(t)
+        db.commit()
+        db.refresh(t)
 
-    sub = Subscription(
-        id=secrets.token_hex(16),
-        tenant_id=t.id,
-        plan_id=plan.id,
-        status="active",
-        starts_at=datetime.utcnow(),
-        ends_at=datetime.utcnow() + timedelta(days=int(plan.duration_days)),
-        source="manual",
-    )
-    db.add(sub)
-    db.add(
-        LicenseAuditLog(
+        # Create per-tenant settings row
+        cs = ClinicSettings(tenant_id=t.id)
+        db.add(cs)
+        db.commit()
+
+        # Plan
+        plan = db.query(Plan).filter(Plan.code == plan_code).first()
+        if not plan:
+            raise HTTPException(400, f"Unknown plan: {plan_code}")
+
+        # Start subscription
+        sub = Subscription(
             id=secrets.token_hex(16),
             tenant_id=t.id,
-            event_type="tenant_created",
-            details_json=f'{{"slug":"{slug}","plan":"{plan.code}"}}',
-            created_at=datetime.utcnow(),
+            plan_id=plan.id,
+            status="active",
+            starts_at=datetime.utcnow(),
+            ends_at=datetime.utcnow() + timedelta(days=int(plan.duration_days)),
+            source="manual",
         )
-    )
-    db.commit()
+        db.add(sub)
 
-    ak = request.query_params.get("admin_key","")
-    return RedirectResponse(url=f"/admin/tenants?admin_key={ak}", status_code=303)
+        # Audit
+        db.add(
+            LicenseAuditLog(
+                id=secrets.token_hex(16),
+                tenant_id=t.id,
+                event_type="tenant_created",
+                details_json=f'{{"slug":"{slug}","plan":"{plan.code}"}}',
+                created_at=datetime.utcnow(),
+            )
+        )
+        db.commit()
+
+        ak = request.query_params.get("admin_key", "")
+        return RedirectResponse(url=f"/admin/tenants?admin_key={ak}", status_code=303)
+
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        # Return readable error instead of 500
+        raise HTTPException(status_code=400, detail=f"Create tenant failed: {type(e).__name__}: {e}")
 
 
 @router.get("/admin/licensing", response_class=HTMLResponse)
 def admin_licensing(request: Request, tenant: Optional[str] = None, db: Session = Depends(get_db)):
     _require_admin(request)
+
+    ensure_default_plans(db)
+
     tenants = db.query(Tenant).order_by(Tenant.slug.asc()).all()
     plans = db.query(Plan).order_by(Plan.duration_days.asc()).all()
 
@@ -156,7 +210,7 @@ def admin_licensing(request: Request, tenant: Optional[str] = None, db: Session 
             "plans": plans,
             "selected": selected,
             "current_sub": current_sub,
-            "admin_key": request.query_params.get("admin_key",""),
+            "admin_key": request.query_params.get("admin_key", ""),
         },
     )
 
@@ -170,6 +224,8 @@ def admin_generate_code(
 ):
     _require_admin(request)
 
+    ensure_default_plans(db)
+
     t = db.query(Tenant).filter(Tenant.slug == tenant_slug).first()
     if not t:
         raise HTTPException(404, "Tenant not found")
@@ -181,35 +237,39 @@ def admin_generate_code(
     raw = f"{tenant_slug.upper()}-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}"
     code_hash = _hash_code(raw)
 
-    ac = ActivationCode(
-        id=secrets.token_hex(16),
-        tenant_id=t.id,
-        plan_id=plan.id,
-        code_hash=code_hash,
-        issued_at=datetime.utcnow(),
-        redeem_by=datetime.utcnow() + timedelta(days=90),
-        max_redemptions=1,
-        redeemed_count=0,
-        revoked_at=None,
-        note="",
-    )
-    db.add(ac)
-    db.add(
-        LicenseAuditLog(
+    try:
+        ac = ActivationCode(
             id=secrets.token_hex(16),
             tenant_id=t.id,
-            event_type="code_generated",
-            details_json=f'{{"plan":"{plan.code}"}}',
-            created_at=datetime.utcnow(),
+            plan_id=plan.id,
+            code_hash=code_hash,
+            issued_at=datetime.utcnow(),
+            redeem_by=datetime.utcnow() + timedelta(days=90),
+            max_redemptions=1,
+            redeemed_count=0,
+            revoked_at=None,
+            note="",
         )
-    )
-    db.commit()
+        db.add(ac)
+        db.add(
+            LicenseAuditLog(
+                id=secrets.token_hex(16),
+                tenant_id=t.id,
+                event_type="code_generated",
+                details_json=f'{{"plan":"{plan.code}"}}',
+                created_at=datetime.utcnow(),
+            )
+        )
+        db.commit()
 
-    ak = request.query_params.get("admin_key","")
-    return RedirectResponse(url=f"/admin/licensing?tenant={tenant_slug}&admin_key={ak}&code={raw}", status_code=303)
+        ak = request.query_params.get("admin_key", "")
+        return RedirectResponse(url=f"/admin/licensing?tenant={tenant_slug}&admin_key={ak}&code={raw}", status_code=303)
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=f"Generate code failed: {type(e).__name__}: {e}")
 
 
-# NEW: Admin Links page
 @router.get("/admin/links", response_class=HTMLResponse)
 def admin_links(request: Request, db: Session = Depends(get_db)):
     _require_admin(request)
