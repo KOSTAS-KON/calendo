@@ -58,7 +58,7 @@ def _sms_url_for_tenant(slug: str) -> str:
 def ensure_default_plans(db: Session) -> None:
     """
     Ensure the plan codes used by the UI exist.
-    This prevents Create Tenant from 500'ing when plan_code isn't found.
+    This prevents Create Tenant from failing if plan_code isn't found.
     """
     defaults = [
         ("TRIAL_7D", "7-day Trial", 7),
@@ -71,6 +71,29 @@ def ensure_default_plans(db: Session) -> None:
         if not p:
             db.add(Plan(code=code, name=name, duration_days=days, features_json="{}"))
     db.commit()
+
+
+# ---------------------------------------------------------------------------
+# NEW: Single admin dashboard entry point
+# ---------------------------------------------------------------------------
+@router.get("/admin", response_class=HTMLResponse)
+def admin_index(request: Request, db: Session = Depends(get_db)):
+    _require_admin(request)
+    base_url = _portal_base(request)
+    ak = request.query_params.get("admin_key", "")
+
+    return templates.TemplateResponse(
+        "admin/index.html",
+        {
+            "request": request,
+            "admin_key": ak,
+            "base_url": base_url,
+            "sms_base": _sms_base(),
+            "tenants_url": f"{base_url}/admin/tenants?admin_key={ak}",
+            "licensing_url": f"{base_url}/admin/licensing?admin_key={ak}",
+            "links_url": f"{base_url}/admin/links?admin_key={ak}",
+        },
+    )
 
 
 @router.get("/admin/tenants", response_class=HTMLResponse)
@@ -93,7 +116,6 @@ def admin_tenants(request: Request, db: Session = Depends(get_db)):
 def admin_tenants_new(request: Request, db: Session = Depends(get_db)):
     _require_admin(request)
 
-    # Make sure plans exist before showing dropdown
     ensure_default_plans(db)
 
     plans = db.query(Plan).order_by(Plan.duration_days.asc()).all()
@@ -113,7 +135,6 @@ def admin_tenants_create(
 ):
     _require_admin(request)
 
-    # Ensure required plan codes exist
     ensure_default_plans(db)
 
     slug = slug.strip().lower()
@@ -124,10 +145,7 @@ def admin_tenants_create(
         raise HTTPException(400, "Slug already exists")
 
     try:
-        # Create tenant
         t = Tenant(id=secrets.token_hex(16), slug=slug, name=name.strip(), status="active")
-
-        # If Tenant model has created_at column, set it safely (no kwargs to avoid TypeError)
         if hasattr(t, "created_at"):
             setattr(t, "created_at", datetime.utcnow())
 
@@ -135,17 +153,14 @@ def admin_tenants_create(
         db.commit()
         db.refresh(t)
 
-        # Create per-tenant settings row
         cs = ClinicSettings(tenant_id=t.id)
         db.add(cs)
         db.commit()
 
-        # Plan
         plan = db.query(Plan).filter(Plan.code == plan_code).first()
         if not plan:
             raise HTTPException(400, f"Unknown plan: {plan_code}")
 
-        # Start subscription
         sub = Subscription(
             id=secrets.token_hex(16),
             tenant_id=t.id,
@@ -157,7 +172,6 @@ def admin_tenants_create(
         )
         db.add(sub)
 
-        # Audit
         db.add(
             LicenseAuditLog(
                 id=secrets.token_hex(16),
@@ -177,7 +191,6 @@ def admin_tenants_create(
         raise
     except Exception as e:
         db.rollback()
-        # Return readable error instead of 500
         raise HTTPException(status_code=400, detail=f"Create tenant failed: {type(e).__name__}: {e}")
 
 

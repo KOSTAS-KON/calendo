@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h1 style="margin:0 0 12px 0;">Admin Dashboard</h1>
+
+<div class="card" style="padding:16px; margin-bottom:14px;">
+  <div style="opacity:.85; font-size:14px;">
+    <div><b>Portal:</b> {{ base_url }}</div>
+    <div><b>SMS:</b> {{ sms_base or "Not set (SMS_APP_URL env var)" }}</div>
+  </div>
+</div>
+
+<div style="display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap:14px;">
+  <a class="card" href="{{ tenants_url }}" style="padding:16px; text-decoration:none; display:block;">
+    <div style="font-weight:800; font-size:16px; margin-bottom:6px;">Tenants</div>
+    <div style="opacity:.8; font-size:13px;">Create and manage tenant clinics</div>
+  </a>
+
+  <a class="card" href="{{ licensing_url }}" style="padding:16px; text-decoration:none; display:block;">
+    <div style="font-weight:800; font-size:16px; margin-bottom:6px;">Licensing</div>
+    <div style="opacity:.8; font-size:13px;">Generate activation codes and manage subscriptions</div>
+  </a>
+
+  <a class="card" href="{{ links_url }}" style="padding:16px; text-decoration:none; display:block;">
+    <div style="font-weight:800; font-size:16px; margin-bottom:6px;">Links</div>
+    <div style="opacity:.8; font-size:13px;">All tenant portal + SMS links in one place</div>
+  </a>
+</div>
+
+<div style="margin-top:14px; opacity:.75; font-size:13px;">
+  Tip: Bookmark this page:
+  <code>{{ base_url }}/admin?admin_key={{ admin_key }}</code>
+</div>
+
+{% endblock %}
