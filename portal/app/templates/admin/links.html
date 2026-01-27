@@ -62,4 +62,109 @@
   }
 </script>
 
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>Admin Links</title>
+    <style>
+      body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial; background:#0b1220; color:#e5e7eb; margin:0;}
+      .wrap{max-width:1100px; margin:0 auto; padding:46px 18px;}
+      .card{background:#101a2f; border:1px solid rgba(255,255,255,.08); border-radius:16px; padding:16px;}
+      h1{margin:0 0 12px 0; font-size:22px;}
+      .muted{opacity:.8; font-size:13px;}
+      .row{display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;}
+      a.btn{display:inline-block; padding:9px 12px; border-radius:10px; text-decoration:none; font-weight:800;}
+      a.ghost{border:1px solid rgba(255,255,255,.18); color:#e5e7eb;}
+      table{width:100%; border-collapse:collapse; margin-top:10px;}
+      th,td{padding:10px; border-bottom:1px solid rgba(255,255,255,.08); vertical-align:top;}
+      th{text-align:left; font-size:13px; opacity:.85;}
+      td{font-size:14px;}
+      code{background:rgba(255,255,255,.08); padding:2px 6px; border-radius:6px;}
+      .mono{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;}
+      .smallbtn{margin-left:8px; padding:6px 10px; border-radius:10px; border:1px solid rgba(255,255,255,.18); background:transparent; color:#e5e7eb; cursor:pointer; font-weight:800;}
+      .smallbtn:hover{border-color:rgba(255,255,255,.35);}
+    </style>
+  </head>
+
+  <body>
+    <div class="wrap">
+      <div class="card">
+        <h1>Admin Links</h1>
+        <div class="muted"><b>Portal:</b> {{ base_url }}</div>
+        <div class="muted"><b>SMS:</b> {{ sms_base or "Not set (SMS_APP_URL env var)" }}</div>
+
+        <div class="row">
+          <a class="btn ghost" href="{{ admin_tenants_url }}">Tenants</a>
+          <a class="btn ghost" href="{{ admin_licensing_url }}">Licensing</a>
+          <a class="btn ghost" href="{{ admin_links_url }}">Links</a>
+          <a class="btn ghost" href="{{ base_url }}/admin?admin_key={{ admin_key }}">Admin Home</a>
+        </div>
+
+        <div class="muted" style="margin-top:10px;">
+          Bookmark: <code>{{ base_url }}/admin/links?admin_key={{ admin_key }}</code>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:14px;">
+        <h1 style="margin:0 0 8px 0;">Tenant Links</h1>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Slug</th>
+              <th>Clinic</th>
+              <th>Portal Suite</th>
+              <th>SMS</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for t in tenants %}
+            <tr>
+              <td class="mono">{{ t.slug }}</td>
+              <td>{{ t.name }}</td>
+              <td>
+                <a href="{{ t.suite_url }}" target="_blank" rel="noopener noreferrer">{{ t.suite_url }}</a>
+                <button class="smallbtn" type="button" onclick="copyText('{{ t.suite_url|e }}')">Copy</button>
+              </td>
+              <td>
+                {% if t.sms_url %}
+                  <a href="{{ t.sms_url }}" target="_blank" rel="noopener noreferrer">{{ t.sms_url }}</a>
+                  <button class="smallbtn" type="button" onclick="copyText('{{ t.sms_url|e }}')">Copy</button>
+                {% else %}
+                  <span class="muted">Set SMS_APP_URL env var</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <script>
+      function copyText(txt){
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(txt).catch(function(){ fallbackCopy(txt); });
+          return;
+        }
+        fallbackCopy(txt);
+      }
+      function fallbackCopy(txt){
+        const ta = document.createElement("textarea");
+        ta.value = txt;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "absolute";
+        ta.style.left = "-9999px";
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand("copy"); } catch (e) {}
+        document.body.removeChild(ta);
+      }
+    </script>
+  </body>
+</html>
+
+
 {% endblock %}
