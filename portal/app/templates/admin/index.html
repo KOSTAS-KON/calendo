@@ -3,57 +3,67 @@
   <head>
     <meta charset="utf-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1"/>
-    <title>Admin Dashboard</title>
+    <title>Admin</title>
     <style>
       body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial; background:#0b1220; color:#e5e7eb; margin:0;}
       .wrap{max-width:980px; margin:0 auto; padding:46px 18px;}
       .card{background:#101a2f; border:1px solid rgba(255,255,255,.08); border-radius:16px; padding:18px;}
       h1{margin:0 0 12px 0; font-size:22px;}
       .muted{opacity:.8; font-size:13px;}
-      .grid{display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap:14px; margin-top:14px;}
-      a.tile{display:block; text-decoration:none; color:#e5e7eb;}
-      a.tile:hover{border-color:rgba(255,255,255,.18);}
-      .tileTitle{font-weight:900; font-size:16px; margin-bottom:6px;}
-      .btnRow{display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;}
+      .row{display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;}
       a.btn{display:inline-block; padding:9px 12px; border-radius:10px; text-decoration:none; font-weight:800;}
-      a.primary{background:#2563eb; color:white;}
       a.ghost{border:1px solid rgba(255,255,255,.18); color:#e5e7eb;}
-      code{background:rgba(255,255,255,.08); padding:2px 6px; border-radius:6px;}
+      a.primary{background:#2563eb; color:white;}
+      input{width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,.18); background:#0b1220; color:#e5e7eb; margin-top:8px;}
+      button{margin-top:10px; padding:10px 14px; border-radius:10px; border:none; background:#2563eb; color:white; font-weight:900;}
+      .grid{display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap:14px; margin-top:14px;}
+      .tile{padding:16px;}
+      .tileTitle{font-weight:900; font-size:16px; margin-bottom:6px;}
     </style>
   </head>
   <body>
     <div class="wrap">
       <div class="card">
-        <h1>Admin Dashboard</h1>
+        <h1>Admin</h1>
         <div class="muted"><b>Portal:</b> {{ base_url }}</div>
         <div class="muted"><b>SMS:</b> {{ sms_base or "Not set (SMS_APP_URL env var)" }}</div>
 
-        <div class="btnRow">
-          <a class="btn ghost" href="{{ tenants_url }}">Tenants</a>
-          <a class="btn ghost" href="{{ licensing_url }}">Licensing</a>
-          <a class="btn ghost" href="{{ links_url }}">Links</a>
-        </div>
+        {% if not authenticated %}
+          <div class="muted" style="margin-top:10px;">
+            Enter your admin key once. It will be stored in your session.
+          </div>
 
-        <div class="muted" style="margin-top:12px;">
-          Bookmark: <code>{{ base_url }}/admin?admin_key={{ admin_key }}</code>
-        </div>
-      </div>
+          <form method="post" action="/admin">
+            <input name="admin_key" placeholder="Enter ADMIN_KEY" autocomplete="off"/>
+            <button type="submit">Unlock Admin</button>
+          </form>
 
-      <div class="grid">
-        <a class="card tile" href="{{ tenants_url }}">
-          <div class="tileTitle">Tenants</div>
-          <div class="muted">Create and manage tenant clinics.</div>
-        </a>
+          <div class="muted" style="margin-top:10px;">
+            (Temporary fallback for you only: you may still use <code>?admin_key=...</code> once to bootstrap the session.)
+          </div>
+        {% else %}
+          <div class="row">
+            <a class="btn ghost" href="{{ tenants_url }}">Tenants</a>
+            <a class="btn ghost" href="{{ licensing_url }}">Licensing</a>
+            <a class="btn ghost" href="{{ links_url }}">Links</a>
+            <a class="btn ghost" href="/admin/logout">Admin logout</a>
+          </div>
 
-        <a class="card tile" href="{{ licensing_url }}">
-          <div class="tileTitle">Licensing</div>
-          <div class="muted">Generate activation codes and manage subscriptions.</div>
-        </a>
-
-        <a class="card tile" href="{{ links_url }}">
-          <div class="tileTitle">Links</div>
-          <div class="muted">All tenant portal + SMS links in one place.</div>
-        </a>
+          <div class="grid">
+            <a class="card tile" href="{{ tenants_url }}" style="text-decoration:none; color:#e5e7eb;">
+              <div class="tileTitle">Tenants</div>
+              <div class="muted">Create and manage tenant clinics.</div>
+            </a>
+            <a class="card tile" href="{{ licensing_url }}" style="text-decoration:none; color:#e5e7eb;">
+              <div class="tileTitle">Licensing</div>
+              <div class="muted">Generate activation codes and manage subscriptions.</div>
+            </a>
+            <a class="card tile" href="{{ links_url }}" style="text-decoration:none; color:#e5e7eb;">
+              <div class="tileTitle">Links</div>
+              <div class="muted">All tenant portal + SMS links in one place.</div>
+            </a>
+          </div>
+        {% endif %}
       </div>
     </div>
   </body>
