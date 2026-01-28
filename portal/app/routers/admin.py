@@ -21,41 +21,28 @@ router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
 
 
-# ---------------------------
-# Admin auth helpers
-# ---------------------------
 def _expected_admin_key() -> str:
     return (os.getenv("ADMIN_KEY") or "").strip()
 
 
+def _session(request: Request) -> dict:
+    sess = request.scope.get("session")
+    return sess if isinstance(sess, dict) else {}
+
+
 def _get_admin_key_from_request(request: Request) -> str:
-    """
-    Priority:
-      1) Header: X-Admin-Key
-      2) Session: request.session["admin_key"]
-      3) Query param: ?admin_key=...   (legacy / fallback)
-    """
-    # 1) Header
+    # Header first
     hdr = (request.headers.get("X-Admin-Key") or request.headers.get("x-admin-key") or "").strip()
     if hdr:
         return hdr
-
-    # 2) Session (safe even if sessions missing)
-    sess = request.scope.get("session")
-    if isinstance(sess, dict):
-        sk = (sess.get("admin_key") or "").strip()
-        if sk:
-            return sk
-
-    # 3) Query param
-    return (request.query_params.get("admin_key") or "").strip()
+    # Session next
+    return (_session(request).get("admin_key") or "").strip()
 
 
 def _require_admin(request: Request) -> None:
     expected = _expected_admin_key()
     if not expected:
         raise HTTPException(status_code=403, detail="ADMIN_KEY not configured")
-
     got = _get_admin_key_from_request(request)
     if got != expected:
         raise HTTPException(status_code=403, detail="Forbidden")
@@ -69,13 +56,10 @@ def _set_admin_session_key(request: Request, key: str) -> None:
 
 def _clear_admin_session_key(request: Request) -> None:
     sess = request.scope.get("session")
-    if isinstance(sess, dict) and "admin_key" in sess:
+    if isinstance(sess, dict):
         sess.pop("admin_key", None)
 
 
-# ---------------------------
-# URL helpers
-# ---------------------------
 def _hash_code(code: str) -> str:
     return hashlib.sha256(code.encode("utf-8")).hexdigest()
 
@@ -110,36 +94,24 @@ def ensure_default_plans(db: Session) -> None:
     db.commit()
 
 
-# ---------------------------------------------------------------------------
-# NEW: /admin shows a form if not authenticated, otherwise shows dashboard
-# ---------------------------------------------------------------------------
+# ---------------------------
+# /admin: dashboard + key form (stores in session)
+# ---------------------------
 @router.get("/admin", response_class=HTMLResponse)
 def admin_index(request: Request):
     base_url = _portal_base(request)
     sms_base = _sms_base()
-
     expected = _expected_admin_key()
     if not expected:
-        # If not configured, show an explanatory page (no crash)
-        return HTMLResponse(
-            "<h2>ADMIN_KEY not configured</h2><p>Set ADMIN_KEY in Render environment variables.</p>",
-            status_code=403,
-        )
+        return HTMLResponse("<h2>ADMIN_KEY not configured</h2>", status_code=403)
 
-    got = _get_admin_key_from_request(request)
-    authenticated = (got == expected)
-
-    # If authenticated via header/query, store into session (so next clicks don't need query param)
-    if authenticated:
-        _set_admin_session_key(request, got)
+    authenticated = (_get_admin_key_from_request(request) == expected)
 
     ctx = {
         "request": request,
         "base_url": base_url,
         "sms_base": sms_base,
         "authenticated": authenticated,
-        "message": "",
-        # These links do NOT include admin_key; session will handle it after you submit once.
         "tenants_url": f"{base_url}/admin/tenants",
         "licensing_url": f"{base_url}/admin/licensing",
         "links_url": f"{base_url}/admin/links",
@@ -155,7 +127,6 @@ def admin_index_post(request: Request, admin_key: str = Form("")):
 
     admin_key = (admin_key or "").strip()
     if admin_key != expected:
-        # Back to /admin with an error message (no URL key)
         return RedirectResponse(url="/admin?msg=invalid", status_code=303)
 
     _set_admin_session_key(request, admin_key)
@@ -169,17 +140,14 @@ def admin_logout(request: Request):
 
 
 # ---------------------------
-# Existing admin pages (now session-protected)
+# Admin pages (session/header protected)
 # ---------------------------
 @router.get("/admin/tenants", response_class=HTMLResponse)
 def admin_tenants(request: Request, db: Session = Depends(get_db)):
     _require_admin(request)
     tenants = db.query(Tenant).order_by(Tenant.created_at.desc()).all()
     base_url = _portal_base(request)
-    return templates.TemplateResponse(
-        "admin/tenants.html",
-        {"request": request, "tenants": tenants, "base_url": base_url, "admin_key": ""},  # no key in URL
-    )
+    return templates.TemplateResponse("admin/tenants.html", {"request": request, "tenants": tenants, "base_url": base_url})
 
 
 @router.get("/admin/tenants/new", response_class=HTMLResponse)
@@ -187,10 +155,7 @@ def admin_tenants_new(request: Request, db: Session = Depends(get_db)):
     _require_admin(request)
     ensure_default_plans(db)
     plans = db.query(Plan).order_by(Plan.duration_days.asc()).all()
-    return templates.TemplateResponse(
-        "admin/tenant_new.html",
-        {"request": request, "plans": plans, "admin_key": ""},
-    )
+    return templates.TemplateResponse("admin/tenant_new.html", {"request": request, "plans": plans})
 
 
 @router.post("/admin/tenants/new")
@@ -210,52 +175,44 @@ def admin_tenants_create(
     if db.query(Tenant).filter(Tenant.slug == slug).first():
         raise HTTPException(400, "Slug already exists")
 
-    try:
-        t = Tenant(id=secrets.token_hex(16), slug=slug, name=name.strip(), status="active")
-        if hasattr(t, "created_at"):
-            setattr(t, "created_at", datetime.utcnow())
+    t = Tenant(id=secrets.token_hex(16), slug=slug, name=name.strip(), status="active")
+    if hasattr(t, "created_at"):
+        setattr(t, "created_at", datetime.utcnow())
 
-        db.add(t)
-        db.commit()
-        db.refresh(t)
+    db.add(t)
+    db.commit()
+    db.refresh(t)
 
-        db.add(ClinicSettings(tenant_id=t.id))
-        db.commit()
+    db.add(ClinicSettings(tenant_id=t.id))
+    db.commit()
 
-        plan = db.query(Plan).filter(Plan.code == plan_code).first()
-        if not plan:
-            raise HTTPException(400, f"Unknown plan: {plan_code}")
+    plan = db.query(Plan).filter(Plan.code == plan_code).first()
+    if not plan:
+        raise HTTPException(400, f"Unknown plan: {plan_code}")
 
-        db.add(
-            Subscription(
-                id=secrets.token_hex(16),
-                tenant_id=t.id,
-                plan_id=plan.id,
-                status="active",
-                starts_at=datetime.utcnow(),
-                ends_at=datetime.utcnow() + timedelta(days=int(plan.duration_days)),
-                source="manual",
-            )
+    db.add(
+        Subscription(
+            id=secrets.token_hex(16),
+            tenant_id=t.id,
+            plan_id=plan.id,
+            status="active",
+            starts_at=datetime.utcnow(),
+            ends_at=datetime.utcnow() + timedelta(days=int(plan.duration_days)),
+            source="manual",
         )
-
-        db.add(
-            LicenseAuditLog(
-                id=secrets.token_hex(16),
-                tenant_id=t.id,
-                event_type="tenant_created",
-                details_json=f'{{"slug":"{slug}","plan":"{plan.code}"}}',
-                created_at=datetime.utcnow(),
-            )
+    )
+    db.add(
+        LicenseAuditLog(
+            id=secrets.token_hex(16),
+            tenant_id=t.id,
+            event_type="tenant_created",
+            details_json=f'{{"slug":"{slug}","plan":"{plan.code}"}}',
+            created_at=datetime.utcnow(),
         )
-        db.commit()
-        return RedirectResponse(url="/admin/tenants", status_code=303)
+    )
+    db.commit()
 
-    except HTTPException:
-        db.rollback()
-        raise
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=400, detail=f"Create tenant failed: {type(e).__name__}: {e}")
+    return RedirectResponse(url="/admin/tenants", status_code=303)
 
 
 @router.get("/admin/licensing", response_class=HTMLResponse)
@@ -280,14 +237,7 @@ def admin_licensing(request: Request, tenant: Optional[str] = None, db: Session 
 
     return templates.TemplateResponse(
         "admin/licensing.html",
-        {
-            "request": request,
-            "tenants": tenants,
-            "plans": plans,
-            "selected": selected,
-            "current_sub": current_sub,
-            "admin_key": "",
-        },
+        {"request": request, "tenants": tenants, "plans": plans, "selected": selected, "current_sub": current_sub},
     )
 
 
@@ -312,37 +262,32 @@ def admin_generate_code(
     raw = f"{tenant_slug.upper()}-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}"
     code_hash = _hash_code(raw)
 
-    try:
-        db.add(
-            ActivationCode(
-                id=secrets.token_hex(16),
-                tenant_id=t.id,
-                plan_id=plan.id,
-                code_hash=code_hash,
-                issued_at=datetime.utcnow(),
-                redeem_by=datetime.utcnow() + timedelta(days=90),
-                max_redemptions=1,
-                redeemed_count=0,
-                revoked_at=None,
-                note="",
-            )
+    db.add(
+        ActivationCode(
+            id=secrets.token_hex(16),
+            tenant_id=t.id,
+            plan_id=plan.id,
+            code_hash=code_hash,
+            issued_at=datetime.utcnow(),
+            redeem_by=datetime.utcnow() + timedelta(days=90),
+            max_redemptions=1,
+            redeemed_count=0,
+            revoked_at=None,
+            note="",
         )
-        db.add(
-            LicenseAuditLog(
-                id=secrets.token_hex(16),
-                tenant_id=t.id,
-                event_type="code_generated",
-                details_json=f'{{"plan":"{plan.code}"}}',
-                created_at=datetime.utcnow(),
-            )
+    )
+    db.add(
+        LicenseAuditLog(
+            id=secrets.token_hex(16),
+            tenant_id=t.id,
+            event_type="code_generated",
+            details_json=f'{{"plan":"{plan.code}"}}',
+            created_at=datetime.utcnow(),
         )
-        db.commit()
-        # Show code via redirect query string (no admin_key)
-        return RedirectResponse(url=f"/admin/licensing?tenant={tenant_slug}&code={raw}", status_code=303)
+    )
+    db.commit()
 
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=400, detail=f"Generate code failed: {type(e).__name__}: {e}")
+    return RedirectResponse(url=f"/admin/licensing?tenant={tenant_slug}&code={raw}", status_code=303)
 
 
 @router.get("/admin/links", response_class=HTMLResponse)
@@ -354,20 +299,18 @@ def admin_links(request: Request, db: Session = Depends(get_db)):
 
     rows = []
     for t in tenants:
-        rows.append(
-            {"slug": t.slug, "name": t.name, "suite_url": f"{base_url}/t/{t.slug}/suite", "sms_url": _sms_url_for_tenant(t.slug)}
-        )
+        rows.append({"slug": t.slug, "name": t.name, "suite_url": f"{base_url}/t/{t.slug}/suite", "sms_url": _sms_url_for_tenant(t.slug)})
 
     return templates.TemplateResponse(
         "admin/links.html",
         {
             "request": request,
-            "admin_key": "",  # no key in URL
             "base_url": base_url,
             "sms_base": _sms_base(),
             "admin_tenants_url": f"{base_url}/admin/tenants",
             "admin_licensing_url": f"{base_url}/admin/licensing",
             "admin_links_url": f"{base_url}/admin/links",
+            "admin_key": "",
             "tenants": rows,
         },
     )

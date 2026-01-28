@@ -21,7 +21,7 @@ from app.routers.admin import router as admin_router
 
 app = FastAPI(title="Calendo Portal", version="1.0.0")
 
-# Sessions must run before auth gates.
+# Sessions must run BEFORE any auth gate.
 _session_secret = (os.getenv("SECRET_KEY") or "").strip() or "dev-secret-key-change-me"
 app.add_middleware(SessionMiddleware, secret_key=_session_secret, same_site="lax", https_only=True)
 
@@ -31,9 +31,6 @@ app.include_router(web_router)
 app.include_router(admin_router)
 
 
-# ----------------------------
-# Health endpoints
-# ----------------------------
 @app.get("/health", include_in_schema=False)
 def health_get():
     return {"ok": True}
@@ -65,7 +62,6 @@ def _safe_next(next_path: str) -> str:
 
 @app.get("/me")
 def me(request: Request):
-    """Debug endpoint: confirms session identity after login."""
     s = getattr(request, "session", {}) or {}
     return {
         "user_id": s.get("user_id"),
@@ -123,9 +119,6 @@ def _subscription_active(tenant_slug: str) -> bool:
         db.close()
 
 
-# ----------------------------
-# Landing
-# ----------------------------
 @app.get("/", response_class=HTMLResponse)
 def landing(request: Request):
     default_tenant = "default"
@@ -169,11 +162,9 @@ def landing(request: Request):
     return HTMLResponse(html)
 
 
-# ----------------------------
-# Activation (placeholder)
-# ----------------------------
 @app.get("/activate", response_class=HTMLResponse)
 def activate_get(request: Request, tenant: str = "default", next: str = "/t/default/suite"):
+    # Minimal placeholder (you can wire activation codes later)
     next_path = _safe_next(next)
     return HTMLResponse(
         f"<h2>Activation required</h2><p>Tenant: {tenant}</p><p>Next: {next_path}</p>",
@@ -186,9 +177,6 @@ def activate_post(next: str = Form("/t/default/suite")):
     return RedirectResponse(url=_safe_next(next), status_code=303)
 
 
-# ----------------------------
-# Gate middleware (installed AFTER SessionMiddleware so sessions are available)
-# ----------------------------
 class TenantGateMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path or ""
@@ -204,11 +192,11 @@ class TenantGateMiddleware(BaseHTTPMiddleware):
         ):
             return await call_next(request)
 
-        # Admin protected inside admin.py
+        # Admin is protected inside admin.py (session/header)
         if path.startswith("/admin"):
             return await call_next(request)
 
-        # Tenant routes: require login + tenant match + subscription + role for writes
+        # Tenant routes: require login, tenant match, role for writes, subscription
         if path.startswith("/t/"):
             if not _logged_in(request):
                 return RedirectResponse(url=f"/auth/login?next={quote(path)}", status_code=303)
@@ -227,12 +215,10 @@ class TenantGateMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+# Gate must be added AFTER SessionMiddleware (already added above)
 app.add_middleware(TenantGateMiddleware)
 
 
-# ----------------------------
-# Seed defaults + bootstrap owner user
-# ----------------------------
 def seed_defaults() -> None:
     db = SessionLocal()
     try:

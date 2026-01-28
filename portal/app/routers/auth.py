@@ -104,7 +104,6 @@ def _render_login_page(next_path: str, tenant_slug: str, error: str) -> HTMLResp
     return HTMLResponse(html)
 
 
-# --- GET login (both paths) ---
 @router.get("/auth/login", response_class=HTMLResponse)
 def auth_login_get(request: Request, next: str = "/t/default/suite", error: str = ""):
     next_path = _safe_next(next)
@@ -119,7 +118,6 @@ def login_get(request: Request, next: str = "/t/default/suite", error: str = "")
     return _render_login_page(next_path, tenant_slug, error)
 
 
-# --- POST login (both paths) ---
 @router.post("/auth/login")
 def auth_login_post(
     request: Request,
@@ -184,7 +182,6 @@ def login_post(
     return auth_login_post(request=request, email=email, password=password, next=next)
 
 
-# --- logout (both paths) ---
 @router.get("/auth/logout")
 def auth_logout(request: Request):
     _session_clear(request)
