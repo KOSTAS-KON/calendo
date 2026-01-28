@@ -21,16 +21,15 @@ from app.routers.admin import router as admin_router
 
 app = FastAPI(title="Calendo Portal", version="1.0.0")
 
-# Sessions must run BEFORE any auth gate.
-_session_secret = (os.getenv("SECRET_KEY") or "").strip() or "dev-secret-key-change-me"
-app.add_middleware(SessionMiddleware, secret_key=_session_secret, same_site="lax", https_only=True)
-
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 app.include_router(auth_router)
 app.include_router(web_router)
 app.include_router(admin_router)
 
 
+# ----------------------------
+# Health endpoints
+# ----------------------------
 @app.get("/health", include_in_schema=False)
 def health_get():
     return {"ok": True}
@@ -60,26 +59,31 @@ def _safe_next(next_path: str) -> str:
     return nxt
 
 
+def _sess(request: Request) -> dict:
+    # SAFE: never triggers the SessionMiddleware assertion
+    s = request.scope.get("session")
+    return s if isinstance(s, dict) else {}
+
+
 @app.get("/me")
 def me(request: Request):
-    s = getattr(request, "session", {}) or {}
+    s = _sess(request)
     return {
         "user_id": s.get("user_id"),
         "email": s.get("email"),
         "role": s.get("role"),
         "tenant_slug": s.get("tenant_slug"),
         "tenant_id": s.get("tenant_id"),
+        "has_session": "session" in request.scope,
     }
 
 
 def _logged_in(request: Request) -> bool:
-    s = getattr(request, "session", {}) or {}
-    return bool(s.get("user_id"))
+    return bool(_sess(request).get("user_id"))
 
 
 def _user_role(request: Request) -> str:
-    s = getattr(request, "session", {}) or {}
-    return str(s.get("role") or "").lower()
+    return str(_sess(request).get("role") or "").lower()
 
 
 def _extract_tenant_slug(path: str) -> str:
@@ -90,8 +94,7 @@ def _extract_tenant_slug(path: str) -> str:
 
 
 def _session_tenant_slug(request: Request) -> str:
-    s = getattr(request, "session", {}) or {}
-    return str(s.get("tenant_slug") or "default")
+    return str(_sess(request).get("tenant_slug") or "default")
 
 
 def _subscription_active(tenant_slug: str) -> bool:
@@ -130,58 +133,24 @@ def landing(request: Request):
     <html>
       <head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
         <title>Clinic Suite</title>
-        <style>
-          body{{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial; background:#0b1220; color:#e5e7eb; margin:0;}}
-          .wrap{{max-width:920px; margin:0 auto; padding:46px 18px;}}
-          .card{{background:#101a2f; border:1px solid rgba(255,255,255,.08); border-radius:16px; padding:22px;}}
-          a.btn{{display:inline-block; padding:10px 14px; border-radius:10px; text-decoration:none; font-weight:800;}}
-          a.primary{{background:#2563eb; color:white;}}
-          a.ghost{{border:1px solid rgba(255,255,255,.18); color:#e5e7eb;}}
-          .row{{display:flex; gap:12px; flex-wrap:wrap; margin-top:14px;}}
-          .hint{{margin-top:14px; font-size:13px; opacity:.75;}}
-          code{{background:rgba(255,255,255,.08); padding:2px 6px; border-radius:6px;}}
-        </style>
       </head>
-      <body>
-        <div class="wrap">
-          <div class="card">
-            <h1 style="margin:0 0 8px 0;">Clinic Suite</h1>
-            <div style="opacity:.9;">Please sign in to access services.</div>
-            <div class="row">
-              <a class="btn primary" href="{login_url}">Log in</a>
-              <a class="btn ghost" href="/health" target="_blank">System health</a>
-              {"<a class='btn ghost' href='/auth/logout'>Log out</a>" if _logged_in(request) else ""}
-              <a class="btn ghost" href="/me" target="_blank">Session</a>
-            </div>
-            <div class="hint">Default tenant: <code>{default_tenant}</code></div>
-          </div>
-        </div>
+      <body style="font-family:system-ui;background:#0b1220;color:#e5e7eb;margin:0;padding:40px;">
+        <h2>Clinic Suite</h2>
+        <p><a href="{login_url}" style="color:#60a5fa;">Log in</a></p>
+        <p><a href="/me" style="color:#60a5fa;">Session</a></p>
       </body>
     </html>
     """
     return HTMLResponse(html)
 
 
-@app.get("/activate", response_class=HTMLResponse)
-def activate_get(request: Request, tenant: str = "default", next: str = "/t/default/suite"):
-    # Minimal placeholder (you can wire activation codes later)
-    next_path = _safe_next(next)
-    return HTMLResponse(
-        f"<h2>Activation required</h2><p>Tenant: {tenant}</p><p>Next: {next_path}</p>",
-        status_code=200,
-    )
-
-
-@app.post("/activate")
-def activate_post(next: str = Form("/t/default/suite")):
-    return RedirectResponse(url=_safe_next(next), status_code=303)
-
-
+# ----------------------------
+# Gate middleware
+# ----------------------------
 class TenantGateMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path or ""
 
-        # Public routes
         if (
             path.startswith("/static")
             or path.startswith("/health")
@@ -192,11 +161,9 @@ class TenantGateMiddleware(BaseHTTPMiddleware):
         ):
             return await call_next(request)
 
-        # Admin is protected inside admin.py (session/header)
         if path.startswith("/admin"):
             return await call_next(request)
 
-        # Tenant routes: require login, tenant match, role for writes, subscription
         if path.startswith("/t/"):
             if not _logged_in(request):
                 return RedirectResponse(url=f"/auth/login?next={quote(path)}", status_code=303)
@@ -215,8 +182,23 @@ class TenantGateMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-# Gate must be added AFTER SessionMiddleware (already added above)
+# IMPORTANT: add gate FIRST
 app.add_middleware(TenantGateMiddleware)
+
+# IMPORTANT: add SessionMiddleware LAST so it runs FIRST
+_session_secret = (os.getenv("SECRET_KEY") or "").strip() or "dev-secret-key-change-me"
+app.add_middleware(SessionMiddleware, secret_key=_session_secret, same_site="lax", https_only=True)
+
+
+@app.get("/activate", response_class=HTMLResponse)
+def activate_get(request: Request, tenant: str = "default", next: str = "/t/default/suite"):
+    next_path = _safe_next(next)
+    return HTMLResponse(f"<h2>Activation required</h2><p>Tenant: {tenant}</p><p>Next: {next_path}</p>")
+
+
+@app.post("/activate")
+def activate_post(next: str = Form("/t/default/suite")):
+    return RedirectResponse(url=_safe_next(next), status_code=303)
 
 
 def seed_defaults() -> None:
