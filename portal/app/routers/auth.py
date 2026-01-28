@@ -54,17 +54,11 @@ def _session_clear(request: Request) -> None:
         sess.clear()
 
 
-# ------------------------
-# Health/ping
-# ------------------------
 @router.get("/auth/ping")
 def ping():
     return {"ok": True}
 
 
-# ------------------------
-# LOGIN (both /login and /auth/login)
-# ------------------------
 def _render_login_page(next_path: str, tenant_slug: str, error: str) -> HTMLResponse:
     msg = ""
     if error:
@@ -110,6 +104,7 @@ def _render_login_page(next_path: str, tenant_slug: str, error: str) -> HTMLResp
     return HTMLResponse(html)
 
 
+# --- GET login (both paths) ---
 @router.get("/auth/login", response_class=HTMLResponse)
 def auth_login_get(request: Request, next: str = "/t/default/suite", error: str = ""):
     next_path = _safe_next(next)
@@ -119,12 +114,12 @@ def auth_login_get(request: Request, next: str = "/t/default/suite", error: str 
 
 @router.get("/login", response_class=HTMLResponse)
 def login_get(request: Request, next: str = "/t/default/suite", error: str = ""):
-    # Compatibility: same page, same handler
     next_path = _safe_next(next)
     tenant_slug = _extract_tenant_slug_from_next(next_path)
     return _render_login_page(next_path, tenant_slug, error)
 
 
+# --- POST login (both paths) ---
 @router.post("/auth/login")
 def auth_login_post(
     request: Request,
@@ -162,7 +157,6 @@ def auth_login_post(
         if not _hash_check(password, u.password_hash):
             return RedirectResponse(url=f"/auth/login?next={quote(next_path)}&error=1", status_code=303)
 
-        # Session (tenant-scoped)
         _session_set(request, "user_id", u.id)
         _session_set(request, "tenant_id", u.tenant_id)
         _session_set(request, "tenant_slug", tenant_slug)
@@ -176,7 +170,6 @@ def auth_login_post(
             db.commit()
 
         return RedirectResponse(url=next_path, status_code=303)
-
     finally:
         db.close()
 
@@ -188,13 +181,10 @@ def login_post(
     password: str = Form(""),
     next: str = Form("/t/default/suite"),
 ):
-    # Compatibility: accept POST /login too (calls the same logic)
     return auth_login_post(request=request, email=email, password=password, next=next)
 
 
-# ------------------------
-# LOGOUT (both /logout and /auth/logout)
-# ------------------------
+# --- logout (both paths) ---
 @router.get("/auth/logout")
 def auth_logout(request: Request):
     _session_clear(request)

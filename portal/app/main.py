@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 import uuid
-import hashlib
 import os
 from urllib.parse import quote, unquote
 
@@ -62,6 +61,19 @@ def _safe_next(next_path: str) -> str:
 def _session(request: Request) -> dict:
     sess = request.scope.get("session")
     return sess if isinstance(sess, dict) else {}
+
+
+@app.get("/me")
+def me(request: Request):
+    """Debug endpoint: confirms session identity after login."""
+    s = _session(request)
+    return {
+        "user_id": s.get("user_id"),
+        "email": s.get("email"),
+        "role": s.get("role"),
+        "tenant_slug": s.get("tenant_slug"),
+        "tenant_id": s.get("tenant_id"),
+    }
 
 
 def _user_role(request: Request) -> str:
@@ -140,6 +152,7 @@ def landing(request: Request):
               <a class="btn primary" href="{login_url}">Log in</a>
               <a class="btn ghost" href="/health" target="_blank">System health</a>
               {"<a class='btn ghost' href='/auth/logout'>Log out</a>" if _logged_in(request) else ""}
+              <a class="btn ghost" href="/me" target="_blank">Session</a>
             </div>
             <div class="hint">Default tenant: <code>{default_tenant}</code></div>
           </div>
@@ -154,21 +167,19 @@ def landing(request: Request):
 async def tenant_authz_and_subscription_gate(request: Request, call_next):
     path = request.url.path or ""
 
-    # Public
     if (
         path.startswith("/static")
         or path.startswith("/health")
         or path.startswith("/auth/")
         or path.startswith("/activate")
         or path == "/"
+        or path.startswith("/me")
     ):
         return await call_next(request)
 
-    # Super-admin area is protected inside admin.py (session/header) -> let through
     if path.startswith("/admin"):
         return await call_next(request)
 
-    # Tenant routes require login + tenant match + subscription
     if path.startswith("/t/"):
         if not _logged_in(request):
             return RedirectResponse(url=f"/auth/login?next={quote(path)}", status_code=303)
@@ -177,7 +188,6 @@ async def tenant_authz_and_subscription_gate(request: Request, call_next):
         if _session_tenant_slug(request) != tenant_slug:
             return HTMLResponse("Forbidden (tenant mismatch)", status_code=403)
 
-        # Only owner/admin can perform writes
         if request.method in ("POST", "PUT", "PATCH", "DELETE"):
             if _user_role(request) not in ("owner", "admin"):
                 return HTMLResponse("Forbidden (insufficient role)", status_code=403)
@@ -188,10 +198,6 @@ async def tenant_authz_and_subscription_gate(request: Request, call_next):
     return await call_next(request)
 
 
-# ---------------------------------------------------------
-# Activation (minimal placeholder so redirects don't 404)
-# You can later wire this to activation_codes redemption.
-# ---------------------------------------------------------
 @app.get("/activate", response_class=HTMLResponse)
 def activate_get(request: Request, tenant: str = "default", next: str = "/t/default/suite", error: str = ""):
     next_path = _safe_next(next)
@@ -238,15 +244,10 @@ def activate_get(request: Request, tenant: str = "default", next: str = "/t/defa
 
 @app.post("/activate")
 def activate_post(tenant: str = Form("default"), next: str = Form("/t/default/suite"), code: str = Form("")):
-    # Placeholder: keep the activation page functional without breaking routing.
-    # If you want, I can wire this to ActivationCode/Subcription (like earlier).
     next_path = _safe_next(next)
     return RedirectResponse(url=next_path, status_code=303)
 
 
-# ---------------------------------------------------------
-# Seed defaults + Bootstrap owner user
-# ---------------------------------------------------------
 def seed_defaults() -> None:
     db = SessionLocal()
     try:
@@ -255,7 +256,6 @@ def seed_defaults() -> None:
         from app.models.licensing import Plan, Subscription
         from app.models.user import User
 
-        # Default tenant
         t = db.query(Tenant).filter(Tenant.slug == "default").first()
         if not t:
             t = Tenant(id=str(uuid.uuid4()), slug="default", name="Default Tenant", status="active")
@@ -265,13 +265,11 @@ def seed_defaults() -> None:
             db.commit()
             db.refresh(t)
 
-        # Settings row
         cs = db.query(ClinicSettings).filter(ClinicSettings.tenant_id == t.id).first()
         if not cs:
             db.add(ClinicSettings(tenant_id=t.id))
             db.commit()
 
-        # Plans
         def ensure_plan(code: str, name: str, days: int) -> Plan:
             p = db.query(Plan).filter(Plan.code == code).first()
             if not p:
@@ -285,7 +283,6 @@ def seed_defaults() -> None:
         ensure_plan("MONTHLY_30D", "Monthly (30 days)", 30)
         ensure_plan("YEARLY_365D", "Yearly (365 days)", 365)
 
-        # Subscription for default tenant (trial if missing)
         sub = (
             db.query(Subscription)
             .filter(Subscription.tenant_id == t.id)
@@ -306,27 +303,24 @@ def seed_defaults() -> None:
             )
             db.commit()
 
-        # ---- BOOTSTRAP OWNER USER (the missing part) ----
         email = (os.getenv("BOOTSTRAP_OWNER_EMAIL") or "").strip().lower()
         pw = (os.getenv("BOOTSTRAP_OWNER_PASSWORD") or "").strip()
-
         if email and pw:
             existing = db.query(User).filter(User.tenant_id == t.id, User.email == email).first()
             if not existing:
                 pw_hash = bcrypt.hashpw(pw.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-                owner = User(
-                    id=str(uuid.uuid4()),
-                    tenant_id=t.id,
-                    email=email,
-                    password_hash=pw_hash,
-                    role="owner",
-                    is_active=True,
+                db.add(
+                    User(
+                        id=str(uuid.uuid4()),
+                        tenant_id=t.id,
+                        email=email,
+                        password_hash=pw_hash,
+                        role="owner",
+                        is_active=True,
+                    )
                 )
-                db.add(owner)
                 db.commit()
                 print(f"BOOTSTRAP: created owner user {email} for tenant {t.slug}")
-        else:
-            print("BOOTSTRAP: BOOTSTRAP_OWNER_EMAIL/PASSWORD not set (skipping owner creation)")
     finally:
         db.close()
 
