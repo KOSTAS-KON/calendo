@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 import uuid
 import os
+import hashlib
 from urllib.parse import quote, unquote
 
 from fastapi import FastAPI, Request, Response, Form
@@ -21,6 +22,7 @@ from app.routers.admin import router as admin_router
 
 app = FastAPI(title="Calendo Portal", version="1.0.0")
 
+# Routers + static
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 app.include_router(auth_router)
 app.include_router(web_router)
@@ -45,6 +47,9 @@ def root_head():
     return Response(status_code=200)
 
 
+# ----------------------------
+# Helpers
+# ----------------------------
 def _safe_next(next_path: str) -> str:
     if not next_path:
         return "/"
@@ -60,13 +65,14 @@ def _safe_next(next_path: str) -> str:
 
 
 def _sess(request: Request) -> dict:
-    # SAFE: never triggers the SessionMiddleware assertion
+    # SAFE: never triggers SessionMiddleware assertion
     s = request.scope.get("session")
     return s if isinstance(s, dict) else {}
 
 
 @app.get("/me")
 def me(request: Request):
+    """Debug endpoint: confirms session identity after login."""
     s = _sess(request)
     return {
         "user_id": s.get("user_id"),
@@ -122,6 +128,9 @@ def _subscription_active(tenant_slug: str) -> bool:
         db.close()
 
 
+# ----------------------------
+# Landing
+# ----------------------------
 @app.get("/", response_class=HTMLResponse)
 def landing(request: Request):
     default_tenant = "default"
@@ -145,12 +154,195 @@ def landing(request: Request):
 
 
 # ----------------------------
+# Activation redemption (REAL)
+# ----------------------------
+def _sha256(s: str) -> str:
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()
+
+
+_ERROR_MESSAGES = {
+    "missing": "Please enter an activation code.",
+    "invalid": "Invalid activation code.",
+    "wrong_tenant": "This activation code belongs to a different tenant.",
+    "revoked": "This activation code has been revoked.",
+    "expired": "This activation code has expired.",
+    "used": "This activation code has already been used.",
+    "plan_missing": "The plan for this activation code could not be found.",
+    "tenant_missing": "Tenant not found.",
+    "internal": "Activation failed due to a server error.",
+}
+
+
+@app.get("/activate", response_class=HTMLResponse)
+def activate_get(request: Request, tenant: str = "default", next: str = "/t/default/suite", error: str = ""):
+    next_path = _safe_next(next)
+    msg = _ERROR_MESSAGES.get((error or "").strip(), "")
+    banner = ""
+    if msg:
+        banner = f"""
+        <div style="margin:10px 0; padding:10px; border-radius:12px;
+                    background:#3b0a0a; border:1px solid rgba(239,68,68,.5); color:#fecaca;">
+          <b>Activation error:</b> {msg}
+        </div>
+        """
+
+    html = f"""
+    <!doctype html>
+    <html>
+      <head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
+        <title>Activate</title>
+        <style>
+          body{{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial; background:#0b1220; color:#e5e7eb; margin:0;}}
+          .wrap{{max-width:720px; margin:0 auto; padding:46px 18px;}}
+          .card{{background:#101a2f; border:1px solid rgba(255,255,255,.08); border-radius:16px; padding:22px;}}
+          input{{width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,.18); background:#0b1220; color:#e5e7eb;}}
+          button{{margin-top:10px; padding:10px 14px; border-radius:10px; border:none; background:#2563eb; color:white; font-weight:900;}}
+          .hint{{margin-top:10px; opacity:.8; font-size:13px;}}
+          code{{background:rgba(255,255,255,.08); padding:2px 6px; border-radius:6px;}}
+        </style>
+      </head>
+      <body>
+        <div class="wrap">
+          <div class="card">
+            <h2 style="margin:0 0 10px 0;">Activation required</h2>
+            <div class="hint">Tenant: <code>{tenant}</code></div>
+            <div class="hint">Enter an activation code to enable/extend your subscription.</div>
+            {banner}
+            <form method="post" action="/activate">
+              <input type="hidden" name="tenant" value="{tenant}"/>
+              <input type="hidden" name="next" value="{quote(next_path)}"/>
+              <input name="code" placeholder="Enter activation code" autocomplete="off"/>
+              <button type="submit">Activate</button>
+            </form>
+            <div class="hint">After activation you will return to: <code>{next_path}</code></div>
+          </div>
+        </div>
+      </body>
+    </html>
+    """
+    return HTMLResponse(html)
+
+
+@app.post("/activate")
+def activate_post(
+    request: Request,
+    tenant: str = Form("default"),
+    next: str = Form("/t/default/suite"),
+    code: str = Form(""),
+):
+    tenant_slug = (tenant or "default").strip().lower()
+    next_path = _safe_next(next)
+    raw_code = (code or "").strip()
+
+    def bounce(err: str):
+        return RedirectResponse(
+            url=f"/activate?tenant={tenant_slug}&next={quote(next_path)}&error={err}",
+            status_code=303,
+        )
+
+    if not raw_code:
+        return bounce("missing")
+
+    db = SessionLocal()
+    try:
+        from app.models.tenant import Tenant
+        from app.models.licensing import ActivationCode, Subscription, Plan, LicenseAuditLog
+
+        t = db.query(Tenant).filter(Tenant.slug == tenant_slug).first()
+        if not t:
+            return bounce("tenant_missing")
+
+        code_hash = _sha256(raw_code)
+        ac = db.query(ActivationCode).filter(ActivationCode.code_hash == code_hash).first()
+        if not ac:
+            return bounce("invalid")
+
+        if getattr(ac, "tenant_id", None) and ac.tenant_id != t.id:
+            return bounce("wrong_tenant")
+
+        if getattr(ac, "revoked_at", None):
+            return bounce("revoked")
+
+        redeem_by = getattr(ac, "redeem_by", None)
+        if redeem_by and redeem_by < datetime.utcnow():
+            return bounce("expired")
+
+        max_red = int(getattr(ac, "max_redemptions", 1) or 1)
+        redeemed = int(getattr(ac, "redeemed_count", 0) or 0)
+        if redeemed >= max_red:
+            return bounce("used")
+
+        plan = db.query(Plan).filter(Plan.id == ac.plan_id).first()
+        if not plan:
+            return bounce("plan_missing")
+
+        duration_days = int(getattr(plan, "duration_days", 0) or 0)
+        if duration_days <= 0:
+            duration_days = 7
+
+        now = datetime.utcnow()
+
+        current = (
+            db.query(Subscription)
+            .filter(Subscription.tenant_id == t.id)
+            .order_by(Subscription.ends_at.desc())
+            .first()
+        )
+
+        if current and getattr(current, "ends_at", None) and current.ends_at > now and str(getattr(current, "status", "active")).lower() == "active":
+            starts_at = current.starts_at or now
+            ends_at = current.ends_at + timedelta(days=duration_days)
+        else:
+            starts_at = now
+            ends_at = now + timedelta(days=duration_days)
+
+        new_sub = Subscription(
+            id=str(uuid.uuid4()),
+            tenant_id=t.id,
+            plan_id=plan.id,
+            status="active",
+            starts_at=starts_at,
+            ends_at=ends_at,
+            source="activation_code",
+        )
+        db.add(new_sub)
+
+        if hasattr(ac, "redeemed_count"):
+            ac.redeemed_count = redeemed + 1
+        if hasattr(ac, "redeemed_at"):
+            ac.redeemed_at = now
+
+        try:
+            db.add(
+                LicenseAuditLog(
+                    id=str(uuid.uuid4()),
+                    tenant_id=t.id,
+                    event_type="redeem_success",
+                    details_json=f'{{"plan":"{getattr(plan,"code","")}", "days":{duration_days}}}',
+                    created_at=now,
+                )
+            )
+        except Exception:
+            pass
+
+        db.commit()
+        return RedirectResponse(url=next_path, status_code=303)
+
+    except Exception:
+        db.rollback()
+        return bounce("internal")
+    finally:
+        db.close()
+
+
+# ----------------------------
 # Gate middleware
 # ----------------------------
 class TenantGateMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path or ""
 
+        # Public
         if (
             path.startswith("/static")
             or path.startswith("/health")
@@ -161,9 +353,11 @@ class TenantGateMiddleware(BaseHTTPMiddleware):
         ):
             return await call_next(request)
 
+        # Admin (protected in admin router)
         if path.startswith("/admin"):
             return await call_next(request)
 
+        # Tenant routes
         if path.startswith("/t/"):
             if not _logged_in(request):
                 return RedirectResponse(url=f"/auth/login?next={quote(path)}", status_code=303)
@@ -182,25 +376,16 @@ class TenantGateMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-# IMPORTANT: add gate FIRST
+# Add gate FIRST, sessions LAST (so sessions run first)
 app.add_middleware(TenantGateMiddleware)
 
-# IMPORTANT: add SessionMiddleware LAST so it runs FIRST
 _session_secret = (os.getenv("SECRET_KEY") or "").strip() or "dev-secret-key-change-me"
 app.add_middleware(SessionMiddleware, secret_key=_session_secret, same_site="lax", https_only=True)
 
 
-@app.get("/activate", response_class=HTMLResponse)
-def activate_get(request: Request, tenant: str = "default", next: str = "/t/default/suite"):
-    next_path = _safe_next(next)
-    return HTMLResponse(f"<h2>Activation required</h2><p>Tenant: {tenant}</p><p>Next: {next_path}</p>")
-
-
-@app.post("/activate")
-def activate_post(next: str = Form("/t/default/suite")):
-    return RedirectResponse(url=_safe_next(next), status_code=303)
-
-
+# ----------------------------
+# Seed defaults + bootstrap owner
+# ----------------------------
 def seed_defaults() -> None:
     db = SessionLocal()
     try:
@@ -209,6 +394,7 @@ def seed_defaults() -> None:
         from app.models.licensing import Plan, Subscription
         from app.models.user import User
 
+        # default tenant
         t = db.query(Tenant).filter(Tenant.slug == "default").first()
         if not t:
             t = Tenant(id=str(uuid.uuid4()), slug="default", name="Default Tenant", status="active")
@@ -218,11 +404,13 @@ def seed_defaults() -> None:
             db.commit()
             db.refresh(t)
 
+        # settings row
         cs = db.query(ClinicSettings).filter(ClinicSettings.tenant_id == t.id).first()
         if not cs:
             db.add(ClinicSettings(tenant_id=t.id))
             db.commit()
 
+        # plans
         def ensure_plan(code: str, name: str, days: int) -> Plan:
             p = db.query(Plan).filter(Plan.code == code).first()
             if not p:
@@ -236,6 +424,7 @@ def seed_defaults() -> None:
         ensure_plan("MONTHLY_30D", "Monthly (30 days)", 30)
         ensure_plan("YEARLY_365D", "Yearly (365 days)", 365)
 
+        # subscription if missing
         sub = (
             db.query(Subscription)
             .filter(Subscription.tenant_id == t.id)
@@ -256,6 +445,7 @@ def seed_defaults() -> None:
             )
             db.commit()
 
+        # bootstrap owner user (one-time)
         email = (os.getenv("BOOTSTRAP_OWNER_EMAIL") or "").strip().lower()
         pw = (os.getenv("BOOTSTRAP_OWNER_PASSWORD") or "").strip()
         if email and pw:
