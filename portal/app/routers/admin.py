@@ -26,16 +26,20 @@ def _expected_admin_key() -> str:
 
 
 def _session(request: Request) -> dict:
-    sess = request.scope.get("session")
-    return sess if isinstance(sess, dict) else {}
+    s = request.scope.get("session")
+    return s if isinstance(s, dict) else {}
 
 
 def _get_admin_key_from_request(request: Request) -> str:
-    # Header first
+    """
+    ONLY:
+      1) Header: X-Admin-Key
+      2) Session: session["admin_key"]  (set via /admin form)
+    NO query-param support.
+    """
     hdr = (request.headers.get("X-Admin-Key") or request.headers.get("x-admin-key") or "").strip()
     if hdr:
         return hdr
-    # Session next
     return (_session(request).get("admin_key") or "").strip()
 
 
@@ -49,15 +53,15 @@ def _require_admin(request: Request) -> None:
 
 
 def _set_admin_session_key(request: Request, key: str) -> None:
-    sess = request.scope.get("session")
-    if isinstance(sess, dict):
-        sess["admin_key"] = key
+    s = request.scope.get("session")
+    if isinstance(s, dict):
+        s["admin_key"] = key
 
 
 def _clear_admin_session_key(request: Request) -> None:
-    sess = request.scope.get("session")
-    if isinstance(sess, dict):
-        sess.pop("admin_key", None)
+    s = request.scope.get("session")
+    if isinstance(s, dict):
+        s.pop("admin_key", None)
 
 
 def _hash_code(code: str) -> str:
@@ -95,28 +99,31 @@ def ensure_default_plans(db: Session) -> None:
 
 
 # ---------------------------
-# /admin: dashboard + key form (stores in session)
+# /admin dashboard (session unlock)
 # ---------------------------
 @router.get("/admin", response_class=HTMLResponse)
 def admin_index(request: Request):
     base_url = _portal_base(request)
     sms_base = _sms_base()
+
     expected = _expected_admin_key()
     if not expected:
         return HTMLResponse("<h2>ADMIN_KEY not configured</h2>", status_code=403)
 
     authenticated = (_get_admin_key_from_request(request) == expected)
 
-    ctx = {
-        "request": request,
-        "base_url": base_url,
-        "sms_base": sms_base,
-        "authenticated": authenticated,
-        "tenants_url": f"{base_url}/admin/tenants",
-        "licensing_url": f"{base_url}/admin/licensing",
-        "links_url": f"{base_url}/admin/links",
-    }
-    return templates.TemplateResponse("admin/index.html", ctx)
+    return templates.TemplateResponse(
+        "admin/index.html",
+        {
+            "request": request,
+            "base_url": base_url,
+            "sms_base": sms_base,
+            "authenticated": authenticated,
+            "tenants_url": f"{base_url}/admin/tenants",
+            "licensing_url": f"{base_url}/admin/licensing",
+            "links_url": f"{base_url}/admin/links",
+        },
+    )
 
 
 @router.post("/admin")
@@ -140,14 +147,17 @@ def admin_logout(request: Request):
 
 
 # ---------------------------
-# Admin pages (session/header protected)
+# Admin pages (session/header only)
 # ---------------------------
 @router.get("/admin/tenants", response_class=HTMLResponse)
 def admin_tenants(request: Request, db: Session = Depends(get_db)):
     _require_admin(request)
     tenants = db.query(Tenant).order_by(Tenant.created_at.desc()).all()
     base_url = _portal_base(request)
-    return templates.TemplateResponse("admin/tenants.html", {"request": request, "tenants": tenants, "base_url": base_url})
+    return templates.TemplateResponse(
+        "admin/tenants.html",
+        {"request": request, "tenants": tenants, "base_url": base_url},
+    )
 
 
 @router.get("/admin/tenants/new", response_class=HTMLResponse)
@@ -177,7 +187,7 @@ def admin_tenants_create(
 
     t = Tenant(id=secrets.token_hex(16), slug=slug, name=name.strip(), status="active")
     if hasattr(t, "created_at"):
-        setattr(t, "created_at", datetime.utcnow())
+        t.created_at = datetime.utcnow()
 
     db.add(t)
     db.commit()
@@ -299,7 +309,14 @@ def admin_links(request: Request, db: Session = Depends(get_db)):
 
     rows = []
     for t in tenants:
-        rows.append({"slug": t.slug, "name": t.name, "suite_url": f"{base_url}/t/{t.slug}/suite", "sms_url": _sms_url_for_tenant(t.slug)})
+        rows.append(
+            {
+                "slug": t.slug,
+                "name": t.name,
+                "suite_url": f"{base_url}/t/{t.slug}/suite",
+                "sms_url": _sms_url_for_tenant(t.slug),
+            }
+        )
 
     return templates.TemplateResponse(
         "admin/links.html",
@@ -310,7 +327,7 @@ def admin_links(request: Request, db: Session = Depends(get_db)):
             "admin_tenants_url": f"{base_url}/admin/tenants",
             "admin_licensing_url": f"{base_url}/admin/licensing",
             "admin_links_url": f"{base_url}/admin/links",
-            "admin_key": "",
+            "admin_key": "",  # not used anymore
             "tenants": rows,
         },
     )
