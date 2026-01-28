@@ -1,8 +1,9 @@
 from __future__ import annotations
-import uuid
+
 import os
 import secrets
 import hashlib
+import uuid
 
 import bcrypt
 from datetime import datetime, timedelta
@@ -24,12 +25,6 @@ router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
 
 
-
-def _sess(request: Request) -> dict:
-    s = request.scope.get("session")
-    return s if isinstance(s, dict) else {}
-
-
 def _flash_set(request: Request, key: str, value):
     s = request.scope.get("session")
     if isinstance(s, dict):
@@ -42,6 +37,7 @@ def _flash_pop(request: Request, key: str, default=None):
         return s.pop(key, default)
     return default
 
+
 def _expected_admin_key() -> str:
     return (os.getenv("ADMIN_KEY") or "").strip()
 
@@ -52,12 +48,7 @@ def _session(request: Request) -> dict:
 
 
 def _get_admin_key_from_request(request: Request) -> str:
-    """
-    ONLY:
-      1) Header: X-Admin-Key
-      2) Session: session["admin_key"]  (set via /admin form)
-    NO query-param support.
-    """
+    # Header first, session second. NO query param.
     hdr = (request.headers.get("X-Admin-Key") or request.headers.get("x-admin-key") or "").strip()
     if hdr:
         return hdr
@@ -119,9 +110,6 @@ def ensure_default_plans(db: Session) -> None:
     db.commit()
 
 
-# ---------------------------
-# /admin dashboard (session unlock)
-# ---------------------------
 @router.get("/admin", response_class=HTMLResponse)
 def admin_index(request: Request):
     base_url = _portal_base(request)
@@ -167,16 +155,12 @@ def admin_logout(request: Request):
     return RedirectResponse(url="/admin", status_code=303)
 
 
-# ---------------------------
-# Admin pages (session/header only)
-# ---------------------------
 @router.get("/admin/tenants", response_class=HTMLResponse)
 def admin_tenants(request: Request, db: Session = Depends(get_db)):
     _require_admin(request)
     tenants = db.query(Tenant).order_by(Tenant.created_at.desc()).all()
     base_url = _portal_base(request)
 
-    # One-time onboarding credentials (shown once)
     onboard = {
         "tenant_slug": _flash_pop(request, "onboard_tenant_slug", ""),
         "owner_email": _flash_pop(request, "onboard_owner_email", ""),
@@ -185,14 +169,8 @@ def admin_tenants(request: Request, db: Session = Depends(get_db)):
 
     return templates.TemplateResponse(
         "admin/tenants.html",
-        {
-            "request": request,
-            "tenants": tenants,
-            "base_url": base_url,
-            "onboard": onboard,
-        },
+        {"request": request, "tenants": tenants, "base_url": base_url, "onboard": onboard},
     )
-
 
 
 @router.get("/admin/tenants/new", response_class=HTMLResponse)
@@ -225,73 +203,79 @@ def admin_tenants_create(
     if not owner_email or "@" not in owner_email:
         raise HTTPException(400, "Owner email is required")
 
-    # Create tenant
-    t = Tenant(id=secrets.token_hex(16), slug=slug, name=name.strip(), status="active")
-    if hasattr(t, "created_at"):
-        t.created_at = datetime.utcnow()
+    try:
+        # Create tenant
+        t = Tenant(id=secrets.token_hex(16), slug=slug, name=name.strip(), status="active")
+        if hasattr(t, "created_at"):
+            t.created_at = datetime.utcnow()
 
-    db.add(t)
-    db.commit()
-    db.refresh(t)
+        db.add(t)
+        db.commit()
+        db.refresh(t)
 
-    # Create settings row
-    db.add(ClinicSettings(id=str(uuid.uuid4()), tenant_id=t.id))
+        # Create settings row WITHOUT id (DB must auto-generate integer id)
+        db.add(ClinicSettings(tenant_id=t.id))
+        db.commit()
 
-    db.commit()
+        # Start subscription
+        plan = db.query(Plan).filter(Plan.code == plan_code).first()
+        if not plan:
+            raise HTTPException(400, f"Unknown plan: {plan_code}")
 
-    # Start subscription
-    plan = db.query(Plan).filter(Plan.code == plan_code).first()
-    if not plan:
-        raise HTTPException(400, f"Unknown plan: {plan_code}")
-
-    db.add(
-        Subscription(
-            id=secrets.token_hex(16),
-            tenant_id=t.id,
-            plan_id=plan.id,
-            status="active",
-            starts_at=datetime.utcnow(),
-            ends_at=datetime.utcnow() + timedelta(days=int(plan.duration_days)),
-            source="manual",
+        db.add(
+            Subscription(
+                id=secrets.token_hex(16),
+                tenant_id=t.id,
+                plan_id=plan.id,
+                status="active",
+                starts_at=datetime.utcnow(),
+                ends_at=datetime.utcnow() + timedelta(days=int(plan.duration_days)),
+                source="manual",
+            )
         )
-    )
 
-    # Create owner user with one-time temp password
-    from app.models.user import User
+        # Create owner user with one-time temp password
+        from app.models.user import User
 
-    temp_password = secrets.token_urlsafe(10)  # one-time shown once
-    pw_hash = bcrypt.hashpw(temp_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+        temp_password = secrets.token_urlsafe(10)
+        pw_hash = bcrypt.hashpw(temp_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
-    owner = User(
-        id=str(uuid.uuid4()),
-        tenant_id=t.id,
-        email=owner_email,
-        password_hash=pw_hash,
-        role="owner",
-        is_active=True,
-        must_reset_password=True,
-    )
-    db.add(owner)
-
-    # Audit
-    db.add(
-        LicenseAuditLog(
-            id=secrets.token_hex(16),
+        owner = User(
+            id=str(uuid.uuid4()),
             tenant_id=t.id,
-            event_type="tenant_onboarded",
-            details_json=f'{{"slug":"{slug}","plan":"{plan.code}","owner":"{owner_email}"}}',
-            created_at=datetime.utcnow(),
+            email=owner_email,
+            password_hash=pw_hash,
+            role="owner",
+            is_active=True,
+            must_reset_password=True,
         )
-    )
-    db.commit()
+        db.add(owner)
 
-    # One-time display via session flash (NOT URL)
-    _flash_set(request, "onboard_tenant_slug", slug)
-    _flash_set(request, "onboard_owner_email", owner_email)
-    _flash_set(request, "onboard_temp_password", temp_password)
+        # Audit
+        db.add(
+            LicenseAuditLog(
+                id=secrets.token_hex(16),
+                tenant_id=t.id,
+                event_type="tenant_onboarded",
+                details_json=f'{{"slug":"{slug}","plan":"{plan.code}","owner":"{owner_email}"}}',
+                created_at=datetime.utcnow(),
+            )
+        )
 
-    return RedirectResponse(url="/admin/tenants", status_code=303)
+        db.commit()
 
+        _flash_set(request, "onboard_tenant_slug", slug)
+        _flash_set(request, "onboard_owner_email", owner_email)
+        _flash_set(request, "onboard_temp_password", temp_password)
+
+        return RedirectResponse(url="/admin/tenants", status_code=303)
+
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=f"Create tenant failed: {type(e).__name__}: {e}")
 
 
 @router.get("/admin/licensing", response_class=HTMLResponse)
@@ -379,12 +363,7 @@ def admin_links(request: Request, db: Session = Depends(get_db)):
     rows = []
     for t in tenants:
         rows.append(
-            {
-                "slug": t.slug,
-                "name": t.name,
-                "suite_url": f"{base_url}/t/{t.slug}/suite",
-                "sms_url": _sms_url_for_tenant(t.slug),
-            }
+            {"slug": t.slug, "name": t.name, "suite_url": f"{base_url}/t/{t.slug}/suite", "sms_url": _sms_url_for_tenant(t.slug)}
         )
 
     return templates.TemplateResponse(
@@ -396,85 +375,7 @@ def admin_links(request: Request, db: Session = Depends(get_db)):
             "admin_tenants_url": f"{base_url}/admin/tenants",
             "admin_licensing_url": f"{base_url}/admin/licensing",
             "admin_links_url": f"{base_url}/admin/links",
-            "admin_key": "",  # not used anymore
+            "admin_key": "",
             "tenants": rows,
-        },
-    )
-
-
-
-@router.get("/admin/diagnostics", response_class=HTMLResponse)
-def admin_diagnostics(request: Request, db: Session = Depends(get_db)):
-    _require_admin(request)
-
-    base_url = _portal_base(request)
-
-    # DB OK
-    db_ok = False
-    db_error = ""
-    try:
-        db.execute(sa.text("select 1"))
-        db_ok = True
-    except Exception as e:
-        db_error = f"{type(e).__name__}: {e}"
-
-    # Tenant OK
-    tenant_ok = False
-    tenant_count = 0
-    default_tenant = None
-    try:
-        tenant_count = db.query(Tenant).count()
-        default_tenant = db.query(Tenant).filter(Tenant.slug == "default").first()
-        tenant_ok = bool(default_tenant)
-    except Exception as e:
-        tenant_ok = False
-
-    # SMS Provider OK (default tenant clinic settings)
-    sms_ok = False
-    sms_details = {}
-    try:
-        cs = None
-        if default_tenant:
-            cs = db.query(ClinicSettings).filter(ClinicSettings.tenant_id == default_tenant.id).first()
-        if cs:
-            sms_details = {
-                "provider": getattr(cs, "sms_provider", None),
-                "infobip_base_url": getattr(cs, "infobip_base_url", None),
-                "infobip_sender": getattr(cs, "infobip_sender", None),
-                "has_api_key": bool(getattr(cs, "infobip_api_key", None)),
-            }
-            sms_ok = bool(sms_details.get("infobip_base_url") and sms_details.get("infobip_sender") and sms_details.get("has_api_key"))
-    except Exception:
-        sms_ok = False
-
-    # Rate limit counters
-    rate_counts = {"rows": 0, "blocked_now": 0}
-    try:
-        from app.models.auth_rate_limit import AuthRateLimit
-        rate_counts["rows"] = db.query(AuthRateLimit).count()
-        now = datetime.utcnow()
-        rate_counts["blocked_now"] = db.query(AuthRateLimit).filter(AuthRateLimit.blocked_until != None).filter(AuthRateLimit.blocked_until > now).count()
-    except Exception:
-        pass
-
-    # Sentry configured
-    sentry_dsn = (os.getenv("SENTRY_DSN") or "").strip()
-    sentry_ok = bool(sentry_dsn)
-
-    return templates.TemplateResponse(
-        "admin/diagnostics.html",
-        {
-            "request": request,
-            "title": "Diagnostics",
-            "base_url": base_url,
-            "db_ok": db_ok,
-            "db_error": db_error,
-            "tenant_ok": tenant_ok,
-            "tenant_count": tenant_count,
-            "default_tenant": default_tenant.slug if default_tenant else None,
-            "sms_ok": sms_ok,
-            "sms_details": sms_details,
-            "rate_counts": rate_counts,
-            "sentry_ok": sentry_ok,
         },
     )
