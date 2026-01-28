@@ -1,0 +1,78 @@
+{% extends "layout.html" %}
+{% block content %}
+{% set rp = request.scope.get('root_path','') %}
+<div style="max-width:1100px;margin:0 auto;padding:18px 16px;">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+    <div>
+      <div style="font-size:12px;letter-spacing:.08em;color:#6b7280;font-weight:800;">TENANT</div>
+      <div style="font-size:28px;font-weight:900;line-height:1.1;margin-top:4px;">SMS Outbox</div>
+      <div style="color:#6b7280;margin-top:6px;">Queue, retries, and delivery audit (tenant-scoped).</div>
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a href="{{ rp }}/t/{{ tenant_slug }}/suite" style="text-decoration:none;">
+        <span style="display:inline-flex;align-items:center;gap:8px;padding:10px 12px;border-radius:999px;background:#111827;color:#fff;font-weight:900;">⬅ Back to Suite</span>
+      </a>
+      <a href="{{ rp }}/settings?tenant={{ tenant_slug }}" style="text-decoration:none;">
+        <span style="display:inline-flex;align-items:center;gap:8px;padding:10px 12px;border-radius:999px;background:#f3f4f6;color:#111827;border:1px solid #e5e7eb;font-weight:900;">⚙ Settings</span>
+      </a>
+    </div>
+  </div>
+
+  <div style="margin-top:14px;background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:16px;">
+    <div style="font-weight:900;margin-bottom:8px;">Send test SMS</div>
+    <form method="post" action="{{ rp }}/sms-outbox/test" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+      <input type="hidden" name="tenant" value="{{ tenant_slug }}"/>
+      <div style="flex:1;min-width:240px;">
+        <div style="font-size:12px;color:#6b7280;font-weight:900;">To phone</div>
+        <input name="to_phone" placeholder="+9665..." style="width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:10px;">
+      </div>
+      <div style="flex:2;min-width:280px;">
+        <div style="font-size:12px;color:#6b7280;font-weight:900;">Message</div>
+        <input name="message" value="Test SMS from Clinic Suite" style="width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:10px;">
+      </div>
+      <button type="submit" style="padding:10px 14px;border-radius:10px;border:1px solid #111827;background:#111827;color:#fff;font-weight:900;">Queue SMS</button>
+    </form>
+    <div style="margin-top:10px;color:#6b7280;font-size:12px;">
+      The worker will pick up queued messages and attempt delivery with retries.
+    </div>
+  </div>
+
+  <div style="margin-top:14px;background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:16px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+      <div style="font-weight:900;">Last 50 messages</div>
+      <div style="color:#6b7280;font-size:12px;">Statuses: queued → sending → sent / failed (or retry)</div>
+    </div>
+
+    <div style="overflow:auto;margin-top:10px;">
+      <table style="width:100%;border-collapse:collapse;min-width:900px;">
+        <thead>
+          <tr style="text-align:left;border-bottom:1px solid #e5e7eb;">
+            <th style="padding:10px;font-size:12px;color:#6b7280;">Scheduled</th>
+            <th style="padding:10px;font-size:12px;color:#6b7280;">To</th>
+            <th style="padding:10px;font-size:12px;color:#6b7280;">Message</th>
+            <th style="padding:10px;font-size:12px;color:#6b7280;">Status</th>
+            <th style="padding:10px;font-size:12px;color:#6b7280;">Attempts</th>
+            <th style="padding:10px;font-size:12px;color:#6b7280;">Provider ID</th>
+            <th style="padding:10px;font-size:12px;color:#6b7280;">Last error</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in outbox %}
+            <tr style="border-bottom:1px solid #f3f4f6;">
+              <td style="padding:10px;white-space:nowrap;">{{ r.scheduled_at }}</td>
+              <td style="padding:10px;white-space:nowrap;">{{ r.to_phone }}</td>
+              <td style="padding:10px;max-width:420px;">{{ r.message }}</td>
+              <td style="padding:10px;white-space:nowrap;font-weight:900;">{{ r.status }}</td>
+              <td style="padding:10px;white-space:nowrap;">{{ r.attempts }}</td>
+              <td style="padding:10px;white-space:nowrap;">{{ r.provider_message_id or "—" }}</td>
+              <td style="padding:10px;max-width:320px;color:#6b7280;">{{ r.last_error or "—" }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="7" style="padding:12px;color:#6b7280;">No messages yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -14,6 +14,13 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 import bcrypt
 
+# Optional: Sentry
+try:
+    import sentry_sdk
+except Exception:
+    sentry_sdk = None
+
+
 from app.db import SessionLocal
 from app.routers.web import router as web_router
 from app.routers.auth import router as auth_router
@@ -27,6 +34,16 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 app.include_router(auth_router)
 app.include_router(web_router)
 app.include_router(admin_router)
+
+# Sentry initialization (optional)
+_SENTRY_DSN = (os.getenv("SENTRY_DSN") or "").strip()
+if sentry_sdk and _SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=_SENTRY_DSN,
+        traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE") or "0.05"),
+        environment=os.getenv("SENTRY_ENV") or os.getenv("RENDER_SERVICE_NAME") or "production",
+    )
+
 
 
 # ----------------------------
@@ -420,8 +437,24 @@ def activate_post(
 # Gate middleware
 # ----------------------------
 class TenantGateMiddleware(BaseHTTPMiddleware):
+    """Tenant auth + subscription gate.
+    Also attaches Sentry tags if Sentry is enabled.
+    """
+
     async def dispatch(self, request: Request, call_next):
         path = request.url.path or ""
+
+        # Sentry context
+        if sentry_sdk and _SENTRY_DSN:
+            s = _sess(request)
+            try:
+                sentry_sdk.set_tag("path", path)
+                if s.get("tenant_slug"):
+                    sentry_sdk.set_tag("tenant_slug", s.get("tenant_slug"))
+                if s.get("user_id"):
+                    sentry_sdk.set_user({"id": s.get("user_id"), "email": s.get("email")})
+            except Exception:
+                pass
 
         # Public
         if (
@@ -452,6 +485,11 @@ class TenantGateMiddleware(BaseHTTPMiddleware):
             until = _get_subscription_until(tenant_slug)
             if until:
                 _set_sess(request, "subscription_until", until)
+
+            
+            # Enforce password reset if required
+            if _sess(request).get("must_reset_password"):
+                return RedirectResponse(url=f"/auth/change-password?next={quote(path)}", status_code=303)
 
             if request.method in ("POST", "PUT", "PATCH", "DELETE"):
                 if _user_role(request) not in ("owner", "admin"):
@@ -547,10 +585,12 @@ def seed_defaults() -> None:
                         password_hash=pw_hash,
                         role="owner",
                         is_active=True,
+                        must_reset_password=True,
                     )
                 )
                 db.commit()
-                print(f"BOOTSTRAP: created owner {email} for tenant {t.slug}")
+                print(f"BOOTSTRAP: created owner {email} for tenant {t.slug} (must reset password on first login)")
+                print("BOOTSTRAP: IMPORTANT: remove BOOTSTRAP_OWNER_EMAIL and BOOTSTRAP_OWNER_PASSWORD from Render env vars after first successful login.")
 
     finally:
         db.close()

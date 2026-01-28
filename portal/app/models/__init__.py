@@ -1,5 +1,3 @@
-
-
 from app.models.child import Child
 from app.models.appointment import Appointment
 from app.models.session_note import SessionNote, ActivityItem
@@ -12,3 +10,6 @@ from app.models.therapist import Therapist
 from .tenant import Tenant
 from .licensing import Plan, Subscription, ActivationCode, LicenseAuditLog
 from app.models.user import User
+from app.models.sms_outbox import SmsOutbox
+
+from app.models.auth_rate_limit import AuthRateLimit

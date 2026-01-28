@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime
+import uuid
 from urllib.parse import quote_plus
 
 from fastapi import APIRouter, Depends, Request, Form, HTTPException
@@ -17,6 +18,7 @@ from app.models.child import Child
 from app.models.therapist import Therapist
 from app.models.appointment import Appointment
 from app.models.clinic_settings import ClinicSettings, AppLicense
+from app.models.sms_outbox import SmsOutbox
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
@@ -101,6 +103,59 @@ def suite_default(request: Request, db: Session = Depends(get_db)):
 def suite_tenant(request: Request, tenant_slug: str, db: Session = Depends(get_db)):
     return _render(request, "pages/suite.html", {}, db, tenant_slug=tenant_slug)
 
+
+@router.get("/sms-outbox", response_class=HTMLResponse)
+def sms_outbox_view(request: Request, tenant: str = "default", db: Session = Depends(get_db)):
+    tctx = resolve_tenant(db, request, tenant_slug=tenant)
+    items = (
+        db.query(SmsOutbox)
+        .filter(SmsOutbox.tenant_id == tctx.tenant_id)
+        .order_by(SmsOutbox.scheduled_at.desc())
+        .limit(50)
+        .all()
+    )
+    return _render(
+        request,
+        "pages/sms_outbox.html",
+        {"outbox": items},
+        db,
+        tenant_slug=tctx.tenant_slug,
+    )
+
+
+@router.post("/sms-outbox/test")
+def sms_outbox_test_send(
+    request: Request,
+    tenant: str = Form("default"),
+    to_phone: str = Form(""),
+    message: str = Form("Test SMS from Clinic Suite"),
+    db: Session = Depends(get_db),
+):
+    tctx = resolve_tenant(db, request, tenant_slug=tenant)
+
+    to_phone = (to_phone or "").strip()
+    message = (message or "").strip() or "Test SMS from Clinic Suite"
+
+    if not to_phone:
+        rp = _rp(request)
+        return RedirectResponse(url=f"{rp}/sms-outbox?tenant={tctx.tenant_slug}", status_code=303)
+
+    row = SmsOutbox(
+        id=str(uuid.uuid4()),
+        tenant_id=tctx.tenant_id,
+        to_phone=to_phone,
+        message=message,
+        scheduled_at=datetime.utcnow(),
+        status="queued",
+        attempts=0,
+        last_error=None,
+        provider_message_id=None,
+    )
+    db.add(row)
+    db.commit()
+
+    rp = _rp(request)
+    return RedirectResponse(url=f"{rp}/sms-outbox?tenant={tctx.tenant_slug}", status_code=303)
 
 @router.get("/children", response_class=HTMLResponse)
 def children_list(request: Request, tenant: str = "default", q: str = "", db: Session = Depends(get_db)):

@@ -1,11 +1,13 @@
 {% extends "layout.html" %}
 {% block content %}
 <h1>Create Tenant</h1>
-<form method="post" action="/admin/tenants/new?admin_key={{admin_key}}">
+<form method="post" action="/admin/tenants/new">
   <label>Tenant slug (e.g. clinic-veria-001)</label>
   <input name="slug" required style="width:360px" />
   <label>Tenant name</label>
   <input name="name" required style="width:360px" />
+  <label>Owner email</label>
+  <input name="owner_email" required style="width:360px" placeholder="owner@clinic.com" />
   <label>Start plan</label>
   <select name="plan_code">
     {% for p in plans %}

@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import secrets
 import hashlib
+
+import bcrypt
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -20,6 +22,24 @@ from app.models.licensing import Plan, Subscription, ActivationCode, LicenseAudi
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
 
+
+
+def _sess(request: Request) -> dict:
+    s = request.scope.get("session")
+    return s if isinstance(s, dict) else {}
+
+
+def _flash_set(request: Request, key: str, value):
+    s = request.scope.get("session")
+    if isinstance(s, dict):
+        s[key] = value
+
+
+def _flash_pop(request: Request, key: str, default=None):
+    s = request.scope.get("session")
+    if isinstance(s, dict):
+        return s.pop(key, default)
+    return default
 
 def _expected_admin_key() -> str:
     return (os.getenv("ADMIN_KEY") or "").strip()
@@ -154,10 +174,24 @@ def admin_tenants(request: Request, db: Session = Depends(get_db)):
     _require_admin(request)
     tenants = db.query(Tenant).order_by(Tenant.created_at.desc()).all()
     base_url = _portal_base(request)
+
+    # One-time onboarding credentials (shown once)
+    onboard = {
+        "tenant_slug": _flash_pop(request, "onboard_tenant_slug", ""),
+        "owner_email": _flash_pop(request, "onboard_owner_email", ""),
+        "temp_password": _flash_pop(request, "onboard_temp_password", ""),
+    }
+
     return templates.TemplateResponse(
         "admin/tenants.html",
-        {"request": request, "tenants": tenants, "base_url": base_url},
+        {
+            "request": request,
+            "tenants": tenants,
+            "base_url": base_url,
+            "onboard": onboard,
+        },
     )
+
 
 
 @router.get("/admin/tenants/new", response_class=HTMLResponse)
@@ -173,6 +207,7 @@ def admin_tenants_create(
     request: Request,
     slug: str = Form(...),
     name: str = Form(...),
+    owner_email: str = Form(...),
     plan_code: str = Form("TRIAL_7D"),
     db: Session = Depends(get_db),
 ):
@@ -185,6 +220,11 @@ def admin_tenants_create(
     if db.query(Tenant).filter(Tenant.slug == slug).first():
         raise HTTPException(400, "Slug already exists")
 
+    owner_email = (owner_email or "").strip().lower()
+    if not owner_email or "@" not in owner_email:
+        raise HTTPException(400, "Owner email is required")
+
+    # Create tenant
     t = Tenant(id=secrets.token_hex(16), slug=slug, name=name.strip(), status="active")
     if hasattr(t, "created_at"):
         t.created_at = datetime.utcnow()
@@ -193,9 +233,11 @@ def admin_tenants_create(
     db.commit()
     db.refresh(t)
 
+    # Create settings row
     db.add(ClinicSettings(tenant_id=t.id))
     db.commit()
 
+    # Start subscription
     plan = db.query(Plan).filter(Plan.code == plan_code).first()
     if not plan:
         raise HTTPException(400, f"Unknown plan: {plan_code}")
@@ -211,18 +253,43 @@ def admin_tenants_create(
             source="manual",
         )
     )
+
+    # Create owner user with one-time temp password
+    from app.models.user import User
+
+    temp_password = secrets.token_urlsafe(10)  # one-time shown once
+    pw_hash = bcrypt.hashpw(temp_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+    owner = User(
+        id=str(uuid.uuid4()),
+        tenant_id=t.id,
+        email=owner_email,
+        password_hash=pw_hash,
+        role="owner",
+        is_active=True,
+        must_reset_password=True,
+    )
+    db.add(owner)
+
+    # Audit
     db.add(
         LicenseAuditLog(
             id=secrets.token_hex(16),
             tenant_id=t.id,
-            event_type="tenant_created",
-            details_json=f'{{"slug":"{slug}","plan":"{plan.code}"}}',
+            event_type="tenant_onboarded",
+            details_json=f'{{"slug":"{slug}","plan":"{plan.code}","owner":"{owner_email}"}}',
             created_at=datetime.utcnow(),
         )
     )
     db.commit()
 
+    # One-time display via session flash (NOT URL)
+    _flash_set(request, "onboard_tenant_slug", slug)
+    _flash_set(request, "onboard_owner_email", owner_email)
+    _flash_set(request, "onboard_temp_password", temp_password)
+
     return RedirectResponse(url="/admin/tenants", status_code=303)
+
 
 
 @router.get("/admin/licensing", response_class=HTMLResponse)

@@ -1,7 +1,7 @@
 {% extends "layout.html" %}
 {% block content %}
 <h1>Licensing</h1>
-<p><a class="btn" href="/admin/tenants?admin_key={{admin_key}}">Back to tenants</a></p>
+<p><a class="btn" href="/admin/tenants">Back to tenants</a></p>
 
 <form method="get" action="/admin/licensing">
   <input type="hidden" name="admin_key" value="{{admin_key}}">
@@ -24,7 +24,7 @@
 <p>No subscription found.</p>
 {% endif %}
 
-<form method="post" action="/admin/licensing/generate?admin_key={{admin_key}}">
+<form method="post" action="/admin/licensing/generate">
   <input type="hidden" name="tenant_slug" value="{{selected.slug}}">
   <label>Plan</label>
   <select name="plan_code">
