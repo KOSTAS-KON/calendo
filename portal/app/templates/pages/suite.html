@@ -18,6 +18,11 @@
           {% endif %}
           <span style="display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;background:#eef2ff;border:1px solid #c7d2fe;color:#3730a3;font-weight:800;font-size:13px;">🧩 Mode: {{ license.product_mode }}</span>
         {% endif %}
+        {% if request.session.get("subscription_until") %}
+          <span style="display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;background:#f1f5f9;border:1px solid #e5e7eb;color:#111827;font-weight:800;font-size:13px;">
+            ⏰ Subscription valid until: {{ request.session.get("subscription_until") }}
+          </span>
+        {% endif %}
       </div>
     </div>
 

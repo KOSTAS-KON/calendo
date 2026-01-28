@@ -7,7 +7,7 @@ import hashlib
 from urllib.parse import quote, unquote
 
 from fastapi import FastAPI, Request, Response, Form
-from fastapi.responses import RedirectResponse, HTMLResponse
+from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -70,6 +70,12 @@ def _sess(request: Request) -> dict:
     return s if isinstance(s, dict) else {}
 
 
+def _set_sess(request: Request, key: str, value) -> None:
+    s = request.scope.get("session")
+    if isinstance(s, dict):
+        s[key] = value
+
+
 @app.get("/me")
 def me(request: Request):
     """Debug endpoint: confirms session identity after login."""
@@ -80,6 +86,7 @@ def me(request: Request):
         "role": s.get("role"),
         "tenant_slug": s.get("tenant_slug"),
         "tenant_id": s.get("tenant_id"),
+        "subscription_until": s.get("subscription_until"),
         "has_session": "session" in request.scope,
     }
 
@@ -101,6 +108,42 @@ def _extract_tenant_slug(path: str) -> str:
 
 def _session_tenant_slug(request: Request) -> str:
     return str(_sess(request).get("tenant_slug") or "default")
+
+
+def _sha256(s: str) -> str:
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()
+
+
+def _format_iso_utc(dt: datetime) -> str:
+    # Render-friendly display
+    return dt.replace(microsecond=0).isoformat() + "Z"
+
+
+def _get_subscription_until(tenant_slug: str) -> str | None:
+    """
+    Returns ISO string for subscription end date if subscription exists, else None.
+    """
+    db = SessionLocal()
+    try:
+        from app.models.tenant import Tenant
+        from app.models.licensing import Subscription
+
+        t = db.query(Tenant).filter(Tenant.slug == tenant_slug).first()
+        if not t:
+            return None
+
+        sub = (
+            db.query(Subscription)
+            .filter(Subscription.tenant_id == t.id)
+            .order_by(Subscription.ends_at.desc())
+            .first()
+        )
+        if not sub or not getattr(sub, "ends_at", None):
+            return None
+
+        return _format_iso_utc(sub.ends_at)
+    finally:
+        db.close()
 
 
 def _subscription_active(tenant_slug: str) -> bool:
@@ -126,6 +169,14 @@ def _subscription_active(tenant_slug: str) -> bool:
         return bool(getattr(sub, "ends_at", None) and sub.ends_at > datetime.utcnow())
     finally:
         db.close()
+
+
+# Handy endpoint to display subscription label anywhere (suite JS/template can use this)
+@app.get("/subscription", response_class=JSONResponse)
+def subscription_status(request: Request, tenant: str = "default"):
+    tenant_slug = (tenant or "default").strip().lower()
+    until = _get_subscription_until(tenant_slug)
+    return {"tenant": tenant_slug, "until": until, "active": bool(until and _subscription_active(tenant_slug))}
 
 
 # ----------------------------
@@ -154,12 +205,8 @@ def landing(request: Request):
 
 
 # ----------------------------
-# Activation redemption (REAL)
+# Activation redemption (REAL) + Success banner
 # ----------------------------
-def _sha256(s: str) -> str:
-    return hashlib.sha256(s.encode("utf-8")).hexdigest()
-
-
 _ERROR_MESSAGES = {
     "missing": "Please enter an activation code.",
     "invalid": "Invalid activation code.",
@@ -174,15 +221,35 @@ _ERROR_MESSAGES = {
 
 
 @app.get("/activate", response_class=HTMLResponse)
-def activate_get(request: Request, tenant: str = "default", next: str = "/t/default/suite", error: str = ""):
+def activate_get(
+    request: Request,
+    tenant: str = "default",
+    next: str = "/t/default/suite",
+    error: str = "",
+    success_until: str = "",
+):
     next_path = _safe_next(next)
+
+    # Error banner
     msg = _ERROR_MESSAGES.get((error or "").strip(), "")
-    banner = ""
+    error_banner = ""
     if msg:
-        banner = f"""
+        error_banner = f"""
         <div style="margin:10px 0; padding:10px; border-radius:12px;
                     background:#3b0a0a; border:1px solid rgba(239,68,68,.5); color:#fecaca;">
           <b>Activation error:</b> {msg}
+        </div>
+        """
+
+    # Success banner
+    success_banner = ""
+    if success_until:
+        success_banner = f"""
+        <div style="margin:10px 0; padding:10px; border-radius:12px;
+                    background:#052e16; border:1px solid rgba(34,197,94,.45); color:#bbf7d0;">
+          <b>Activated successfully.</b><br/>
+          Subscription valid until:
+          <code style="background:rgba(255,255,255,.10); padding:2px 6px; border-radius:6px;">{success_until}</code>
         </div>
         """
 
@@ -199,22 +266,27 @@ def activate_get(request: Request, tenant: str = "default", next: str = "/t/defa
           button{{margin-top:10px; padding:10px 14px; border-radius:10px; border:none; background:#2563eb; color:white; font-weight:900;}}
           .hint{{margin-top:10px; opacity:.8; font-size:13px;}}
           code{{background:rgba(255,255,255,.08); padding:2px 6px; border-radius:6px;}}
+          a.cont{{display:inline-block; margin-top:10px; padding:10px 14px; border-radius:10px; background:#2563eb; color:white; text-decoration:none; font-weight:900;}}
         </style>
       </head>
       <body>
         <div class="wrap">
           <div class="card">
-            <h2 style="margin:0 0 10px 0;">Activation required</h2>
+            <h2 style="margin:0 0 10px 0;">Activation</h2>
             <div class="hint">Tenant: <code>{tenant}</code></div>
-            <div class="hint">Enter an activation code to enable/extend your subscription.</div>
-            {banner}
+
+            {success_banner}
+            {error_banner}
+
             <form method="post" action="/activate">
               <input type="hidden" name="tenant" value="{tenant}"/>
               <input type="hidden" name="next" value="{quote(next_path)}"/>
               <input name="code" placeholder="Enter activation code" autocomplete="off"/>
               <button type="submit">Activate</button>
             </form>
-            <div class="hint">After activation you will return to: <code>{next_path}</code></div>
+
+            <div class="hint">Next: <code>{next_path}</code></div>
+            {"<a class='cont' href='"+next_path+"'>Continue</a>" if success_until else ""}
           </div>
         </div>
       </body>
@@ -326,7 +398,16 @@ def activate_post(
             pass
 
         db.commit()
-        return RedirectResponse(url=next_path, status_code=303)
+
+        # Store subscription_until in session for suite UI label
+        until_iso = _format_iso_utc(ends_at)
+        _set_sess(request, "subscription_until", until_iso)
+
+        # Redirect back to /activate with success banner
+        return RedirectResponse(
+            url=f"/activate?tenant={tenant_slug}&next={quote(next_path)}&success_until={quote(until_iso)}",
+            status_code=303,
+        )
 
     except Exception:
         db.rollback()
@@ -350,6 +431,7 @@ class TenantGateMiddleware(BaseHTTPMiddleware):
             or path.startswith("/activate")
             or path == "/"
             or path.startswith("/me")
+            or path.startswith("/subscription")
         ):
             return await call_next(request)
 
@@ -365,6 +447,11 @@ class TenantGateMiddleware(BaseHTTPMiddleware):
             tenant_slug = _extract_tenant_slug(path)
             if _session_tenant_slug(request) != tenant_slug:
                 return HTMLResponse("Forbidden (tenant mismatch)", status_code=403)
+
+            # Save subscription_until into session so suite can display it
+            until = _get_subscription_until(tenant_slug)
+            if until:
+                _set_sess(request, "subscription_until", until)
 
             if request.method in ("POST", "PUT", "PATCH", "DELETE"):
                 if _user_role(request) not in ("owner", "admin"):
