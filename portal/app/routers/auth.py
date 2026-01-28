@@ -1,4 +1,5 @@
 from __future__ import annotations
+from app.models.auth_rate_limit import AuthRateLimit
 
 import os
 from datetime import datetime, timedelta
