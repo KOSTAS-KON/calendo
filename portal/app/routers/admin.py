@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+import uuid
 import os
 import secrets
 import hashlib
@@ -235,7 +235,8 @@ def admin_tenants_create(
     db.refresh(t)
 
     # Create settings row
-    db.add(ClinicSettings(tenant_id=t.id))
+    db.add(ClinicSettings(id=str(uuid.uuid4()), tenant_id=t.id))
+
     db.commit()
 
     # Start subscription
