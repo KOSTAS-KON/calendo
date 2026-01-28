@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import datetime, timedelta
 from urllib.parse import quote, unquote
 
@@ -105,7 +106,6 @@ def _render_login_page(next_path: str, tenant_slug: str, error: str) -> HTMLResp
 
 
 def _get_client_ip(request: Request) -> str:
-    # Prefer X-Forwarded-For (Render), fall back to client host
     xff = request.headers.get("x-forwarded-for", "")
     if xff:
         return xff.split(",")[0].strip()
@@ -118,12 +118,11 @@ def _rate_limit_login(db, ip: str) -> tuple[bool, int]:
     """
     Returns (allowed, retry_after_seconds). DB-backed per-IP limiter.
 
-    Requires model app.models.auth_rate_limit.AuthRateLimit
-    with fields: ip, window_start, attempts, blocked_until.
+    Model fields expected (matches your AuthRateLimit model):
+      ip, window_start, count, blocked_until, created_at
     """
     from app.models.auth_rate_limit import AuthRateLimit
 
-    # Defaults (can be overridden by env in your implementation elsewhere; keep simple here)
     max_attempts = int((os.getenv("LOGIN_RATE_LIMIT_COUNT") or "10").strip())
     window_seconds = int((os.getenv("LOGIN_RATE_LIMIT_WINDOW_SECONDS") or "600").strip())
     block_seconds = int((os.getenv("LOGIN_RATE_LIMIT_BLOCK_SECONDS") or "900").strip())
@@ -135,30 +134,27 @@ def _rate_limit_login(db, ip: str) -> tuple[bool, int]:
         row = AuthRateLimit(
             ip=ip,
             window_start=now,
-            attempts=0,
+            count=0,
             blocked_until=None,
-            updated_at=now,
         )
         db.add(row)
         db.commit()
         db.refresh(row)
 
-    # If blocked
+    # If currently blocked
     if row.blocked_until and row.blocked_until > now:
         retry_after = int((row.blocked_until - now).total_seconds())
         return False, max(retry_after, 1)
 
-    # Reset window
+    # Reset window if expired
     if row.window_start and row.window_start + timedelta(seconds=window_seconds) < now:
         row.window_start = now
-        row.attempts = 0
+        row.count = 0
         row.blocked_until = None
-        row.updated_at = now
         db.add(row)
         db.commit()
         db.refresh(row)
 
-    # Allowed for now
     return True, 0
 
 
@@ -172,15 +168,19 @@ def _record_login_failure(db, ip: str) -> None:
 
     row = db.query(AuthRateLimit).filter(AuthRateLimit.ip == ip).first()
     if not row:
-        row = AuthRateLimit(ip=ip, window_start=now, attempts=0, blocked_until=None, updated_at=now)
+        row = AuthRateLimit(
+            ip=ip,
+            window_start=now,
+            count=0,
+            blocked_until=None,
+        )
         db.add(row)
         db.commit()
         db.refresh(row)
 
-    row.attempts = int(row.attempts or 0) + 1
-    row.updated_at = now
+    row.count = int(row.count or 0) + 1
 
-    if row.attempts >= max_attempts:
+    if row.count >= max_attempts:
         row.blocked_until = now + timedelta(seconds=block_seconds)
 
     db.add(row)
@@ -213,6 +213,7 @@ def auth_login_post(
 
     email = (email or "").strip().lower()
     password = password or ""
+
     if not email or not password:
         return RedirectResponse(url=f"/auth/login?next={quote(next_path)}&error=1", status_code=303)
 
@@ -220,10 +221,9 @@ def auth_login_post(
 
     db = SessionLocal()
     try:
-        # Rate limit check
-        allowed, retry_after = _rate_limit_login(db, ip)
+        allowed, _retry_after = _rate_limit_login(db, ip)
         if not allowed:
-            # keep generic error (avoid leaking info)
+            # Keep generic error to avoid leaking info
             return RedirectResponse(url=f"/auth/login?next={quote(next_path)}&error=1", status_code=303)
 
         from app.models.tenant import Tenant
@@ -243,7 +243,6 @@ def auth_login_post(
             _record_login_failure(db, ip)
             return RedirectResponse(url=f"/auth/login?next={quote(next_path)}&error=1", status_code=303)
 
-        # Success session
         _session_set(request, "user_id", u.id)
         _session_set(request, "tenant_id", u.tenant_id)
         _session_set(request, "tenant_slug", tenant_slug)
