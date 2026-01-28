@@ -9,6 +9,7 @@ from fastapi import FastAPI, Request, Response, Form
 from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 
 import bcrypt
 
@@ -20,6 +21,7 @@ from app.routers.admin import router as admin_router
 
 app = FastAPI(title="Calendo Portal", version="1.0.0")
 
+# Sessions must run before auth gates.
 _session_secret = (os.getenv("SECRET_KEY") or "").strip() or "dev-secret-key-change-me"
 app.add_middleware(SessionMiddleware, secret_key=_session_secret, same_site="lax", https_only=True)
 
@@ -29,6 +31,9 @@ app.include_router(web_router)
 app.include_router(admin_router)
 
 
+# ----------------------------
+# Health endpoints
+# ----------------------------
 @app.get("/health", include_in_schema=False)
 def health_get():
     return {"ok": True}
@@ -58,15 +63,10 @@ def _safe_next(next_path: str) -> str:
     return nxt
 
 
-def _session(request: Request) -> dict:
-    sess = request.scope.get("session")
-    return sess if isinstance(sess, dict) else {}
-
-
 @app.get("/me")
 def me(request: Request):
     """Debug endpoint: confirms session identity after login."""
-    s = _session(request)
+    s = getattr(request, "session", {}) or {}
     return {
         "user_id": s.get("user_id"),
         "email": s.get("email"),
@@ -76,12 +76,14 @@ def me(request: Request):
     }
 
 
-def _user_role(request: Request) -> str:
-    return str(_session(request).get("role") or "").lower()
-
-
 def _logged_in(request: Request) -> bool:
-    return bool(_session(request).get("user_id"))
+    s = getattr(request, "session", {}) or {}
+    return bool(s.get("user_id"))
+
+
+def _user_role(request: Request) -> str:
+    s = getattr(request, "session", {}) or {}
+    return str(s.get("role") or "").lower()
 
 
 def _extract_tenant_slug(path: str) -> str:
@@ -92,7 +94,8 @@ def _extract_tenant_slug(path: str) -> str:
 
 
 def _session_tenant_slug(request: Request) -> str:
-    return str(_session(request).get("tenant_slug") or "default")
+    s = getattr(request, "session", {}) or {}
+    return str(s.get("tenant_slug") or "default")
 
 
 def _subscription_active(tenant_slug: str) -> bool:
@@ -120,6 +123,9 @@ def _subscription_active(tenant_slug: str) -> bool:
         db.close()
 
 
+# ----------------------------
+# Landing
+# ----------------------------
 @app.get("/", response_class=HTMLResponse)
 def landing(request: Request):
     default_tenant = "default"
@@ -163,91 +169,70 @@ def landing(request: Request):
     return HTMLResponse(html)
 
 
-@app.middleware("http")
-async def tenant_authz_and_subscription_gate(request: Request, call_next):
-    path = request.url.path or ""
-
-    if (
-        path.startswith("/static")
-        or path.startswith("/health")
-        or path.startswith("/auth/")
-        or path.startswith("/activate")
-        or path == "/"
-        or path.startswith("/me")
-    ):
-        return await call_next(request)
-
-    if path.startswith("/admin"):
-        return await call_next(request)
-
-    if path.startswith("/t/"):
-        if not _logged_in(request):
-            return RedirectResponse(url=f"/auth/login?next={quote(path)}", status_code=303)
-
-        tenant_slug = _extract_tenant_slug(path)
-        if _session_tenant_slug(request) != tenant_slug:
-            return HTMLResponse("Forbidden (tenant mismatch)", status_code=403)
-
-        if request.method in ("POST", "PUT", "PATCH", "DELETE"):
-            if _user_role(request) not in ("owner", "admin"):
-                return HTMLResponse("Forbidden (insufficient role)", status_code=403)
-
-        if not _subscription_active(tenant_slug):
-            return RedirectResponse(url=f"/activate?tenant={tenant_slug}&next={quote(path)}", status_code=307)
-
-    return await call_next(request)
-
-
+# ----------------------------
+# Activation (placeholder)
+# ----------------------------
 @app.get("/activate", response_class=HTMLResponse)
-def activate_get(request: Request, tenant: str = "default", next: str = "/t/default/suite", error: str = ""):
+def activate_get(request: Request, tenant: str = "default", next: str = "/t/default/suite"):
     next_path = _safe_next(next)
-    msg = ""
-    if error:
-        msg = f"<div style='margin:10px 0;color:#fecaca;'><b>{error}</b></div>"
-
-    html = f"""
-    <!doctype html>
-    <html>
-      <head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
-        <title>Activate</title>
-        <style>
-          body{{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial; background:#0b1220; color:#e5e7eb; margin:0;}}
-          .wrap{{max-width:720px; margin:0 auto; padding:46px 18px;}}
-          .card{{background:#101a2f; border:1px solid rgba(255,255,255,.08); border-radius:16px; padding:22px;}}
-          input{{width:100%; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,.18); background:#0b1220; color:#e5e7eb;}}
-          button{{margin-top:10px; padding:10px 14px; border-radius:10px; border:none; background:#2563eb; color:white; font-weight:900;}}
-          .hint{{margin-top:10px; opacity:.8; font-size:13px;}}
-          code{{background:rgba(255,255,255,.08); padding:2px 6px; border-radius:6px;}}
-        </style>
-      </head>
-      <body>
-        <div class="wrap">
-          <div class="card">
-            <h2 style="margin:0 0 10px 0;">Activation required</h2>
-            <div class="hint">Tenant: <code>{tenant}</code></div>
-            <div class="hint">Your subscription is expired.</div>
-            {msg}
-            <form method="post" action="/activate">
-              <input type="hidden" name="tenant" value="{tenant}"/>
-              <input type="hidden" name="next" value="{quote(next_path)}"/>
-              <input name="code" placeholder="Enter activation code"/>
-              <button type="submit">Activate</button>
-            </form>
-            <div class="hint">After activation you will return to: <code>{next_path}</code></div>
-          </div>
-        </div>
-      </body>
-    </html>
-    """
-    return HTMLResponse(html)
+    return HTMLResponse(
+        f"<h2>Activation required</h2><p>Tenant: {tenant}</p><p>Next: {next_path}</p>",
+        status_code=200,
+    )
 
 
 @app.post("/activate")
-def activate_post(tenant: str = Form("default"), next: str = Form("/t/default/suite"), code: str = Form("")):
-    next_path = _safe_next(next)
-    return RedirectResponse(url=next_path, status_code=303)
+def activate_post(next: str = Form("/t/default/suite")):
+    return RedirectResponse(url=_safe_next(next), status_code=303)
 
 
+# ----------------------------
+# Gate middleware (installed AFTER SessionMiddleware so sessions are available)
+# ----------------------------
+class TenantGateMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path or ""
+
+        # Public routes
+        if (
+            path.startswith("/static")
+            or path.startswith("/health")
+            or path.startswith("/auth/")
+            or path.startswith("/activate")
+            or path == "/"
+            or path.startswith("/me")
+        ):
+            return await call_next(request)
+
+        # Admin protected inside admin.py
+        if path.startswith("/admin"):
+            return await call_next(request)
+
+        # Tenant routes: require login + tenant match + subscription + role for writes
+        if path.startswith("/t/"):
+            if not _logged_in(request):
+                return RedirectResponse(url=f"/auth/login?next={quote(path)}", status_code=303)
+
+            tenant_slug = _extract_tenant_slug(path)
+            if _session_tenant_slug(request) != tenant_slug:
+                return HTMLResponse("Forbidden (tenant mismatch)", status_code=403)
+
+            if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+                if _user_role(request) not in ("owner", "admin"):
+                    return HTMLResponse("Forbidden (insufficient role)", status_code=403)
+
+            if not _subscription_active(tenant_slug):
+                return RedirectResponse(url=f"/activate?tenant={tenant_slug}&next={quote(path)}", status_code=307)
+
+        return await call_next(request)
+
+
+app.add_middleware(TenantGateMiddleware)
+
+
+# ----------------------------
+# Seed defaults + bootstrap owner user
+# ----------------------------
 def seed_defaults() -> None:
     db = SessionLocal()
     try:
@@ -260,7 +245,7 @@ def seed_defaults() -> None:
         if not t:
             t = Tenant(id=str(uuid.uuid4()), slug="default", name="Default Tenant", status="active")
             if hasattr(t, "created_at"):
-                setattr(t, "created_at", datetime.utcnow())
+                t.created_at = datetime.utcnow()
             db.add(t)
             db.commit()
             db.refresh(t)
@@ -306,8 +291,8 @@ def seed_defaults() -> None:
         email = (os.getenv("BOOTSTRAP_OWNER_EMAIL") or "").strip().lower()
         pw = (os.getenv("BOOTSTRAP_OWNER_PASSWORD") or "").strip()
         if email and pw:
-            existing = db.query(User).filter(User.tenant_id == t.id, User.email == email).first()
-            if not existing:
+            u = db.query(User).filter(User.tenant_id == t.id, User.email == email).first()
+            if not u:
                 pw_hash = bcrypt.hashpw(pw.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
                 db.add(
                     User(
@@ -320,7 +305,8 @@ def seed_defaults() -> None:
                     )
                 )
                 db.commit()
-                print(f"BOOTSTRAP: created owner user {email} for tenant {t.slug}")
+                print(f"BOOTSTRAP: created owner {email} for tenant {t.slug}")
+
     finally:
         db.close()
 
