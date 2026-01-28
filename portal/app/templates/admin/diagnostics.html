@@ -1,0 +1,69 @@
+{% extends "admin/_admin_base.html" %}
+{% set title = "Diagnostics" %}
+{% block admin_content %}
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;">
+
+  <div class="card" style="padding:14px;">
+    <div style="font-weight:900;margin-bottom:6px;">Database</div>
+    {% if db_ok %}
+      <div style="color:#065f46;font-weight:800;">✅ DB OK</div>
+    {% else %}
+      <div style="color:#b91c1c;font-weight:800;">❌ DB ERROR</div>
+      <div style="margin-top:8px;font-family:monospace;font-size:12px;white-space:pre-wrap;">{{ db_error }}</div>
+    {% endif %}
+  </div>
+
+  <div class="card" style="padding:14px;">
+    <div style="font-weight:900;margin-bottom:6px;">Tenants</div>
+    {% if tenant_ok %}
+      <div style="color:#065f46;font-weight:800;">✅ Tenant OK</div>
+    {% else %}
+      <div style="color:#b91c1c;font-weight:800;">❌ Tenant missing (default)</div>
+    {% endif %}
+    <div style="margin-top:8px;color:#6b7280;font-size:13px;">
+      Total tenants: <b>{{ tenant_count }}</b><br/>
+      Default tenant: <b>{{ default_tenant or "—" }}</b>
+    </div>
+  </div>
+
+  <div class="card" style="padding:14px;">
+    <div style="font-weight:900;margin-bottom:6px;">SMS Provider (default tenant)</div>
+    {% if sms_ok %}
+      <div style="color:#065f46;font-weight:800;">✅ SMS OK</div>
+    {% else %}
+      <div style="color:#b91c1c;font-weight:800;">⚠️ SMS not configured</div>
+    {% endif %}
+    <div style="margin-top:8px;color:#6b7280;font-size:13px;">
+      Provider: <b>{{ sms_details.provider or "—" }}</b><br/>
+      Base URL: <b>{{ sms_details.infobip_base_url or "—" }}</b><br/>
+      Sender: <b>{{ sms_details.infobip_sender or "—" }}</b><br/>
+      API key: <b>{{ "yes" if sms_details.has_api_key else "no" }}</b>
+    </div>
+  </div>
+
+  <div class="card" style="padding:14px;">
+    <div style="font-weight:900;margin-bottom:6px;">Login rate limits</div>
+    <div style="margin-top:8px;color:#6b7280;font-size:13px;">
+      Rows: <b>{{ rate_counts.rows }}</b><br/>
+      Blocked now: <b>{{ rate_counts.blocked_now }}</b>
+    </div>
+  </div>
+
+  <div class="card" style="padding:14px;">
+    <div style="font-weight:900;margin-bottom:6px;">Sentry</div>
+    {% if sentry_ok %}
+      <div style="color:#065f46;font-weight:800;">✅ Sentry configured</div>
+    {% else %}
+      <div style="color:#b91c1c;font-weight:800;">⚠️ Sentry not configured</div>
+      <div style="margin-top:8px;color:#6b7280;font-size:13px;">Set <code>SENTRY_DSN</code> in Render env vars.</div>
+    {% endif %}
+  </div>
+
+</div>
+
+<div style="margin-top:14px;">
+  <a class="btn" href="{{ base_url }}/admin" style="text-decoration:none;">Back to Admin</a>
+</div>
+
+{% endblock %}

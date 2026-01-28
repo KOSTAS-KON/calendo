@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
+import sqlalchemy as sa
 
 from app.db import get_db
 from app.models.tenant import Tenant
@@ -396,5 +397,83 @@ def admin_links(request: Request, db: Session = Depends(get_db)):
             "admin_links_url": f"{base_url}/admin/links",
             "admin_key": "",  # not used anymore
             "tenants": rows,
+        },
+    )
+
+
+
+@router.get("/admin/diagnostics", response_class=HTMLResponse)
+def admin_diagnostics(request: Request, db: Session = Depends(get_db)):
+    _require_admin(request)
+
+    base_url = _portal_base(request)
+
+    # DB OK
+    db_ok = False
+    db_error = ""
+    try:
+        db.execute(sa.text("select 1"))
+        db_ok = True
+    except Exception as e:
+        db_error = f"{type(e).__name__}: {e}"
+
+    # Tenant OK
+    tenant_ok = False
+    tenant_count = 0
+    default_tenant = None
+    try:
+        tenant_count = db.query(Tenant).count()
+        default_tenant = db.query(Tenant).filter(Tenant.slug == "default").first()
+        tenant_ok = bool(default_tenant)
+    except Exception as e:
+        tenant_ok = False
+
+    # SMS Provider OK (default tenant clinic settings)
+    sms_ok = False
+    sms_details = {}
+    try:
+        cs = None
+        if default_tenant:
+            cs = db.query(ClinicSettings).filter(ClinicSettings.tenant_id == default_tenant.id).first()
+        if cs:
+            sms_details = {
+                "provider": getattr(cs, "sms_provider", None),
+                "infobip_base_url": getattr(cs, "infobip_base_url", None),
+                "infobip_sender": getattr(cs, "infobip_sender", None),
+                "has_api_key": bool(getattr(cs, "infobip_api_key", None)),
+            }
+            sms_ok = bool(sms_details.get("infobip_base_url") and sms_details.get("infobip_sender") and sms_details.get("has_api_key"))
+    except Exception:
+        sms_ok = False
+
+    # Rate limit counters
+    rate_counts = {"rows": 0, "blocked_now": 0}
+    try:
+        from app.models.auth_rate_limit import AuthRateLimit
+        rate_counts["rows"] = db.query(AuthRateLimit).count()
+        now = datetime.utcnow()
+        rate_counts["blocked_now"] = db.query(AuthRateLimit).filter(AuthRateLimit.blocked_until != None).filter(AuthRateLimit.blocked_until > now).count()
+    except Exception:
+        pass
+
+    # Sentry configured
+    sentry_dsn = (os.getenv("SENTRY_DSN") or "").strip()
+    sentry_ok = bool(sentry_dsn)
+
+    return templates.TemplateResponse(
+        "admin/diagnostics.html",
+        {
+            "request": request,
+            "title": "Diagnostics",
+            "base_url": base_url,
+            "db_ok": db_ok,
+            "db_error": db_error,
+            "tenant_ok": tenant_ok,
+            "tenant_count": tenant_count,
+            "default_tenant": default_tenant.slug if default_tenant else None,
+            "sms_ok": sms_ok,
+            "sms_details": sms_details,
+            "rate_counts": rate_counts,
+            "sentry_ok": sentry_ok,
         },
     )
