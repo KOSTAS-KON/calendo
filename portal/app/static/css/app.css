@@ -573,6 +573,7 @@ textarea.input{ height:auto; min-height:120px; padding:10px 12px; }
 }
 
 
+<<<<<<< HEAD
 /* Admin tenant utilities */
 .btn.btn-sm{ height:38px; padding:0 12px; border-radius:12px; font-size:13px; }
 .btn.danger{ border-color: rgba(239,68,68,.35); background: rgba(239,68,68,.10); color: #b91c1c; }
@@ -665,3 +666,47 @@ textarea.input{ height:auto; min-height:120px; padding:10px 12px; }
 @media (max-width: 768px){
   body{ padding-bottom: 78px; }
 }
+=======
+/* Drawer */
+.drawer-backdrop{position:fixed;inset:0;background:rgba(2,6,23,.55);backdrop-filter:blur(2px);display:none;z-index:60}
+.drawer{position:fixed;left:0;right:0;bottom:0;max-height:86vh;background:var(--card);border-top-left-radius:18px;border-top-right-radius:18px;border:1px solid var(--border);box-shadow:0 -12px 40px rgba(15,23,42,.25);transform:translateY(110%);transition:transform .22s ease;z-index:61;overflow:auto;-webkit-overflow-scrolling:touch}
+.drawer.open{transform:translateY(0)}
+.drawer-backdrop.open{display:block}
+.drawer-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border)}
+.drawer-title{font-size:16px;font-weight:800;margin:0;line-height:1.25}
+.drawer-subtitle{font-size:13px;color:var(--text-muted);margin:2px 0 0 0}
+.drawer-close{appearance:none;border:1px solid var(--border);background:var(--card);border-radius:12px;padding:8px 10px;cursor:pointer}
+.drawer-body{padding:14px 16px 18px 16px}
+.stepper{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.step-dot{width:8px;height:8px;border-radius:999px;background:var(--border)}
+.step-dot.active{background:var(--primary)}
+.step{display:none}
+.step.active{display:block}
+.step-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:14px}
+.btn-wide{width:100%}
+
+/* Mobile visibility helpers */
+.hide-mobile{display:block}
+.show-mobile{display:none}
+@media (max-width:768px){.hide-mobile{display:none!important}.show-mobile{display:block!important}}
+
+/* Table-to-cards actions */
+@media (max-width:768px){
+  .table.table-cards tbody tr{position:relative}
+  .table.table-cards tbody tr .card-actions{display:flex;gap:10px;overflow-x:auto;padding-top:10px;margin-top:8px;border-top:1px dashed var(--border);-webkit-overflow-scrolling:touch;scroll-snap-type:x mandatory}
+  .table.table-cards tbody tr .card-actions > *{scroll-snap-align:start;flex:0 0 auto}
+  .table.table-cards tbody tr .card-actions .btn,.table.table-cards tbody tr .card-actions .link{white-space:nowrap}
+  .table.table-cards tbody tr .card-actions .btn{padding:10px 12px;border-radius:999px}
+}
+
+@media (max-width:768px){.rowform{display:none!important}}
+
+
+/* Icon helper (lucide) */
+.icon{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;margin-right:8px;vertical-align:-2px}
+.btn .icon{margin-right:8px}
+.btn.btn-sm .icon{width:16px;height:16px}
+
+.drawer-actions{position:sticky;bottom:0;display:flex;gap:10px;justify-content:flex-end;padding:12px;background:rgba(248,250,252,.92);backdrop-filter:blur(8px);border-top:1px solid var(--border)}
+@media (prefers-color-scheme:dark){.drawer-actions{background:rgba(15,23,42,.75)}}
+>>>>>>> c6a85c9 (Activation page: redeem codes + show errors + subscription gate)

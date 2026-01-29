@@ -21,6 +21,7 @@
   </div>
 {% endif %}
 
+<<<<<<< HEAD
 <div class="card" style="margin-top:14px;">
   <div style="display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap;">
     <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
@@ -41,6 +42,14 @@
 </div>
 <div class="table-wrap"><table class="table table-cards js-responsive-table">
   <thead><tr><th>Slug</th><th>Name</th><th>Status</th><th>Links</th><th>Actions</th></tr></thead>
+=======
+<h1>Tenants</h1>
+<p><a class="btn" href="/admin/tenants/new">Create tenant</a>
+<a class="btn" href="/admin/licensing">Licensing</a></p>
+
+<div class="table-wrap"><table class="table table-cards js-responsive-table">
+  <thead><tr><th>Slug</th><th>Name</th><th>Status</th><th>Links</th></tr></thead>
+>>>>>>> c6a85c9 (Activation page: redeem codes + show errors + subscription gate)
   <tbody>
   {% for t in tenants %}
     <tr>

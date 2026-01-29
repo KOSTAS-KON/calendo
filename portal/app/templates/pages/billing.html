@@ -55,28 +55,61 @@
             <form method="post" action="{{ rp }}/billing/{{ b.id }}/update" class="rowform">
               <input type="hidden" name="child_id" value="{{ selected_child_id or '' }}">
               <input type="hidden" name="redirect" value="/billing?{% if selected_child_id %}child_id={{ selected_child_id }}&{% endif %}mode=edit">
-              <select name="paid" class="input input-sm">
+              <div class="hide-mobile"><select name="paid" class="input input-sm">
                 <option value="NO" {% if (b.paid or '').upper() != 'YES' %}selected{% endif %}>NO</option>
                 <option value="YES" {% if (b.paid or '').upper() == 'YES' %}selected{% endif %}>YES</option>
-              </select>
+              </select></div>
+              <div class="show-mobile">
+                {% if ((b.paid or 'NO')|upper) == 'YES' %}
+                  <span class="pill p-green">YES</span>
+                {% else %}
+                  <span class="pill p-red">NO</span>
+                {% endif %}
+              </div>
           </td>
 
           <td>
-              <select name="invoice_created" class="input input-sm">
+              <div class="hide-mobile"><div class="hide-mobile"><select name="invoice_created" class="input input-sm">
                 <option value="NO" {% if (b.invoice_created or '').upper() != 'YES' %}selected{% endif %}>NO</option>
                 <option value="YES" {% if (b.invoice_created or '').upper() == 'YES' %}selected{% endif %}>YES</option>
-              </select>
+              </select></div></div>
+              <div class="show-mobile">
+                {% if ((b.invoice_created or 'NO')|upper) == 'YES' %}
+                  <span class="pill p-blue">YES</span>
+                {% else %}
+                  <span class="pill p-gray">NO</span>
+                {% endif %}
+              </div>
           </td>
 
           <td>
-              <select name="parent_signed_off" class="input input-sm">
+              <div class="hide-mobile"><div class="hide-mobile"><select name="parent_signed_off" class="input input-sm">
                 <option value="NO" {% if (b.parent_signed_off or '').upper() != 'YES' %}selected{% endif %}>NO</option>
                 <option value="YES" {% if (b.parent_signed_off or '').upper() == 'YES' %}selected{% endif %}>YES</option>
-              </select>
+              </select></div></div>
+              <div class="show-mobile">
+                {% if ((b.parent_signed_off or 'NO')|upper) == 'YES' %}
+                  <span class="pill p-green">YES</span>
+                {% else %}
+                  <span class="pill p-red">NO</span>
+                {% endif %}
+              </div>
           </td>
 
           <td>
-              <button class="btn btn-sm" type="submit">Save</button>
+              <div class="hide-mobile"><button class="btn btn-sm" type="submit">Save</button></div>
+              <div class="show-mobile">
+                <button class="btn btn-sm js-open-billing-drawer"
+                        type="button"
+                        data-billing-id="{{ b.id }}"
+                        data-action="{{ rp }}/billing/{{ b.id }}/update"
+                        data-paid="{{ (b.paid or 'NO')|upper }}"
+                        data-invoice="{{ (b.invoice_created or 'NO')|upper }}"
+                        data-signoff="{{ (b.parent_signed_off or 'NO')|upper }}"
+                        data-redirect="/billing?{% if selected_child_id %}child_id={{ selected_child_id }}&{% endif %}mode=edit">
+                  Edit
+                </button>
+              </div>
             </form>
           </td>
         {% else %}

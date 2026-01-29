@@ -9,6 +9,7 @@
         <th>Time</th>
         <th>Procedure</th>
         <th style="width:120px;">Note</th>
+        <th style="width:200px;">Actions</th>
       </tr>
     </thead>
     <tbody>
@@ -21,6 +22,10 @@
         <td>{{ a.starts_at.strftime("%I:%M %p") }}</td>
         <td>{{ a.procedure }}</td>
         <td><a class="link" href="{{ rp }}/appointments/{{ a.id }}">Open</a></td>
+        <td>
+          <a class="btn btn-sm" href="{{ rp }}/appointments/{{ a.id }}"><span class="icon" data-lucide="file-text"></span> View</a>
+          <a class="btn btn-sm" href="{{ rp }}/calendar?tenant={{ tenant_slug }}"><span class="icon" data-lucide="calendar"></span> Calendar</a>
+        </td>
       </tr>
       {% endfor %}
     </tbody>

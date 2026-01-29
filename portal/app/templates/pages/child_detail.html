@@ -24,6 +24,7 @@
     {% endif %}
   </div>
   <div class="flex gap-2">
+    <a class="btn show-mobile" href="#" data-open-drawer="drawerTpl_child_edit" data-drawer-title="Edit child" data-drawer-subtitle="Step-by-step (mobile)"><span class="icon" data-lucide="pencil"></span> Edit</a>
     <a class="btn" href="{{ rp }}/calendar?child_id={{ child.id }}">Calendar</a>
     <a class="btn" href="{{ rp }}/billing?child_id={{ child.id }}">Billing</a>
     <a class="btn" href="{{ rp }}/timeline?child_id={{ child.id }}">Timeline</a>
@@ -232,4 +233,60 @@
   {% endfor %}
 </datalist>
 
+
+<template id="drawerTpl_child_edit">
+  {% set rp = request.scope.get("root_path", "") %}
+  <div data-stepper="true">
+    <div class="stepper" aria-hidden="true"></div>
+    <form method="post" action="{{ rp }}/children/{{ child.id }}/update" class="stack">
+      <div class="step active">
+        <div class="card" style="padding:12px;">
+          <div class="card-title">Child</div>
+          <div class="form-grid">
+            <div class="field" style="grid-column:1/-1;">
+              <label class="label">Full name</label>
+              <input class="input" name="full_name" value="{{ child.full_name }}" />
+            </div>
+            <div class="field">
+              <label class="label">DOB</label>
+              <input class="input" name="date_of_birth" value="{{ child.date_of_birth or '' }}" placeholder="YYYY-MM-DD" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="card" style="padding:12px;">
+          <div class="card-title">Parents / guardians</div>
+          <div class="form-grid">
+            <div class="field">
+              <label class="label">Parent 1 name</label>
+              <input class="input" name="parent1_name" value="{{ child.parent1_name or '' }}" />
+            </div>
+            <div class="field">
+              <label class="label">Parent 1 phone</label>
+              <input class="input" name="parent1_phone" value="{{ child.parent1_phone or '' }}" placeholder="+30..." />
+            </div>
+            <div class="field">
+              <label class="label">Parent 2 name</label>
+              <input class="input" name="parent2_name" value="{{ child.parent2_name or '' }}" />
+            </div>
+            <div class="field">
+              <label class="label">Parent 2 phone</label>
+              <input class="input" name="parent2_phone" value="{{ child.parent2_phone or '' }}" placeholder="+30..." />
+            </div>
+          </div>
+          <div class="help">Note: if your backend route /children/{{ child.id }}/update isn't enabled yet, I can add it next.</div>
+        </div>
+      </div>
+
+      <div class="drawer-actions">
+        <button class="btn" data-step-back type="button"><span class="icon" data-lucide="chevron-left"></span> Back</button>
+        <button class="btn" data-step-next type="button">Next <span class="icon" data-lucide="chevron-right"></span></button>
+        <button class="btn primary" data-step-submit type="submit"><span class="icon" data-lucide="save"></span> Save</button>
+      </div>
+    </form>
+  </div>
+</template>
 {% endblock %}
+

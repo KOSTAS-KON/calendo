@@ -16,6 +16,7 @@
   <script defer src="{{ rp }}/static/js/app.js"></script>
 </head>
 
+
 <body class="bg-slate-100 text-slate-900">
   <div class="topbar">
     <div class="topbar-inner">
@@ -91,5 +92,24 @@
   </div>
 
   {% block bottom_bar %}{% endblock %}
+<<<<<<< HEAD
+=======
+
+  <!-- Global Drawer (mobile) -->
+  <div id="drawerBackdrop" class="drawer-backdrop" aria-hidden="true"></div>
+  <div id="globalDrawer" class="drawer" role="dialog" aria-modal="true" aria-hidden="true">
+    <div class="drawer-head">
+      <div>
+        <p id="drawerTitle" class="drawer-title">Panel</p>
+        <p id="drawerSubtitle" class="drawer-subtitle" style="display:none;"></p>
+      </div>
+      <button id="drawerClose" class="drawer-close" type="button" aria-label="Close">✕</button>
+    </div>
+    <div id="drawerBody" class="drawer-body"></div>
+  </div>
+
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script>window.lucide && lucide.createIcons();</script>
+>>>>>>> c6a85c9 (Activation page: redeem codes + show errors + subscription gate)
 </body>
 </html>
