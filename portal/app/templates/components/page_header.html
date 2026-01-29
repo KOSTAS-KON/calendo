@@ -1,0 +1,22 @@
+{# Calendo Page Header component (v1) #}
+{% macro page_header(title, subtitle='', actions=[]) %}
+<div class="page-header">
+  <div class="page-header__text">
+    <h1 class="page-title">{{ title }}</h1>
+    {% if subtitle %}<p class="page-subtitle">{{ subtitle }}</p>{% endif %}
+  </div>
+  {% if actions and actions|length > 0 %}
+  <div class="page-actions">
+    {% for a in actions %}
+      {% set variant = a.get('variant','default') %}
+      {% set cls = 'btn' %}
+      {% if variant == 'primary' %}{% set cls = 'btn btn-primary' %}{% endif %}
+      {% if variant == 'ghost' %}{% set cls = 'btn btn-ghost' %}{% endif %}
+      <a class="{{ cls }}" href="{{ a.get('href','#') }}">
+        {{ a.get('label','Action') }}
+      </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+{% endmacro %}

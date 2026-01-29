@@ -26,4 +26,65 @@ function initTimelineGroups(){
 
 document.addEventListener('DOMContentLoaded', () => {
   initTimelineGroups();
+  initResponsiveTables();
+  initBottomBarQuickCreate();
+});
+
+
+function initResponsiveTables(){
+  // For tables with .js-responsive-table, add data-label attributes from <th> for mobile card layout CSS.
+  document.querySelectorAll('table.js-responsive-table').forEach((table) => {
+    const headers = Array.from(table.querySelectorAll('thead th')).map(th => (th.textContent || '').trim());
+    if (!headers.length) return;
+
+    table.querySelectorAll('tbody tr').forEach((tr) => {
+      const cells = Array.from(tr.children).filter(el => el.tagName === 'TD');
+      cells.forEach((td, i) => {
+        if (!td.getAttribute('data-label') && headers[i]) {
+          td.setAttribute('data-label', headers[i]);
+        }
+      });
+    });
+  });
+}
+
+function initBottomBarQuickCreate(){
+  const bb = document.getElementById('bbQuickCreate');
+  const open = document.getElementById('openQuickCreate');
+  if (!bb || !open) return;
+  bb.addEventListener('click', () => open.click());
+}
+
+function initMobileNav(){
+  const sidebar = document.querySelector('.sidebar');
+  const btn = document.getElementById('navToggle');
+  const backdrop = document.getElementById('backdrop');
+  if (!sidebar || !btn || !backdrop) return;
+
+  function openNav(){
+    sidebar.classList.add('open');
+    backdrop.classList.add('open');
+    document.body.style.overflow = 'hidden';
+  }
+  function closeNav(){
+    sidebar.classList.remove('open');
+    backdrop.classList.remove('open');
+    document.body.style.overflow = '';
+  }
+
+  btn.addEventListener('click', () => {
+    if (sidebar.classList.contains('open')) closeNav();
+    else openNav();
+  });
+  backdrop.addEventListener('click', closeNav);
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeNav();
+  });
+
+  // Close drawer on navigation
+  sidebar.querySelectorAll('a').forEach(a => a.addEventListener('click', closeNav));
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  initMobileNav();
 });

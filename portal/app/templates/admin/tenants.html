@@ -15,7 +15,7 @@
 <p><a class="btn" href="/admin/tenants/new">Create tenant</a>
 <a class="btn" href="/admin/licensing">Licensing</a></p>
 
-<table class="table">
+<div class="table-wrap"><table class="table table-cards js-responsive-table">
   <thead><tr><th>Slug</th><th>Name</th><th>Status</th><th>Links</th></tr></thead>
   <tbody>
   {% for t in tenants %}
@@ -30,5 +30,5 @@
     </tr>
   {% endfor %}
   </tbody>
-</table>
+</table></div>
 {% endblock %}

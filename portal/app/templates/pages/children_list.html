@@ -1,5 +1,10 @@
 {% extends "layout.html" %}
 {% set header = "Children" %}
+{% set subheader = "All children and parent contact details in one place." %}
+{% set actions = [
+  {"label":"Calendar","href": rp ~ "/calendar", "variant":"primary"},
+  {"label":"Messages","href": rp ~ "/messages", "variant":"default"}
+] %}
 {% block content %}
 
 <div class="grid grid-cols-1 xl:grid-cols-3 gap-5">

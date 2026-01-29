@@ -1,5 +1,11 @@
 {% extends "layout.html" %}
 {% set header = "Portal Overview" %}
+{% set subheader = "Key metrics and quick shortcuts to core workflows." %}
+{% set actions = [
+  {"label":"Open Calendar","href": rp ~ "/calendar", "variant":"primary"},
+  {"label":"Children","href": rp ~ "/children", "variant":"default"},
+  {"label":"Billing","href": rp ~ "/billing", "variant":"default"}
+] %}
 {% block content %}
 
 <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-5">
@@ -19,12 +25,6 @@
     <div class="metric-label">Billing rows</div>
     <div class="metric-value">{{ billing_count }}</div>
   </div>
-</div>
-
-<div class="flex flex-wrap gap-2 mb-4">
-  <a class="btn" href="{{ rp }}/calendar">Open Calendar</a>
-  <a class="btn" href="{{ rp }}/billing">Open Billing</a>
-  <a class="btn" href="{{ rp }}/children">Open Children</a>
 </div>
 
 <div class="font-extrabold mb-2">Recent appointments</div>

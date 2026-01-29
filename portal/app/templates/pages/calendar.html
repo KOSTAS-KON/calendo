@@ -1,10 +1,18 @@
 {% extends "layout.html" %}
 {% set header = "Calendar" %}
+{% set subheader = "Schedule, move, cancel, and track attendance with clear status colors." %}
+{% set actions = [
+  {"label":"Past Appointments","href": rp ~ "/past", "variant":"default"},
+  {"label":"Messages","href": rp ~ "/messages", "variant":"default"}
+] %}
+{% set bottom_bar = true %}
+
 {% block content %}
 
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.css">
 <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js"></script>
 
+<div class="card">
 <form method="get" action="{{ rp }}/calendar" class="flex flex-wrap items-end gap-3 mb-4">
   <div>
     <label class="label">Filter by child</label>
@@ -17,6 +25,7 @@
   </div>
   <noscript><button class="btn" type="submit">Apply</button></noscript>
 </form>
+</div>
 
 <div class="legend">
   <div class="legend-title">Legend</div>
@@ -482,4 +491,13 @@
 })();
 </script>
 
+{% endblock %}
+
+{% block bottom_bar %}
+<nav class="bottom-bar" aria-label="Quick actions">
+  <a class="bb-item active" href="{{ rp }}/calendar">📅<span>Calendar</span></a>
+  <a class="bb-item" href="{{ rp }}/billing">🧾<span>Billing</span></a>
+  <a class="bb-item" href="{{ rp }}/messages">💬<span>Messages</span></a>
+  <button class="bb-primary" type="button" id="bbQuickCreate">＋ New</button>
+</nav>
 {% endblock %}

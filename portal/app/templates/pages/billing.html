@@ -1,13 +1,14 @@
 {% extends "layout.html" %}
 {% set header = "Billing" %}
-{% block content %}
+{% set subheader = "Track invoices, payment status, and parent sign-off. Appears on the Calendar with status colors." %}
+{% set actions = [
+  {"label":"Billing inputs","href": rp ~ "/billing/inputs", "variant":"primary"}
+] %}
+{% set bottom_bar = true %}
 
-<div class="flex flex-wrap items-center justify-between gap-2 mb-3">
-  <div class="text-sm text-slate-600">
-    Billing rows (also shown in Calendar with colors).
-  </div>
-  <a class="btn" href="{{ rp }}/billing/inputs">Billing inputs (recurring)</a>
-</div>
+{% block content %}
+<a id="top"></a>
+
 
 <div class="tabs mb-4">
   <a class="tab {% if mode != 'edit' %}active{% endif %}" href="{{ rp }}/billing?{% if selected_child_id %}child_id={{ selected_child_id }}&{% endif %}mode=display">Display</a>
@@ -29,7 +30,7 @@
 </form>
 
 <div class="tablewrap">
-  <table class="apptable">
+  <div class="table-wrap"><table class="apptable table table-cards js-responsive-table">
     <thead>
       <tr>
         <th>child name</th>
@@ -108,7 +109,7 @@
       <tr><td colspan="{% if mode == 'edit' %}6{% else %}5{% endif %}" class="text-sm text-slate-500">No billing rows.</td></tr>
       {% endfor %}
     </tbody>
-  </table>
+  </table></div>
 </div>
 
 <div class="mt-3 text-xs text-slate-500">
@@ -119,4 +120,13 @@
   Attendance is also color-coded.
 </div>
 
+{% endblock %}
+
+{% block bottom_bar %}
+<nav class="bottom-bar" aria-label="Billing actions">
+  <a class="bb-item {% if mode != 'edit' %}active{% endif %}" href="{{ rp }}/billing?{% if selected_child_id %}child_id={{ selected_child_id }}&{% endif %}mode=display">🗂️<span>Display</span></a>
+  <a class="bb-item {% if mode == 'edit' %}active{% endif %}" href="{{ rp }}/billing?{% if selected_child_id %}child_id={{ selected_child_id }}&{% endif %}mode=edit">✏️<span>Edit</span></a>
+  <a class="bb-item" href="{{ rp }}/billing/inputs">🔁<span>Inputs</span></a>
+  <a class="bb-primary" href="#top">⬆ Top</a>
+</nav>
 {% endblock %}
