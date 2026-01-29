@@ -1,28 +1,93 @@
+from __future__ import annotations
+
+from datetime import datetime
+
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import RedirectResponse, JSONResponse
+
+from app.db import SessionLocal
+
 
 router = APIRouter(prefix="/api", tags=["api-alias"])
 
+
+def _format_iso_utc(dt: datetime) -> str:
+    return dt.replace(microsecond=0).isoformat() + "Z"
+
+
+def _resolve_tenant_slug(request: Request) -> str:
+    """
+    Prefer:
+    1) query param ?tenant=...
+    2) session tenant_slug
+    3) default
+    """
+    tenant = (request.query_params.get("tenant") or "").strip().lower()
+    if tenant:
+        return tenant
+
+    s = request.scope.get("session")
+    if isinstance(s, dict) and s.get("tenant_slug"):
+        return str(s.get("tenant_slug") or "default").strip().lower()
+
+    return "default"
+
+
 @router.get("/clinic_settings")
-async def clinic_settings_alias(request: Request):
+def clinic_settings_alias():
     """
     Backward-compatible alias for the UI.
-    Calls the existing internal endpoint.
+    Your backend already serves /api/internal/clinic_settings (confirmed by logs),
+    so we redirect to it.
     """
-    # Call the internal handler directly by importing it (best),
-    # or just re-use the same service function if you have one.
-    # If you don't have a shared service layer, simplest is to duplicate minimal logic here.
-    from portal.app.api.internal import get_clinic_settings  # adjust import path to your project
-
-    return await get_clinic_settings(request)
+    return RedirectResponse(url="/api/internal/clinic_settings", status_code=307)
 
 
 @router.get("/license")
-async def license_alias(request: Request):
+def license_alias(request: Request):
     """
-    UI expects /api/license. Implement it using your subscription/license logic.
-    If you already have a function that returns license/subscription status, call it here.
+    UI expects /api/license.
+    Return subscription/license info based on latest Subscription for tenant.
     """
-    from portal.app.api.internal import get_license_status  # adjust to existing function if present
+    tenant_slug = _resolve_tenant_slug(request)
+    db = SessionLocal()
+    try:
+        from app.models.tenant import Tenant
+        from app.models.licensing import Subscription, Plan
 
-    return await get_license_status(request)
+        t = db.query(Tenant).filter(Tenant.slug == tenant_slug).first()
+        if not t:
+            return JSONResponse({"tenant": tenant_slug, "active": False, "until": None, "plan": None})
+
+        sub = (
+            db.query(Subscription)
+            .filter(Subscription.tenant_id == t.id)
+            .order_by(Subscription.ends_at.desc())
+            .first()
+        )
+        if not sub or not getattr(sub, "ends_at", None):
+            return JSONResponse({"tenant": tenant_slug, "active": False, "until": None, "plan": None})
+
+        plan_code = None
+        plan_name = None
+        try:
+            p = db.query(Plan).filter(Plan.id == sub.plan_id).first()
+            if p:
+                plan_code = getattr(p, "code", None)
+                plan_name = getattr(p, "name", None)
+        except Exception:
+            pass
+
+        status = str(getattr(sub, "status", "active") or "active").lower()
+        active = bool(status not in ("canceled", "expired") and sub.ends_at > datetime.utcnow())
+
+        return JSONResponse(
+            {
+                "tenant": tenant_slug,
+                "active": active,
+                "until": _format_iso_utc(sub.ends_at),
+                "plan": {"code": plan_code, "name": plan_name},
+            }
+        )
+    finally:
+        db.close()
