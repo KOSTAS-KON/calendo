@@ -15,18 +15,15 @@ class TenantContext:
     tenant_slug: str
     tenant_name: str
     status: str
-    is_archived: bool
 
 
 def resolve_tenant(db: Session, request: Request, tenant_slug: str = "default") -> TenantContext:
     t = db.query(Tenant).filter(Tenant.slug == tenant_slug).first()
     if not t:
         raise HTTPException(status_code=404, detail=f"Tenant '{tenant_slug}' not found")
-    if getattr(t, "archived_at", None) is not None:
-        raise HTTPException(status_code=403, detail="Tenant is archived")
     if (t.status or "active") != "active":
         raise HTTPException(status_code=403, detail="Tenant is suspended")
-    return TenantContext(tenant_id=t.id, tenant_slug=t.slug, tenant_name=t.name, status=t.status, is_archived=(getattr(t, "archived_at", None) is not None))
+    return TenantContext(tenant_id=t.id, tenant_slug=t.slug, tenant_name=t.name, status=t.status)
 
 
 def tenant_query(model: Type[Any], db: Session, tenant_id: str) -> Query:

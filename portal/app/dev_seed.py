@@ -12,7 +12,6 @@ from app.db import SessionLocal
 TEST_USERS = [
     ("default", "test_default@calendo.local", "Test1234!", "staff"),
     ("maria2", "test_maria2@calendo.local", "Test1234!", "staff"),
-    # Admin user scoped to the default tenant (because tenant_id is NOT nullable)
     ("default", "admin@calendo.local", "Admin1234!", "admin"),
 ]
 
@@ -22,12 +21,9 @@ def _hash_pw(pw: str) -> str:
 
 
 def ensure_test_users() -> None:
-    """
-    Creates known test tenants + users for debugging.
-    Only runs when ENABLE_TEST_USERS=1.
+    """Create deterministic test tenants + users for debugging.
 
-    IMPORTANT:
-    - Your User model requires tenant_id (non-null) and uses `role`, not `is_superuser`.
+    Runs ONLY when ENABLE_TEST_USERS=1.
     """
     if os.getenv("ENABLE_TEST_USERS", "").strip() != "1":
         return
@@ -38,7 +34,6 @@ def ensure_test_users() -> None:
         from app.models.user import User
         from app.models.licensing import Plan, Subscription
 
-        # Ensure a basic plan exists
         plan = db.query(Plan).filter(Plan.code == "TRIAL_7D").first()
         if not plan:
             plan = Plan(code="TRIAL_7D", name="7-day Trial")
@@ -49,18 +44,13 @@ def ensure_test_users() -> None:
         def ensure_tenant(slug: str) -> Tenant:
             t = db.query(Tenant).filter(Tenant.slug == slug).first()
             if not t:
-                # Some projects use `name`, some use `clinic_name` – your earlier code used `name`
-                t = Tenant(
-                    slug=slug,
-                    name=f"Test Tenant {slug}",
-                    is_archived=False,
-                )
+                t = Tenant(slug=slug, name=f"Test Tenant {slug}", is_archived=False)
                 db.add(t)
                 db.commit()
                 db.refresh(t)
             return t
 
-        def ensure_active_subscription(t: Tenant) -> None:
+        def ensure_subscription(t: Tenant) -> None:
             sub = (
                 db.query(Subscription)
                 .filter(Subscription.tenant_id == t.id)
@@ -80,10 +70,9 @@ def ensure_test_users() -> None:
 
         for tenant_slug, email, password, role in TEST_USERS:
             tenant = ensure_tenant(tenant_slug)
-            ensure_active_subscription(tenant)
+            ensure_subscription(tenant)
 
             email_lc = email.strip().lower()
-
             user = (
                 db.query(User)
                 .filter(User.tenant_id == tenant.id, User.email == email_lc)
@@ -101,6 +90,5 @@ def ensure_test_users() -> None:
                 )
                 db.add(user)
                 db.commit()
-
     finally:
         db.close()

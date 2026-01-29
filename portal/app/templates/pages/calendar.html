@@ -1,18 +1,10 @@
 {% extends "layout.html" %}
 {% set header = "Calendar" %}
-{% set subheader = "Schedule, move, cancel, and track attendance with clear status colors." %}
-{% set actions = [
-  {"label":"Past Appointments","href": rp ~ "/past", "variant":"default"},
-  {"label":"Messages","href": rp ~ "/messages", "variant":"default"}
-] %}
-{% set bottom_bar = true %}
-
 {% block content %}
 
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.css">
 <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js"></script>
 
-<div class="card">
 <form method="get" action="{{ rp }}/calendar" class="flex flex-wrap items-end gap-3 mb-4">
   <div>
     <label class="label">Filter by child</label>
@@ -25,7 +17,6 @@
   </div>
   <noscript><button class="btn" type="submit">Apply</button></noscript>
 </form>
-</div>
 
 <div class="legend">
   <div class="legend-title">Legend</div>
@@ -491,195 +482,4 @@
 })();
 </script>
 
-
-<!-- Mobile drawer templates -->
-<template id="drawerTpl_menu">
-  <div class="stack">
-    <button type="button" class="btn" data-open-calendar-drawer="appt">📅 Add appointment</button>
-    <button type="button" class="btn" data-open-calendar-drawer="billing">💳 Add billing / invoice</button>
-    <button type="button" class="btn" data-open-calendar-drawer="journey">🧭 Add journey item</button>
-    <button type="button" class="btn ghost" onclick="closeDrawer()">Close</button>
-  </div>
-</template>
-
-<template id="drawerTpl_appt" data-title="Add appointment" data-subtitle="Step through quickly on mobile">
-  <div data-stepper="true">
-    <div class="stepper" aria-hidden="true"></div>
-    <form method="post" action="{{ rp }}/calendar/add_appointment" class="stack">
-      <div class="step active">
-        <div class="card" style="padding:12px;">
-          <div class="grid grid-1 gap-2">
-            <div>
-              <label class="label">Child</label>
-              <select name="child_id" class="input" required>
-                {% for c in children %}
-                  <option value="{{ c.id }}" {% if selected_child_id == c.id %}selected{% endif %}>{{ c.full_name }}</option>
-                {% endfor %}
-              </select>
-            </div>
-            <div>
-              <label class="label">Start</label>
-              <input class="input" type="datetime-local" name="starts_at" required>
-            </div>
-          </div>
-        </div>
-        <div class="step-actions">
-          <button class="btn" type="button" data-step-next>Next</button>
-        </div>
-      </div>
-
-      <div class="step">
-        <div class="card" style="padding:12px;">
-          <div class="grid grid-1 gap-2">
-            <div>
-              <label class="label">Therapist / Provider</label>
-              <input class="input" type="text" name="therapist_name" list="therapists" placeholder="Therapist" required>
-            </div>
-            <div>
-              <label class="label">Procedure</label>
-              <input class="input" type="text" name="procedure" value="Speech Session">
-            </div>
-          </div>
-        </div>
-
-        <input type="hidden" name="also_add_timeline" value="YES" />
-        <div class="step-actions">
-          <button class="btn" type="button" data-step-back>Back</button>
-          <button class="btn primary" type="submit" data-step-submit>Add appointment</button>
-        </div>
-      </div>
-    </form>
-  </div>
-</template>
-
-<template id="drawerTpl_billing" data-title="Add billing / invoice" data-subtitle="Create a billing item fast">
-  <div data-stepper="true">
-    <div class="stepper" aria-hidden="true"></div>
-    <form method="post" action="{{ rp }}/calendar/add_billing" class="stack">
-      <div class="step active">
-        <div class="card" style="padding:12px;">
-          <div class="grid grid-1 gap-2">
-            <div>
-              <label class="label">Child</label>
-              <select name="child_id" class="input" required>
-                {% for c in children %}
-                  <option value="{{ c.id }}" {% if selected_child_id == c.id %}selected{% endif %}>{{ c.full_name }}</option>
-                {% endfor %}
-              </select>
-            </div>
-            <div>
-              <label class="label">Due date</label>
-              <input class="input" type="date" name="billing_due" required>
-            </div>
-          </div>
-        </div>
-        <div class="step-actions">
-          <button class="btn" type="button" data-step-next>Next</button>
-        </div>
-      </div>
-      <div class="step">
-        <div class="card" style="padding:12px;">
-          <div class="grid grid-1 gap-2">
-            <div>
-              <label class="label">Invoice created?</label>
-              <select name="invoice_created" class="input">
-                <option value="NO" selected>NO</option>
-                <option value="YES">YES</option>
-              </select>
-            </div>
-            <div>
-              <label class="label">Paid?</label>
-              <select name="paid" class="input">
-                <option value="NO" selected>NO</option>
-                <option value="YES">YES</option>
-              </select>
-            </div>
-            <div>
-              <label class="label">Parent signed off?</label>
-              <select name="parent_signed_off" class="input">
-                <option value="NO" selected>NO</option>
-                <option value="YES">YES</option>
-              </select>
-            </div>
-          </div>
-        </div>
-        <div class="step-actions">
-          <button class="btn" type="button" data-step-back>Back</button>
-          <button class="btn primary" type="submit" data-step-submit>Add billing</button>
-        </div>
-      </div>
-    </form>
-  </div>
-</template>
-
-<template id="drawerTpl_journey" data-title="Add journey item" data-subtitle="Record attendance / notes quickly">
-  <div data-stepper="true">
-    <div class="stepper" aria-hidden="true"></div>
-    <form method="post" action="{{ rp }}/calendar/add_journey" class="stack">
-      <div class="step active">
-        <div class="card" style="padding:12px;">
-          <div class="grid grid-1 gap-2">
-            <div>
-              <label class="label">Child</label>
-              <select name="child_id" class="input" required>
-                {% for c in children %}
-                  <option value="{{ c.id }}" {% if selected_child_id == c.id %}selected{% endif %}>{{ c.full_name }}</option>
-                {% endfor %}
-              </select>
-            </div>
-            <div>
-              <label class="label">When</label>
-              <input class="input" type="datetime-local" name="occurred_at" required>
-            </div>
-          </div>
-        </div>
-        <div class="step-actions">
-          <button class="btn" type="button" data-step-next>Next</button>
-        </div>
-      </div>
-      <div class="step">
-        <div class="card" style="padding:12px;">
-          <div class="grid grid-1 gap-2">
-            <div>
-              <label class="label">Type</label>
-              <select name="type" class="input">
-                <option value="ATTENDED">ATTENDED</option>
-                <option value="MISSED">MISSED</option>
-                <option value="NOTE">NOTE</option>
-              </select>
-            </div>
-            <div>
-              <label class="label">Note</label>
-              <textarea class="input" name="note" rows="3" placeholder="Optional note"></textarea>
-            </div>
-          </div>
-        </div>
-        <div class="step-actions">
-          <button class="btn" type="button" data-step-back>Back</button>
-          <button class="btn primary" type="submit" data-step-submit>Add item</button>
-        </div>
-      </div>
-    </form>
-  </div>
-</template>
-
-
-{% endblock %}
-
-{% block bottom_bar %}
-<nav class="bottom-bar" aria-label="Quick actions">
-  <a class="bb-item active" href="{{ rp }}/calendar">📅<span>Calendar</span></a>
-  <a class="bb-item" href="{{ rp }}/billing">🧾<span>Billing</span></a>
-  <a class="bb-item" href="{{ rp }}/messages">💬<span>Messages</span></a>
-  <button class="bb-primary" type="button" id="bbQuickCreate">＋ New</button>
-</nav>
-{% endblock %}
-
-{% block bottom_bar %}
-<nav class="bottom-bar" aria-label="Quick actions">
-  <a class="bb-item active" href="{{ rp }}/calendar">📅<span>Calendar</span></a>
-  <a class="bb-item" href="{{ rp }}/billing">🧾<span>Billing</span></a>
-  <a class="bb-item" href="{{ rp }}/messages">💬<span>Messages</span></a>
-  <button class="bb-primary" type="button" id="bbQuickCreate">＋ New</button>
-</nav>
 {% endblock %}

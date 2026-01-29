@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Form
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 import sqlalchemy as sa
@@ -156,17 +156,9 @@ def admin_logout(request: Request):
 
 
 @router.get("/admin/tenants", response_class=HTMLResponse)
-def admin_tenants(request: Request, view: str = "active", q: Optional[str] = None, db: Session = Depends(get_db)):
+def admin_tenants(request: Request, db: Session = Depends(get_db)):
     _require_admin(request)
-    query = db.query(Tenant)
-    if (view or "active") == "archived":
-        query = query.filter(Tenant.archived_at.isnot(None))
-    else:
-        query = query.filter(Tenant.archived_at.is_(None))
-    if q:
-        qq = f"%{q.strip().lower()}%"
-        query = query.filter(sa.or_(sa.func.lower(Tenant.slug).like(qq), sa.func.lower(Tenant.name).like(qq)))
-    tenants = query.order_by(Tenant.created_at.desc()).all()
+    tenants = db.query(Tenant).order_by(Tenant.created_at.desc()).all()
     base_url = _portal_base(request)
 
     onboard = {
@@ -174,16 +166,10 @@ def admin_tenants(request: Request, view: str = "active", q: Optional[str] = Non
         "owner_email": _flash_pop(request, "onboard_owner_email", ""),
         "temp_password": _flash_pop(request, "onboard_temp_password", ""),
     }
-    onboard_cache = None
-    s = request.scope.get("session")
-    if isinstance(s, dict):
-        onboard_cache = s.get("onboard_cache")
-
-
 
     return templates.TemplateResponse(
         "admin/tenants.html",
-        {"request": request, "tenants": tenants, "base_url": base_url, "onboard": onboard, "onboard_cache": onboard_cache, "view": view, "q": q},
+        {"request": request, "tenants": tenants, "base_url": base_url, "onboard": onboard},
     )
 
 
@@ -281,16 +267,6 @@ def admin_tenants_create(
         _flash_set(request, "onboard_tenant_slug", slug)
         _flash_set(request, "onboard_owner_email", owner_email)
         _flash_set(request, "onboard_temp_password", temp_password)
-
-        # Cache onboarding data for copy-to-clipboard button (expires quickly)
-        s = request.scope.get("session")
-        if isinstance(s, dict):
-            s["onboard_cache"] = {
-                "tenant_slug": slug,
-                "owner_email": owner_email,
-                "temp_password": temp_password,
-                "ts": int(datetime.utcnow().timestamp()),
-            }
 
         return RedirectResponse(url="/admin/tenants", status_code=303)
 
@@ -403,72 +379,3 @@ def admin_links(request: Request, db: Session = Depends(get_db)):
             "tenants": rows,
         },
     )
-
-
-@router.get("/admin/tenants/{tenant_slug}/onboarding")
-def admin_tenant_onboarding(tenant_slug: str, request: Request, db: Session = Depends(get_db)):
-    """
-    Returns onboarding details for a tenant for the 'Copy onboarding info' button.
-    For security, the temporary password is only returned if it is still present in a short-lived session cache.
-    Otherwise a masked placeholder is returned.
-    """
-    _require_admin(request)
-    t = db.query(Tenant).filter(Tenant.slug == tenant_slug).first()
-    if not t:
-        raise HTTPException(status_code=404, detail="Tenant not found")
-
-    # Owner user: pick role owner first, else first user under tenant
-    from app.models.user import User  # local import to avoid circular deps
-    owner = (
-        db.query(User)
-        .filter(User.tenant_id == t.id)
-        .order_by(sa.case((User.role == "owner", 0), else_=1), User.created_at.asc())
-        .first()
-    )
-
-    base_url = _portal_base(request)
-    login_url = f"{base_url}/t/{t.slug}/suite"
-
-    temp_password = "********"
-    s = request.scope.get("session")
-    if isinstance(s, dict):
-        cache = s.get("onboard_cache") or {}
-        try:
-            ts = int(cache.get("ts") or 0)
-        except Exception:
-            ts = 0
-        # expire after 15 minutes
-        if cache.get("tenant_slug") == t.slug and (datetime.utcnow().timestamp() - ts) < (15 * 60):
-            if cache.get("temp_password"):
-                temp_password = cache["temp_password"]
-
-    payload = {
-        "clinic": t.name or t.slug,
-        "tenant_id": t.slug,
-        "login_url": login_url,
-        "email": (owner.email if owner else ""),
-        "temp_password": temp_password,
-    }
-    return JSONResponse(payload)
-
-
-@router.post("/admin/tenants/{tenant_slug}/archive")
-def admin_tenant_archive(tenant_slug: str, request: Request, db: Session = Depends(get_db)):
-    _require_admin(request)
-    t = db.query(Tenant).filter(Tenant.slug == tenant_slug).first()
-    if not t:
-        raise HTTPException(status_code=404, detail="Tenant not found")
-    t.archived_at = datetime.utcnow()
-    db.commit()
-    return RedirectResponse(url="/admin/tenants", status_code=303)
-
-
-@router.post("/admin/tenants/{tenant_slug}/restore")
-def admin_tenant_restore(tenant_slug: str, request: Request, db: Session = Depends(get_db)):
-    _require_admin(request)
-    t = db.query(Tenant).filter(Tenant.slug == tenant_slug).first()
-    if not t:
-        raise HTTPException(status_code=404, detail="Tenant not found")
-    t.archived_at = None
-    db.commit()
-    return RedirectResponse(url="/admin/tenants?view=archived", status_code=303)

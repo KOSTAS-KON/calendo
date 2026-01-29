@@ -1,24 +1,7 @@
 {% extends "layout.html" %}
-{% set header = "Settings" %}
-{% set subheader = "Clinic details, messaging provider, and license." %}
 {% block content %}
 
-
-<div class="card show-mobile" style="margin-bottom:12px; padding:12px;">
-  <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
-    <div>
-      <div style="font-weight:800;">Quick edit</div>
-      <div class="text-sm" style="color:var(--text-muted);">Open settings in step-by-step drawers.</div>
-    </div>
-    <div style="display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end;">
-      <a class="btn btn-sm" href="#" data-open-drawer="drawerTpl_settings_clinic" data-drawer-title="Clinic settings" data-drawer-subtitle="Step-by-step edit (mobile)"><span class="icon" data-lucide="settings"></span> Clinic</a>
-      <a class="btn btn-sm" href="#" data-open-drawer="drawerTpl_settings_infobip" data-drawer-title="Infobip SMS" data-drawer-subtitle="Provider configuration"><span class="icon" data-lucide="message-square"></span> Infobip</a>
-      <a class="btn btn-sm" href="#" data-open-drawer="drawerTpl_settings_license" data-drawer-title="License" data-drawer-subtitle="Activation & product mode"><span class="icon" data-lucide="key"></span> License</a>
-    </div>
-  </div>
-</div>
-
-<div class="tabs hide-mobile" style="margin-bottom:14px;">
+<div class="tabs" style="margin-bottom:14px;">
   <button class="tab is-active" data-tab="clinic">🏥 Clinic</button>
   <button class="tab" data-tab="infobip">📣 Infobip SMS</button>
   <button class="tab" data-tab="license">🔑 License</button>

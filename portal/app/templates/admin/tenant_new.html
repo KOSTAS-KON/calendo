@@ -1,10 +1,6 @@
 {% extends "layout.html" %}
 {% block content %}
 <h1>Create Tenant</h1>
-<div class="show-mobile" style="margin-bottom:12px;">
-  <a class="btn primary" href="#" data-open-drawer="drawerTpl_tenant_new" data-drawer-title="New tenant" data-drawer-subtitle="Step-by-step setup"><span class="icon" data-lucide="plus-circle"></span> Create tenant</a>
-</div>
-<div class="hide-mobile">
 <form method="post" action="/admin/tenants/new">
   <label>Tenant slug (e.g. clinic-veria-001)</label>
   <input name="slug" required style="width:360px" />
@@ -23,60 +19,4 @@
     <a class="btn secondary" href="/admin/tenants?admin_key={{admin_key}}">Cancel</a>
   </div>
 </form>
-</div>
 {% endblock %}
-
-<template id="drawerTpl_tenant_new">
-  {% set rp = request.scope.get("root_path", "") %}
-  <div data-stepper="true">
-    <div class="stepper" aria-hidden="true"></div>
-    <form method="post" action="{{ rp }}/admin/tenants/new" class="stack">
-      <div class="step active">
-        <div class="card" style="padding:12px;">
-          <div class="card-title">Tenant info</div>
-          <div class="form-grid">
-            <div class="field">
-              <label class="label">Tenant slug</label>
-              <input class="input" name="tenant_slug" placeholder="e.g. veria-clinic" required />
-              <div class="help">Lowercase, letters/numbers/dash.</div>
-            </div>
-            <div class="field">
-              <label class="label">Clinic name</label>
-              <input class="input" name="tenant_name" placeholder="Clinic name" required />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="step">
-        <div class="card" style="padding:12px;">
-          <div class="card-title">Admin user</div>
-          <div class="form-grid">
-            <div class="field" style="grid-column:1/-1;">
-              <label class="label">Admin email</label>
-              <input class="input" name="admin_email" type="email" placeholder="admin@clinic.com" required />
-            </div>
-            <div class="field" style="grid-column:1/-1;">
-              <label class="label">Temporary password</label>
-              <input class="input" name="admin_password" type="password" placeholder="Set a temp password" required />
-              <div class="help">The user can change it later.</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="step">
-        <div class="card" style="padding:12px;">
-          <div class="card-title">Confirm</div>
-          <div class="text-sm" style="color:var(--text-muted);">Review and create the tenant. You can configure clinic settings after creation.</div>
-        </div>
-      </div>
-
-      <div class="drawer-actions">
-        <button class="btn" data-step-back type="button"><span class="icon" data-lucide="chevron-left"></span> Back</button>
-        <button class="btn" data-step-next type="button">Next <span class="icon" data-lucide="chevron-right"></span></button>
-        <button class="btn primary" data-step-submit type="submit"><span class="icon" data-lucide="check"></span> Create</button>
-      </div>
-    </form>
-  </div>
-</template>

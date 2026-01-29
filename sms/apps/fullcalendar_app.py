@@ -839,192 +839,194 @@ def inject_style() -> None:
     st.markdown(
         r"""
 <style>
-/* Calendo Streamlit UI Kit v2 (2026-01) – modern SaaS, high contrast, mobile-first */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-
 :root{
-  --bg:#f8fafc;
-  --panel:#ffffff;
-  --text:#0f172a;
-  --muted:#64748b;
-  --border:rgba(15,23,42,.12);
-  --border-strong:rgba(15,23,42,.18);
-  --shadow:0 12px 36px rgba(15,23,42,.10);
-  --shadow-soft:0 10px 26px rgba(15,23,42,.08);
-  --radius:18px;
-  --radius-lg:22px;
-  --pill:999px;
-  --primary:#2563eb;
-  --primary-2:#1d4ed8;
-  --primary-soft:#dbeafe;
+  --bg: #f6f7fb;
+  --panel: #ffffff;
+  --text: #0f172a;
+  --muted: rgba(15,23,42,.62);
+  --border: rgba(15,23,42,.12);
+  --border-strong: rgba(15,23,42,.18);
+  --shadow: 0 14px 34px rgba(15,23,42,.10);
+  --shadow-soft: 0 10px 24px rgba(15,23,42,.08);
+  --radius: 18px;
+  --radius-lg: 22px;
+  --pill: 999px;
+  --accent: #0f172a;
+  --accent-2: #2563eb;
 
-  --ok:#22c55e;
-  --warn:#f59e0b;
-  --bad:#ef4444;
+  /* Topbar sizing (used to keep content from sliding under header) */
+  --sms-topbar-h: 64px;
 }
 
-@media (prefers-color-scheme: dark){
-  :root{
-    --bg:#0b1220;
-    --panel:#0f172a;
-    --text:#e5e7eb;
-    --muted:#94a3b8;
-    --border:rgba(148,163,184,.18);
-    --border-strong:rgba(148,163,184,.28);
-    --shadow:0 14px 40px rgba(0,0,0,.45);
-    --shadow-soft:0 10px 26px rgba(0,0,0,.32);
-    --primary-soft:rgba(37,99,235,.18);
-  }
+/* Streamlit header can overlap custom topbars depending on hosting/frame */
+header[data-testid="stHeader"]{
+  background: transparent !important;
 }
 
-html, body, [class*="css"]{
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, "Noto Sans", sans-serif !important;
+/* Ensure page content starts below our sticky topbar */
+.main .block-container{
+  padding-top: calc(var(--sms-topbar-h) + 18px) !important;
 }
 
-body{
-  background: var(--bg) !important;
-  color: var(--text) !important;
-}
+/* App background + layout */
+.stApp { background: var(--bg) !important; color: var(--text) !important; }
+.block-container { padding-top: 1.0rem; padding-bottom: 2.2rem; max-width: 1280px; }
 
-/* Reduce Streamlit top padding */
-.block-container{
-  padding-top: 1.0rem !important;
-  padding-bottom: 2.2rem !important;
-  max-width: 1240px;
-}
-
-/* Headings */
-h1, h2, h3{
-  letter-spacing: -0.02em;
-}
-
-/* Hide default menu/footer (clean app feel) */
-#MainMenu {visibility: hidden;}
-footer {visibility: hidden;}
-header {visibility: hidden;}
-
-/* Cards used by the app HTML helpers */
-.card{
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 16px 16px;
-  box-shadow: 0 10px 26px rgba(15,23,42,.06);
-  margin-bottom: 14px;
-}
-.card h3{
-  margin: 0 0 10px 0;
-  font-size: 16px;
-  font-weight: 800;
-}
-.kpi{
-  display:flex;
-  flex-direction:column;
-  gap: 6px;
-}
-.kpi .label{
-  font-size: 12px;
-  color: var(--muted);
-  font-weight: 700;
-  letter-spacing: .04em;
-  text-transform: uppercase;
-}
-.kpi .value{
-  font-size: 28px;
-  font-weight: 900;
-  letter-spacing: -0.03em;
-}
-
-/* Pills */
-.pillrow{
-  display:flex;
-  flex-wrap:wrap;
-  gap: 8px;
-  margin-top: 6px;
-}
-.pill{
-  display:inline-flex;
-  align-items:center;
-  gap: 8px;
-  padding: 6px 10px;
-  border-radius: var(--pill);
-  border: 1px solid var(--border);
-  background: rgba(148,163,184,.16);
-  font-weight: 800;
-  font-size: 12px;
-}
-.pill.ok{ background: rgba(34,197,94,.14); border-color: rgba(34,197,94,.24); color: #15803d; }
-.pill.warn{ background: rgba(245,158,11,.14); border-color: rgba(245,158,11,.24); color: #b45309; }
-.pill.bad{ background: rgba(239,68,68,.14); border-color: rgba(239,68,68,.24); color: #b91c1c; }
-.pill.info{ background: rgba(37,99,235,.14); border-color: rgba(37,99,235,.24); color: var(--primary-2); }
-.pill.muted{ background: rgba(148,163,184,.10); border-color: rgba(148,163,184,.20); color: var(--muted); }
-@media (prefers-color-scheme: dark){
-  .pill.ok{ color:#86efac; }
-  .pill.warn{ color:#fde68a; }
-  .pill.bad{ color:#fecaca; }
-  .pill.info{ color:#bfdbfe; }
-}
-
-/* Inputs: higher contrast + clear focus */
-.stTextInput input, .stTextArea textarea, .stSelectbox select, .stDateInput input, .stTimeInput input, .stNumberInput input{
-  border-radius: 14px !important;
-  border: 1px solid var(--border-strong) !important;
+/* Sidebar */
+section[data-testid="stSidebar"]{
   background: var(--panel) !important;
-  color: var(--text) !important;
-  padding: 10px 12px !important;
-  min-height: 44px !important;
+  border-right: 1px solid var(--border) !important;
 }
-.stTextInput input:focus, .stTextArea textarea:focus, .stSelectbox select:focus, .stDateInput input:focus, .stTimeInput input:focus, .stNumberInput input:focus{
-  outline: none !important;
-  border-color: rgba(37,99,235,.70) !important;
-  box-shadow: 0 0 0 4px var(--primary-soft) !important;
-}
-.stSelectbox [data-baseweb="select"] > div{
+section[data-testid="stSidebar"] .stMarkdown,
+section[data-testid="stSidebar"] label,
+section[data-testid="stSidebar"] p,
+section[data-testid="stSidebar"] span{ color: var(--text) !important; }
+
+/* Inputs */
+.stTextInput input, .stTextArea textarea, .stNumberInput input,
+.stSelectbox div[data-baseweb="select"] > div,
+.stDateInput input{
   border-radius: 14px !important;
-  border: 1px solid var(--border-strong) !important;
+  border: 1px solid var(--border) !important;
+  background: rgba(255,255,255,.98) !important;
 }
 
 /* Buttons */
-.stButton > button{
+.stButton>button{
   border-radius: 14px !important;
-  min-height: 44px !important;
+  border: 1px solid var(--border-strong) !important;
+  background: var(--panel) !important;
+  box-shadow: 0 8px 18px rgba(15,23,42,.06) !important;
   font-weight: 800 !important;
+}
+.stButton>button:hover{ border-color: rgba(15,23,42,.28) !important; }
+
+/* Tabs (make them look like the Portal pills) */
+div[data-testid="stTabs"] [data-baseweb="tab-list"]{
+  gap: 10px !important;
+  padding: 10px 6px 12px 6px !important;
+  border-bottom: 1px solid var(--border) !important;
+  overflow-x:auto !important;
+}
+div[data-testid="stTabs"] [data-baseweb="tab"]{
+  min-height: 46px !important;
+  border-radius: var(--pill) !important;
+  padding: 8px 16px !important;
   border: 1px solid var(--border) !important;
+  background: rgba(255,255,255,.92) !important;
+  white-space: nowrap !important;
+  font-size: 15px !important;
+  font-weight: 900 !important;
+  color: var(--text) !important;
 }
-.stButton > button[kind="primary"]{
-  background: var(--primary) !important;
-  border-color: rgba(37,99,235,.22) !important;
+div[data-testid="stTabs"] [aria-selected="true"]{
+  border-color: rgba(15,23,42,.28) !important;
+  background: rgba(255,255,255,1) !important;
+  box-shadow: var(--shadow-soft) !important;
 }
-.stButton > button[kind="primary"]:hover{
-  background: var(--primary-2) !important;
+div[data-testid="stTabs"] [data-baseweb="tab-highlight"]{ display:none !important; }
+
+/* Card (same style language as Portal cards) */
+.card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 14px 14px;
+  margin-bottom: 12px;
+  background: var(--panel);
+  box-shadow: var(--shadow-soft);
+}
+.card h3 { margin: 0 0 10px 0; }
+
+/* Sub-card (for sections inside a card) */
+.subcard{
+  border: 1px dashed rgba(15,23,42,.18);
+  border-radius: 16px;
+  padding: 12px 12px;
+  background: rgba(255,255,255,.86);
+  margin: 10px 0 10px 0;
 }
 
-/* Dataframes */
-[data-testid="stDataFrame"]{
+/* Pills / badges */
+.pill{
+  display:inline-flex; align-items:center; gap:8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,.95);
+  font-weight: 900;
+  font-size: 12px;
+  letter-spacing: .02em;
+}
+.pill.ok{ background: rgba(34,197,94,.10); border-color: rgba(34,197,94,.35); }
+.pill.warn{ background: rgba(245,158,11,.10); border-color: rgba(245,158,11,.35); }
+.pill.bad{ background: rgba(239,68,68,.10); border-color: rgba(239,68,68,.35); }
+.pill.info{ background: rgba(37,99,235,.10); border-color: rgba(37,99,235,.35); }
+.pill.muted{ background: rgba(15,23,42,.06); border-color: rgba(15,23,42,.14); }
+
+.pillrow{ display:flex; flex-wrap:wrap; gap:8px; margin: 6px 0 8px 0; }
+
+/* Streamlit widgets inside cards */
+div[data-testid="stForm"],
+div[data-testid="stExpander"],
+div[data-testid="stContainer"]{
+  border-radius: 16px;
+}
+
+/* Make expanders look like portal sections */
+details[data-testid="stExpander"]{
+  border: 1px solid var(--border) !important;
+  border-radius: 16px !important;
+  background: rgba(255,255,255,.92) !important;
+  box-shadow: 0 8px 18px rgba(15,23,42,.05) !important;
+}
+
+/* Tables / dataframe polish */
+.stDataFrame, .stTable {
   border-radius: 16px;
   overflow: hidden;
   border: 1px solid var(--border);
 }
 
-/* Mobile: tighter spacing + stack columns */
-@media (max-width: 768px){
-  .block-container{ padding-left: 0.9rem !important; padding-right: 0.9rem !important; }
-  .card{ padding: 14px; }
-  h1{ font-size: 22px !important; }
-  h2{ font-size: 18px !important; }
-}
+/* Headline rhythm */
+h1, h2, h3 { letter-spacing: -0.02em; }
 
-@media (max-width: 520px){
-  /* Reduce side padding and keep content readable */
-  .block-container{ padding-left:0.75rem !important; padding-right:0.75rem !important; padding-top:0.75rem !important; }
-  /* Tabs become horizontally scrollable */
-  [data-baseweb="tab-list"]{ overflow-x:auto; overflow-y:hidden; }
-  [data-baseweb="tab"]{ flex:0 0 auto; }
-  /* Make primary buttons full width for thumb reach */
-  .stButton > button{ width:100%; }
-  /* Compact tables */
-  .stDataFrame, .stTable{ font-size:12px; }
+/* “Header bar” helper */
+.sms-topbar{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding: 12px 14px;
+  margin: 10px 0 14px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: rgba(255,255,255,.96);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.06);
+
+  position: sticky;
+  top: 0;
+  z-index: 9999;
 }
+.sms-topbar .title{
+  display:flex; align-items:center; gap:10px;
+  font-weight: 900; font-size: 18px;
+}
+.sms-topbar .subtitle{ font-size: 13px; color: var(--muted); margin-top: 2px; }
+.sms-topbar .links{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.sms-pilllink{
+  display:inline-flex; align-items:center; gap:8px;
+  padding: 9px 12px; border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  text-decoration:none !important;
+  color: var(--text) !important;
+  font-weight: 850;
+}
+.sms-pilllink:hover{ border-color: rgba(15,23,42,.28) !important; box-shadow: var(--shadow-soft); }
+
+/* Calendar container polish */
+iframe{ border-radius: 16px !important; }
 </style>
         """,
         unsafe_allow_html=True,

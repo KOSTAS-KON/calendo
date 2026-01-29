@@ -1,6 +1,4 @@
-{% extends "layout.html" %}
-{% set header = title %}
-{% set subheader = subtitle or "" %}
-{% block content %}
-  {% block admin_content %}{% endblock %}
+{% extends "layout.html" %}{% block content %}
+<h1 style="margin:0 0 10px 0;">{{ title }}</h1>
+{% block admin_content %}{% endblock %}
 {% endblock %}

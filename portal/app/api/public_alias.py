@@ -16,35 +16,24 @@ def _format_iso_utc(dt: datetime) -> str:
 
 
 def _resolve_tenant_slug(request: Request) -> str:
-    """
-    Prefer:
-    1) query param ?tenant=...
-    2) session tenant_slug
-    3) default
-    """
+    # Prefer explicit query param, else session, else default
     tenant = (request.query_params.get("tenant") or "").strip().lower()
     if tenant:
         return tenant
-
     s = request.scope.get("session")
     if isinstance(s, dict) and s.get("tenant_slug"):
         return str(s.get("tenant_slug") or "default").strip().lower()
-
     return "default"
 
 
 @router.get("/clinic_settings")
 def clinic_settings_public(request: Request):
-    """
-    Public (UI) clinic settings endpoint.
+    """Public (UI) clinic settings endpoint.
 
-    IMPORTANT:
-    - Do NOT redirect to /api/internal/clinic_settings because that endpoint is protected
-      and can return 403 (as seen in your Render logs).
-    - Instead, fetch tenant + clinic settings directly from DB and return safe JSON.
+    NOTE: We DO NOT proxy/redirect to /api/internal/clinic_settings because that endpoint
+    may be protected (403). We read from DB and return safe JSON.
     """
     tenant_slug = _resolve_tenant_slug(request)
-
     db = SessionLocal()
     try:
         from app.models.tenant import Tenant
@@ -55,8 +44,6 @@ def clinic_settings_public(request: Request):
             raise HTTPException(status_code=404, detail="Tenant not found")
 
         cs = db.query(ClinicSettings).filter(ClinicSettings.tenant_id == t.id).first()
-
-        # Return defaults if row does not exist yet (better UX than error)
         if not cs:
             return JSONResponse(
                 {
@@ -79,19 +66,14 @@ def clinic_settings_public(request: Request):
             "lng": getattr(cs, "lng", None),
             "sms_provider": getattr(cs, "sms_provider", "infobip") or "infobip",
         }
-
         return JSONResponse(payload)
-
     finally:
         db.close()
 
 
 @router.get("/license")
-def license_alias(request: Request):
-    """
-    UI expects /api/license.
-    Return subscription/license info based on latest Subscription for tenant.
-    """
+def license_public(request: Request):
+    """Public license/subscription status for UI."""
     tenant_slug = _resolve_tenant_slug(request)
     db = SessionLocal()
     try:
