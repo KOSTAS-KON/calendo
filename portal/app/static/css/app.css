@@ -599,3 +599,69 @@ textarea.input{ height:auto; min-height:120px; padding:10px 12px; }
 }
 .toast .tmsg{ font-weight:700; }
 .toast .tbtn{ color:#fff; opacity:.9; text-decoration:none; font-weight:800; }
+
+
+/* === Mobile Sticky Bottom Action Bar (Calendar/Billing) === */
+.bottom-action-bar{
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1200;
+  background: rgba(255,255,255,.92);
+  border-top: 1px solid var(--border);
+  backdrop-filter: blur(10px);
+  padding: 10px 12px;
+}
+
+.bottom-action-bar .bar-inner{
+  max-width: 1100px;
+  margin: 0 auto;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.bottom-action-bar .bar-left,
+.bottom-action-bar .bar-right{
+  display:flex;
+  gap:10px;
+  align-items:center;
+}
+
+.bottom-action-bar .bar-right{ justify-content:flex-end; }
+
+.bottom-action-bar .btn{
+  padding: 10px 12px;
+  border-radius: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.bottom-action-bar .btn.btn-primary{
+  background: var(--primary);
+  color: white;
+  border: 1px solid rgba(0,0,0,.06);
+}
+
+.bottom-action-bar .btn.btn-ghost{
+  background: transparent;
+  border: 1px solid var(--border);
+}
+
+.bottom-action-bar .btn.btn-danger{
+  background: var(--danger);
+  color: white;
+  border: 1px solid rgba(0,0,0,.06);
+}
+
+/* Show only on mobile */
+@media (min-width: 769px){
+  .bottom-action-bar{ display:none; }
+}
+
+/* Prevent content from being hidden behind the bar */
+@media (max-width: 768px){
+  body{ padding-bottom: 78px; }
+}
