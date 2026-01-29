@@ -1,4 +1,5 @@
 from __future__ import annotations
+from portal.app.api.public_alias import router as public_alias_router
 
 from datetime import datetime, timedelta
 import uuid
@@ -34,6 +35,8 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 app.include_router(auth_router)
 app.include_router(web_router)
 app.include_router(admin_router)
+app.include_router(public_alias_router)
+
 
 # Sentry initialization (optional)
 _SENTRY_DSN = (os.getenv("SENTRY_DSN") or "").strip()
