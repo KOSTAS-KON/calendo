@@ -1,22 +1,46 @@
 {% extends "layout.html" %}
 {% block content %}
 
+{% set header = "Tenants" %}
+{% set subheader = "Create, onboard, archive and manage clinics." %}
+{% set actions = [
+  {"label":"Create tenant","href":"/admin/tenants/new","variant":"primary"},
+  {"label":"Licensing","href":"/admin/licensing","variant":"ghost"}
+] %}
+
 {% if onboard and onboard.temp_password %}
-  <div style="margin:12px 0; padding:12px; border-radius:14px; background:#052e16; border:1px solid rgba(34,197,94,.45); color:#bbf7d0;">
+  <div class="card" style="border:1px solid rgba(34,197,94,.35); background:rgba(34,197,94,.08);">
     <div style="font-weight:900; margin-bottom:6px;">✅ Tenant created successfully</div>
     <div><b>Tenant:</b> <code>{{ onboard.tenant_slug }}</code></div>
     <div><b>Owner email:</b> <code>{{ onboard.owner_email }}</code></div>
     <div><b>Temporary password (show once):</b> <code>{{ onboard.temp_password }}</code></div>
     <div style="margin-top:6px; font-size:13px; opacity:.9;">Owner must change password on first login.</div>
+    <div style="margin-top:10px;">
+      <button class="btn btn-sm" type="button" onclick="copyOnboarding('{{ onboard.tenant_slug }}')">📋 Copy onboarding info</button>
+    </div>
   </div>
 {% endif %}
 
-<h1>Tenants</h1>
-<p><a class="btn" href="/admin/tenants/new">Create tenant</a>
-<a class="btn" href="/admin/licensing">Licensing</a></p>
-
+<div class="card" style="margin-top:14px;">
+  <div style="display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap;">
+    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+      <a class="pill {% if (view or 'active') != 'archived' %}pill-active{% endif %}" href="/admin/tenants">Active</a>
+      <a class="pill {% if (view or 'active') == 'archived' %}pill-active{% endif %}" href="/admin/tenants?view=archived">Archived</a>
+    </div>
+    <form method="get" action="/admin/tenants" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+      {% if (view or 'active') == 'archived' %}
+        <input type="hidden" name="view" value="archived"/>
+      {% endif %}
+      <input class="input" type="search" name="q" placeholder="Search slug or name…" value="{{ q or '' }}" style="min-width:240px;"/>
+      <button class="btn btn-sm" type="submit">Search</button>
+      {% if q %}
+        <a class="btn btn-sm" href="/admin/tenants{% if (view or 'active') == 'archived' %}?view=archived{% endif %}">Clear</a>
+      {% endif %}
+    </form>
+  </div>
+</div>
 <div class="table-wrap"><table class="table table-cards js-responsive-table">
-  <thead><tr><th>Slug</th><th>Name</th><th>Status</th><th>Links</th></tr></thead>
+  <thead><tr><th>Slug</th><th>Name</th><th>Status</th><th>Links</th><th>Actions</th></tr></thead>
   <tbody>
   {% for t in tenants %}
     <tr>
@@ -26,6 +50,20 @@
       <td>
         <a href="{{base_url}}/t/{{t.slug}}/suite" target="_blank">Portal</a> |
         <a href="{{ (base_url.replace('calendo-3ktr.onrender.com','calendo-sms.onrender.com')) }}/sms?tenant={{t.slug}}" target="_blank">SMS</a>
+      </td>
+      <td>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button class="btn btn-sm" type="button" onclick="copyOnboarding('{{t.slug}}')">📋 Copy</button>
+          {% if (view or "active") == "archived" %}
+            <form method="post" action="/admin/tenants/{{t.slug}}/restore" style="display:inline;" onsubmit="return confirm('Restore tenant {{t.slug}}?')">
+              <button class="btn btn-sm" type="submit">↩ Restore</button>
+            </form>
+          {% else %}
+            <form method="post" action="/admin/tenants/{{t.slug}}/archive" style="display:inline;" onsubmit="return confirm('Archive tenant {{t.slug}}? Users will not be able to login.')">
+              <button class="btn btn-sm danger" type="submit">🗄 Archive</button>
+            </form>
+          {% endif %}
+        </div>
       </td>
     </tr>
   {% endfor %}

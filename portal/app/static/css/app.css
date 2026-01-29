@@ -571,3 +571,31 @@ textarea.input{ height:auto; min-height:120px; padding:10px 12px; }
   /* Avoid hover highlighting on mobile */
   tr:hover td{ background: transparent; }
 }
+
+
+/* Admin tenant utilities */
+.btn.btn-sm{ height:38px; padding:0 12px; border-radius:12px; font-size:13px; }
+.btn.danger{ border-color: rgba(239,68,68,.35); background: rgba(239,68,68,.10); color: #b91c1c; }
+.btn.danger:hover{ box-shadow:0 10px 24px rgba(239,68,68,.14); }
+.pill-active{ background: rgba(37,99,235,.14) !important; border-color: rgba(37,99,235,.28) !important; color: #1d4ed8 !important; }
+
+/* Toast */
+.toast-wrap{
+  position:fixed; left:12px; right:12px; bottom:calc(12px + env(safe-area-inset-bottom));
+  display:flex; flex-direction:column; gap:8px; pointer-events:none; z-index:9999;
+}
+.toast{
+  pointer-events:auto;
+  margin:0 auto;
+  max-width:720px;
+  width:100%;
+  background:rgba(15,23,42,.92);
+  color:#fff;
+  border:1px solid rgba(255,255,255,.10);
+  border-radius:14px;
+  padding:12px 14px;
+  box-shadow:0 16px 40px rgba(0,0,0,.22);
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+}
+.toast .tmsg{ font-weight:700; }
+.toast .tbtn{ color:#fff; opacity:.9; text-decoration:none; font-weight:800; }

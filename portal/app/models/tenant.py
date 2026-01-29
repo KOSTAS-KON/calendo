@@ -17,3 +17,5 @@ class Tenant(Base):
     status: Mapped[str] = mapped_column(String(20), default="active")  # active|suspended
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

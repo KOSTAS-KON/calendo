@@ -88,3 +88,55 @@ function initMobileNav(){
 document.addEventListener('DOMContentLoaded', () => {
   initMobileNav();
 });
+
+
+
+function toast(message, opts){
+  const options = opts || {};
+  let wrap = document.querySelector('.toast-wrap');
+  if (!wrap){
+    wrap = document.createElement('div');
+    wrap.className = 'toast-wrap';
+    document.body.appendChild(wrap);
+  }
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.innerHTML = `<div class="tmsg">${escapeHtml(String(message || ''))}</div>
+                  <a class="tbtn" href="javascript:void(0)">OK</a>`;
+  const btn = el.querySelector('.tbtn');
+  const remove = () => { if (el && el.parentNode) el.parentNode.removeChild(el); };
+  btn.addEventListener('click', remove);
+  wrap.appendChild(el);
+  const ttl = options.ttl_ms || 3200;
+  window.setTimeout(remove, ttl);
+}
+
+function escapeHtml(s){
+  return s.replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function copyOnboarding(tenantSlug){
+  try{
+    const res = await fetch(`/admin/tenants/${encodeURIComponent(tenantSlug)}/onboarding`, {headers: {'Accept':'application/json'}});
+    if (!res.ok){
+      toast('Failed to fetch onboarding info');
+      return;
+    }
+    const d = await res.json();
+    const text = [
+      `Clinic: ${d.clinic || ''}`,
+      `Tenant ID: ${d.tenant_id || ''}`,
+      `Login URL:`,
+      `${d.login_url || ''}`,
+      ``,
+      `Email: ${d.email || ''}`,
+      `Temporary password: ${d.temp_password || '********'}`
+    ].join('\n');
+
+    await navigator.clipboard.writeText(text);
+    toast('Onboarding info copied');
+  }catch(e){
+    console.error(e);
+    toast('Copy failed (clipboard blocked?)');
+  }
+}
