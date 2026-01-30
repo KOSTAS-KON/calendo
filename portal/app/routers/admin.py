@@ -19,6 +19,7 @@ from app.db import get_db
 from app.models.tenant import Tenant
 from app.models.clinic_settings import ClinicSettings
 from app.models.licensing import Plan, Subscription, ActivationCode, LicenseAuditLog
+from app.utils.security import generate_temp_password
 
 
 router = APIRouter()
@@ -509,6 +510,94 @@ def admin_tenants_create(
         raise HTTPException(status_code=400, detail=f"Create tenant failed: {type(e).__name__}: {e}")
 
 
+# ----------------------------
+# Reset password (per-tenant)
+# ----------------------------
+@router.get("/admin/tenants/{slug}/reset_password", response_class=HTMLResponse)
+def admin_reset_password_page(
+    request: Request,
+    slug: str,
+    db: Session = Depends(get_db),
+):
+    """Show the reset password drawer/page for the tenant."""
+    _require_admin(request)
+
+    from app.models.user import User
+
+    tenant = db.query(Tenant).filter(Tenant.slug == slug).first()
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    # Default target: first active owner/admin, else first active user
+    role_rank = sa.case(
+        (User.role == "owner", 0),
+        (User.role == "admin", 1),
+        else_=2,
+    )
+    target_user = (
+        db.query(User)
+        .filter(User.tenant_id == tenant.id, User.is_active.is_(True))
+        .order_by(role_rank.asc(), User.email.asc())
+        .first()
+    )
+
+    return templates.TemplateResponse(
+        "admin/reset_password.html",
+        {"request": request, "tenant": tenant, "target_user": target_user, "done": False},
+    )
+
+
+@router.post("/admin/tenants/{slug}/reset_password", response_class=HTMLResponse)
+def admin_reset_password_do(
+    request: Request,
+    slug: str,
+    user_email: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    """Generate a new temporary password for the given tenant user."""
+    _require_admin(request)
+
+    from app.models.user import User
+
+    tenant = db.query(Tenant).filter(Tenant.slug == slug).first()
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    email_lc = (user_email or "").strip().lower()
+    if not email_lc:
+        raise HTTPException(status_code=400, detail="User email is required")
+
+    user = db.query(User).filter(User.tenant_id == tenant.id, User.email == email_lc).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found for this tenant")
+
+    temp_pw = generate_temp_password()
+    user.password_hash = bcrypt.hashpw(temp_pw.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    user.must_reset_password = True
+    db.add(user)
+
+    # Audit log (best-effort; never break reset if audit fails)
+    try:
+        db.add(
+            LicenseAuditLog(
+                id=secrets.token_hex(16),
+                tenant_id=tenant.id,
+                event_type="reset_password",
+                details_json=f'{{"user":"{user.email}"}}',
+                created_at=datetime.utcnow(),
+            )
+        )
+    except Exception:
+        pass
+
+    db.commit()
+
+    return templates.TemplateResponse(
+        "admin/reset_password.html",
+        {"request": request, "tenant": tenant, "target_user": user, "done": True, "temp_password": temp_pw},
+    )
+
+
 @router.post("/admin/tenants/bulk")
 def admin_tenants_bulk(
     request: Request,
@@ -633,6 +722,94 @@ def admin_generate_code(
     db.commit()
 
     return RedirectResponse(url=f"/admin/licensing?tenant={tenant_slug}&code={raw}", status_code=303)
+
+
+@router.get("/admin/tenants/{slug}/reset_password", response_class=HTMLResponse)
+def admin_reset_password_page(request: Request, slug: str, db: Session = Depends(get_db)):
+    _require_admin(request)
+
+    from app.models.user import User
+
+    tenant = db.query(Tenant).filter(Tenant.slug == slug).first()
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    # default target: first active owner/admin
+    role_rank = sa.case(
+        (User.role == "owner", 0),
+        (User.role == "admin", 1),
+        else_=2,
+    )
+    target = (
+        db.query(User)
+        .filter(User.tenant_id == tenant.id, User.is_active.is_(True))
+        .order_by(role_rank.asc(), User.email.asc())
+        .first()
+    )
+
+    return templates.TemplateResponse(
+        "admin/reset_password.html",
+        {
+            "request": request,
+            "tenant": tenant,
+            "target_user": target,
+            "done": False,
+        },
+    )
+
+
+@router.post("/admin/tenants/{slug}/reset_password", response_class=HTMLResponse)
+def admin_reset_password_do(
+    request: Request,
+    slug: str,
+    user_email: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    _require_admin(request)
+
+    from app.models.user import User
+    from app.utils.security import generate_temp_password  # make sure this file exists
+
+    tenant = db.query(Tenant).filter(Tenant.slug == slug).first()
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    email_lc = (user_email or "").strip().lower()
+    user = db.query(User).filter(User.tenant_id == tenant.id, User.email == email_lc).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found for this tenant")
+
+    temp_pw = generate_temp_password()
+    user.password_hash = bcrypt.hashpw(temp_pw.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    user.must_reset_password = True
+    db.add(user)
+
+    # Audit (optional, safe)
+    try:
+        db.add(
+            LicenseAuditLog(
+                id=secrets.token_hex(16),
+                tenant_id=tenant.id,
+                event_type="reset_password",
+                details_json=f'{{"user":"{user.email}"}}',
+                created_at=datetime.utcnow(),
+            )
+        )
+    except Exception:
+        pass
+
+    db.commit()
+
+    return templates.TemplateResponse(
+        "admin/reset_password.html",
+        {
+            "request": request,
+            "tenant": tenant,
+            "target_user": user,
+            "done": True,
+            "temp_password": temp_pw,
+        },
+    )
 
 
 @router.get("/admin/links", response_class=HTMLResponse)
