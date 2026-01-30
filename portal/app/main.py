@@ -3,22 +3,22 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 import uuid
 import os
-import hashlib
 from urllib.parse import unquote
 
 from fastapi import FastAPI, Request, Response
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 import bcrypt
+import sqlalchemy as sa
+from sqlalchemy.exc import ProgrammingError
 
 # Optional: Sentry
 try:
     import sentry_sdk
 except Exception:
     sentry_sdk = None
-
-from sqlalchemy.exc import ProgrammingError
 
 from app.db import SessionLocal
 from app.startup_migrate import run_migrations  # env-gated safe runner
@@ -31,14 +31,12 @@ from app.dev_seed import ensure_test_users
 
 app = FastAPI(title="Calendo Portal", version="1.0.0")
 
-from fastapi.responses import HTMLResponse, RedirectResponse
 
-
+# ----------------------------
+# Landing
+# ----------------------------
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def landing():
-    # Simple production-safe landing:
-    # - shows links to login and admin
-    # - does not require DB schema to be up-to-date
     return HTMLResponse(
         """
         <!doctype html>
@@ -86,17 +84,12 @@ def root_head():
     return Response(status_code=200)
 
 
-# Static
+# ----------------------------
+# Static + sessions
+# ----------------------------
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
-# ----------------------------
-# Sessions (CRITICAL for Admin key + logins)
-# ----------------------------
-SESSION_SECRET = (os.getenv("SESSION_SECRET") or "").strip()
-if not SESSION_SECRET:
-    # Dev fallback only. On Render you MUST set SESSION_SECRET.
-    SESSION_SECRET = "dev-only-change-me-please"
-
+SESSION_SECRET = (os.getenv("SESSION_SECRET") or "").strip() or "dev-only-change-me-please"
 HTTPS_ONLY = (os.getenv("HTTPS_ONLY") or "1").strip().lower() in ("1", "true", "yes", "on")
 
 app.add_middleware(
@@ -115,7 +108,7 @@ app.include_router(web_router)
 app.include_router(admin_router)
 app.include_router(public_alias_router)
 
-# Sentry initialization (optional)
+# Optional Sentry
 _SENTRY_DSN = (os.getenv("SENTRY_DSN") or "").strip()
 if sentry_sdk and _SENTRY_DSN:
     sentry_sdk.init(
@@ -126,7 +119,7 @@ if sentry_sdk and _SENTRY_DSN:
 
 
 # ----------------------------
-# Health endpoints
+# Health
 # ----------------------------
 @app.get("/health", include_in_schema=False)
 def health_get():
@@ -138,33 +131,9 @@ def health_head():
     return Response(status_code=200)
 
 
-@app.head("/", include_in_schema=False)
-def root_head():
-    return Response(status_code=200)
-
-
 # ----------------------------
 # Helpers
 # ----------------------------
-def _sess(request: Request) -> dict:
-    s = request.scope.get("session")
-    return s if isinstance(s, dict) else {}
-
-
-def _safe_next(next_path: str) -> str:
-    if not next_path:
-        return "/"
-    try:
-        nxt = unquote(next_path)
-    except Exception:
-        nxt = next_path
-    if not nxt.startswith("/"):
-        return "/"
-    if nxt.startswith("//"):
-        return "/"
-    return nxt
-
-
 def _is_missing_tenant_archive_columns(err: Exception) -> bool:
     msg = str(err).lower()
     return ("undefinedcolumn" in msg and "tenants.is_archived" in msg) or (
@@ -172,9 +141,31 @@ def _is_missing_tenant_archive_columns(err: Exception) -> bool:
     )
 
 
-# ----------------------------
-# Seed defaults + bootstrap owner
-# ----------------------------
+def ensure_tenant_lifecycle_columns() -> None:
+    """
+    Ensure tenant lifecycle columns exist so ORM queries on Tenant never crash.
+
+    Idempotent: uses Postgres ADD COLUMN IF NOT EXISTS.
+    Safe to run on every startup.
+    """
+    db = SessionLocal()
+    try:
+        db.execute(sa.text("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS is_archived BOOLEAN NOT NULL DEFAULT FALSE;"))
+        db.execute(sa.text("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP NULL;"))
+        db.execute(sa.text("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL;"))
+        db.execute(sa.text("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS deleted_by VARCHAR(255) NULL;"))
+        try:
+            db.execute(sa.text("ALTER TABLE tenants ALTER COLUMN is_archived DROP DEFAULT;"))
+        except Exception:
+            pass
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"[startup] WARNING: could not ensure tenant lifecycle columns: {e}")
+    finally:
+        db.close()
+
+
 def seed_defaults() -> None:
     """
     Seed core data safely.
@@ -193,7 +184,6 @@ def seed_defaults() -> None:
         def _load_default_tenant(session):
             return session.query(Tenant).filter(Tenant.slug == "default").first()
 
-        # 1) Load default tenant (may fail if DB behind)
         try:
             t = _load_default_tenant(db)
         except ProgrammingError as e:
@@ -208,7 +198,6 @@ def seed_defaults() -> None:
 
             run_migrations()
 
-            # Retry in a fresh session
             try:
                 db.close()
             except Exception:
@@ -230,7 +219,6 @@ def seed_defaults() -> None:
                     return
                 raise
 
-        # 2) Create tenant if not exists
         if not t:
             t = Tenant(id=str(uuid.uuid4()), slug="default", name="Default Tenant", status="active")
             if hasattr(t, "created_at"):
@@ -239,13 +227,11 @@ def seed_defaults() -> None:
             db.commit()
             db.refresh(t)
 
-        # 3) Ensure clinic settings exists
         cs = db.query(ClinicSettings).filter(ClinicSettings.tenant_id == t.id).first()
         if not cs:
             db.add(ClinicSettings(tenant_id=t.id))
             db.commit()
 
-        # 4) Ensure plans exist
         def ensure_plan(code: str, name: str, days: int) -> Plan:
             p = db.query(Plan).filter(Plan.code == code).first()
             if not p:
@@ -259,7 +245,6 @@ def seed_defaults() -> None:
         ensure_plan("MONTHLY_30D", "Monthly (30 days)", 30)
         ensure_plan("YEARLY_365D", "Yearly (365 days)", 365)
 
-        # 5) Ensure subscription exists
         sub = (
             db.query(Subscription)
             .filter(Subscription.tenant_id == t.id)
@@ -280,7 +265,6 @@ def seed_defaults() -> None:
             )
             db.commit()
 
-        # 6) Optional bootstrap owner via env
         email = (os.getenv("BOOTSTRAP_OWNER_EMAIL") or "").strip().lower()
         pw = (os.getenv("BOOTSTRAP_OWNER_PASSWORD") or "").strip()
         if email and pw:
@@ -310,7 +294,11 @@ def seed_defaults() -> None:
 
 @app.on_event("startup")
 def on_startup():
-    # Attempt migrations first (env-gated; keep RUN_MIGRATIONS_ON_STARTUP=0 on Render if entrypoint migrates)
+    # env-gated migrations (optional)
     run_migrations()
-    # Seed safely
+
+    # ALWAYS ensure lifecycle columns exist (prevents login/admin crashes)
+    ensure_tenant_lifecycle_columns()
+
+    # seed safely (won't crash the app)
     seed_defaults()

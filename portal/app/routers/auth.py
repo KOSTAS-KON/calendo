@@ -1,5 +1,4 @@
 from __future__ import annotations
-from app.models.auth_rate_limit import AuthRateLimit
 
 import os
 from datetime import datetime, timedelta
@@ -8,6 +7,7 @@ from urllib.parse import quote, unquote
 from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 import bcrypt
+import sqlalchemy as sa
 
 from app.db import SessionLocal
 
@@ -116,12 +116,6 @@ def _get_client_ip(request: Request) -> str:
 
 
 def _rate_limit_login(db, ip: str) -> tuple[bool, int]:
-    """
-    Returns (allowed, retry_after_seconds). DB-backed per-IP limiter.
-
-    Model fields expected (matches your AuthRateLimit model):
-      ip, window_start, count, blocked_until, created_at
-    """
     from app.models.auth_rate_limit import AuthRateLimit
 
     max_attempts = int((os.getenv("LOGIN_RATE_LIMIT_COUNT") or "10").strip())
@@ -132,22 +126,15 @@ def _rate_limit_login(db, ip: str) -> tuple[bool, int]:
 
     row = db.query(AuthRateLimit).filter(AuthRateLimit.ip == ip).first()
     if not row:
-        row = AuthRateLimit(
-            ip=ip,
-            window_start=now,
-            count=0,
-            blocked_until=None,
-        )
+        row = AuthRateLimit(ip=ip, window_start=now, count=0, blocked_until=None)
         db.add(row)
         db.commit()
         db.refresh(row)
 
-    # If currently blocked
     if row.blocked_until and row.blocked_until > now:
         retry_after = int((row.blocked_until - now).total_seconds())
         return False, max(retry_after, 1)
 
-    # Reset window if expired
     if row.window_start and row.window_start + timedelta(seconds=window_seconds) < now:
         row.window_start = now
         row.count = 0
@@ -164,28 +151,32 @@ def _record_login_failure(db, ip: str) -> None:
 
     max_attempts = int((os.getenv("LOGIN_RATE_LIMIT_COUNT") or "10").strip())
     block_seconds = int((os.getenv("LOGIN_RATE_LIMIT_BLOCK_SECONDS") or "900").strip())
-
     now = datetime.utcnow()
 
     row = db.query(AuthRateLimit).filter(AuthRateLimit.ip == ip).first()
     if not row:
-        row = AuthRateLimit(
-            ip=ip,
-            window_start=now,
-            count=0,
-            blocked_until=None,
-        )
+        row = AuthRateLimit(ip=ip, window_start=now, count=0, blocked_until=None)
         db.add(row)
         db.commit()
         db.refresh(row)
 
     row.count = int(row.count or 0) + 1
-
     if row.count >= max_attempts:
         row.blocked_until = now + timedelta(seconds=block_seconds)
 
     db.add(row)
     db.commit()
+
+
+def _get_tenant_id_by_slug(db, tenant_slug: str) -> str | None:
+    """
+    Schema-safe tenant lookup: avoid ORM Tenant model which may reference missing columns.
+    """
+    row = db.execute(
+        sa.text("SELECT id FROM tenants WHERE slug = :slug LIMIT 1"),
+        {"slug": tenant_slug},
+    ).fetchone()
+    return row[0] if row else None
 
 
 @router.get("/auth/login", response_class=HTMLResponse)
@@ -224,18 +215,16 @@ def auth_login_post(
     try:
         allowed, _retry_after = _rate_limit_login(db, ip)
         if not allowed:
-            # Keep generic error to avoid leaking info
             return RedirectResponse(url=f"/auth/login?next={quote(next_path)}&error=1", status_code=303)
 
-        from app.models.tenant import Tenant
         from app.models.user import User
 
-        t = db.query(Tenant).filter(Tenant.slug == tenant_slug).first()
-        if not t:
+        tenant_id = _get_tenant_id_by_slug(db, tenant_slug)
+        if not tenant_id:
             _record_login_failure(db, ip)
             return RedirectResponse(url=f"/auth/login?next={quote(next_path)}&error=1", status_code=303)
 
-        u = db.query(User).filter(User.tenant_id == t.id, User.email == email).first()
+        u = db.query(User).filter(User.tenant_id == tenant_id, User.email == email).first()
         if not u or not getattr(u, "is_active", True):
             _record_login_failure(db, ip)
             return RedirectResponse(url=f"/auth/login?next={quote(next_path)}&error=1", status_code=303)
