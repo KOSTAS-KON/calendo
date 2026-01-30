@@ -4,13 +4,11 @@ from datetime import datetime, timedelta
 import uuid
 import os
 import hashlib
-from urllib.parse import quote, unquote
+from urllib.parse import unquote
 
-from fastapi import FastAPI, Request, Response, Form
-from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
+from fastapi import FastAPI, Request, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
-from starlette.middleware.base import BaseHTTPMiddleware
 
 import bcrypt
 
@@ -41,10 +39,9 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 # ----------------------------
 SESSION_SECRET = (os.getenv("SESSION_SECRET") or "").strip()
 if not SESSION_SECRET:
-    # Safe fallback for local dev ONLY. On Render you MUST set SESSION_SECRET.
+    # Dev fallback only. On Render you MUST set SESSION_SECRET.
     SESSION_SECRET = "dev-only-change-me-please"
 
-# Render runs behind HTTPS at the edge; secure cookies should be fine in production.
 HTTPS_ONLY = (os.getenv("HTTPS_ONLY") or "1").strip().lower() in ("1", "true", "yes", "on")
 
 app.add_middleware(
@@ -62,10 +59,6 @@ app.include_router(auth_router)
 app.include_router(web_router)
 app.include_router(admin_router)
 app.include_router(public_alias_router)
-
-# ✅ DO NOT run migrations at import-time (causes double-run on Render)
-# ✅ We run them in startup hook only (and only if RUN_MIGRATIONS_ON_STARTUP=1)
-
 
 # Sentry initialization (optional)
 _SENTRY_DSN = (os.getenv("SENTRY_DSN") or "").strip()
@@ -98,6 +91,11 @@ def root_head():
 # ----------------------------
 # Helpers
 # ----------------------------
+def _sess(request: Request) -> dict:
+    s = request.scope.get("session")
+    return s if isinstance(s, dict) else {}
+
+
 def _safe_next(next_path: str) -> str:
     if not next_path:
         return "/"
@@ -110,58 +108,6 @@ def _safe_next(next_path: str) -> str:
     if nxt.startswith("//"):
         return "/"
     return nxt
-
-
-def _sess(request: Request) -> dict:
-    s = request.scope.get("session")
-    return s if isinstance(s, dict) else {}
-
-
-def _set_sess(request: Request, key: str, value) -> None:
-    s = request.scope.get("session")
-    if isinstance(s, dict):
-        s[key] = value
-
-
-@app.get("/me")
-def me(request: Request):
-    s = _sess(request)
-    return {
-        "user_id": s.get("user_id"),
-        "email": s.get("email"),
-        "role": s.get("role"),
-        "tenant_slug": s.get("tenant_slug"),
-        "tenant_id": s.get("tenant_id"),
-        "subscription_until": s.get("subscription_until"),
-        "has_session": "session" in request.scope,
-    }
-
-
-def _logged_in(request: Request) -> bool:
-    return bool(_sess(request).get("user_id"))
-
-
-def _user_role(request: Request) -> str:
-    return str(_sess(request).get("role") or "").lower()
-
-
-def _extract_tenant_slug(path: str) -> str:
-    parts = [p for p in path.split("/") if p]
-    if len(parts) >= 2 and parts[0] == "t":
-        return parts[1]
-    return "default"
-
-
-def _session_tenant_slug(request: Request) -> str:
-    return str(_sess(request).get("tenant_slug") or "default")
-
-
-def _sha256(s: str) -> str:
-    return hashlib.sha256(s.encode("utf-8")).hexdigest()
-
-
-def _format_iso_utc(dt: datetime) -> str:
-    return dt.replace(microsecond=0).isoformat() + "Z"
 
 
 def _is_missing_tenant_archive_columns(err: Exception) -> bool:
@@ -192,13 +138,14 @@ def seed_defaults() -> None:
         def _load_default_tenant(session):
             return session.query(Tenant).filter(Tenant.slug == "default").first()
 
+        # 1) Load default tenant (may fail if DB behind)
         try:
             t = _load_default_tenant(db)
         except ProgrammingError as e:
             if not _is_missing_tenant_archive_columns(e):
                 raise
 
-            print("[seed_defaults] Missing tenants.is_archived; rolling back and attempting migrations then retrying once...")
+            print("[seed_defaults] Missing tenants.is_archived; rollback + attempt migrations then retry once...")
             try:
                 db.rollback()
             except Exception:
@@ -206,6 +153,7 @@ def seed_defaults() -> None:
 
             run_migrations()
 
+            # Retry in a fresh session
             try:
                 db.close()
             except Exception:
@@ -217,8 +165,8 @@ def seed_defaults() -> None:
             except ProgrammingError as e2:
                 if _is_missing_tenant_archive_columns(e2):
                     print(
-                        "[seed_defaults] WARNING: tenants archive columns still missing after migration attempt. "
-                        "Service will start but seed_defaults is skipped. Run Alembic upgrade head."
+                        "[seed_defaults] WARNING: tenants archive columns still missing. "
+                        "Service will start but seeding is skipped. Run 'alembic upgrade head'."
                     )
                     try:
                         db.rollback()
@@ -227,6 +175,7 @@ def seed_defaults() -> None:
                     return
                 raise
 
+        # 2) Create tenant if not exists
         if not t:
             t = Tenant(id=str(uuid.uuid4()), slug="default", name="Default Tenant", status="active")
             if hasattr(t, "created_at"):
@@ -235,11 +184,13 @@ def seed_defaults() -> None:
             db.commit()
             db.refresh(t)
 
+        # 3) Ensure clinic settings exists
         cs = db.query(ClinicSettings).filter(ClinicSettings.tenant_id == t.id).first()
         if not cs:
             db.add(ClinicSettings(tenant_id=t.id))
             db.commit()
 
+        # 4) Ensure plans exist
         def ensure_plan(code: str, name: str, days: int) -> Plan:
             p = db.query(Plan).filter(Plan.code == code).first()
             if not p:
@@ -253,6 +204,7 @@ def seed_defaults() -> None:
         ensure_plan("MONTHLY_30D", "Monthly (30 days)", 30)
         ensure_plan("YEARLY_365D", "Yearly (365 days)", 365)
 
+        # 5) Ensure subscription exists
         sub = (
             db.query(Subscription)
             .filter(Subscription.tenant_id == t.id)
@@ -273,6 +225,7 @@ def seed_defaults() -> None:
             )
             db.commit()
 
+        # 6) Optional bootstrap owner via env
         email = (os.getenv("BOOTSTRAP_OWNER_EMAIL") or "").strip().lower()
         pw = (os.getenv("BOOTSTRAP_OWNER_PASSWORD") or "").strip()
         if email and pw:
@@ -291,8 +244,7 @@ def seed_defaults() -> None:
                     )
                 )
                 db.commit()
-                print(f"BOOTSTRAP: created owner {email} for tenant {t.slug} (must reset password on first login)")
-                print("BOOTSTRAP: IMPORTANT: remove BOOTSTRAP_OWNER_EMAIL and BOOTSTRAP_OWNER_PASSWORD from env after first login.")
+                print(f"[seed_defaults] BOOTSTRAP: created owner {email} (must reset on first login).")
 
     finally:
         try:
@@ -303,8 +255,7 @@ def seed_defaults() -> None:
 
 @app.on_event("startup")
 def on_startup():
-    # Attempt migrations first (env-gated)
+    # Attempt migrations first (env-gated; keep RUN_MIGRATIONS_ON_STARTUP=0 on Render if entrypoint migrates)
     run_migrations()
-
     # Seed safely
     seed_defaults()
