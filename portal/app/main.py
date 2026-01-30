@@ -31,6 +31,61 @@ from app.dev_seed import ensure_test_users
 
 app = FastAPI(title="Calendo Portal", version="1.0.0")
 
+from fastapi.responses import HTMLResponse, RedirectResponse
+
+
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+def landing():
+    # Simple production-safe landing:
+    # - shows links to login and admin
+    # - does not require DB schema to be up-to-date
+    return HTMLResponse(
+        """
+        <!doctype html>
+        <html>
+          <head>
+            <meta charset="utf-8"/>
+            <meta name="viewport" content="width=device-width, initial-scale=1"/>
+            <title>Calendo</title>
+            <style>
+              body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 0; padding: 28px; background: #0b1220; color: #e5e7eb; }
+              a { color: #60a5fa; text-decoration: none; }
+              .card { max-width: 720px; margin: 0 auto; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.10);
+                      border-radius: 14px; padding: 18px; }
+              .btn { display:inline-block; margin-top: 10px; padding: 10px 14px; border-radius: 10px; background: rgba(96,165,250,.18);
+                     border: 1px solid rgba(96,165,250,.35); }
+              .muted { color: rgba(229,231,235,.75); }
+              code { background: rgba(255,255,255,.08); padding: 2px 6px; border-radius: 6px; }
+            </style>
+          </head>
+          <body>
+            <div class="card">
+              <h2 style="margin:0 0 6px 0;">Calendo Portal</h2>
+              <div class="muted">Multi-tenant clinic scheduling, billing, and SMS reminders.</div>
+
+              <div style="margin-top:14px;">
+                <div><a class="btn" href="/login">Log in</a></div>
+                <div style="margin-top:10px;"><a class="btn" href="/admin">Admin</a></div>
+              </div>
+
+              <hr style="border:none;border-top:1px solid rgba(255,255,255,.12); margin:16px 0;"/>
+
+              <div class="muted">
+                Tenant login example:<br/>
+                <code>/login?next=/t/default/suite</code>
+              </div>
+            </div>
+          </body>
+        </html>
+        """
+    )
+
+
+@app.head("/", include_in_schema=False)
+def root_head():
+    return Response(status_code=200)
+
+
 # Static
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
