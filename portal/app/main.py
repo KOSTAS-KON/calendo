@@ -22,6 +22,7 @@ except Exception:
 
 
 from app.db import SessionLocal
+from app.startup_migrate import run_migrations
 from app.routers.web import router as web_router
 from app.routers.auth import router as auth_router
 from app.routers.admin import router as admin_router
@@ -604,4 +605,6 @@ def seed_defaults() -> None:
 
 @app.on_event("startup")
 def on_startup():
+    # Ensure DB schema is up-to-date before any ORM queries (prevents startup crashes)
+    run_migrations()
     seed_defaults()
