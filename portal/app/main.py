@@ -33,8 +33,26 @@ from app.dev_seed import ensure_test_users
 
 app = FastAPI(title="Calendo Portal", version="1.0.0")
 
-# Routers + static
+# Static
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
+
+# ----------------------------
+# Sessions (CRITICAL for Admin key + logins)
+# ----------------------------
+SESSION_SECRET = (os.getenv("SESSION_SECRET") or "").strip()
+if not SESSION_SECRET:
+    # Safe fallback for local dev ONLY. On Render you MUST set SESSION_SECRET.
+    SESSION_SECRET = "dev-only-change-me-please"
+
+# Render runs behind HTTPS at the edge; secure cookies should be fine in production.
+HTTPS_ONLY = (os.getenv("HTTPS_ONLY") or "1").strip().lower() in ("1", "true", "yes", "on")
+
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=SESSION_SECRET,
+    same_site="lax",
+    https_only=HTTPS_ONLY,
+)
 
 # Optional deterministic test users (ENABLE_TEST_USERS=1)
 ensure_test_users()
@@ -147,18 +165,10 @@ def _format_iso_utc(dt: datetime) -> str:
 
 
 def _is_missing_tenant_archive_columns(err: Exception) -> bool:
-    """
-    Detect the specific failure you keep seeing:
-      psycopg2.errors.UndefinedColumn: column tenants.is_archived does not exist
-    """
     msg = str(err).lower()
     return ("undefinedcolumn" in msg and "tenants.is_archived" in msg) or (
         "does not exist" in msg and "tenants.is_archived" in msg
     )
-
-
-# ... keep ALL your existing code unchanged here ...
-# TenantGateMiddleware, routes, etc.
 
 
 # ----------------------------
@@ -168,11 +178,9 @@ def seed_defaults() -> None:
     """
     Seed core data safely.
 
-    Production behavior:
     - If DB schema is behind (missing tenants.is_archived), rollback, try migrations, then retry ONCE
       using a fresh DB session (avoids InFailedSqlTransaction).
     - If still behind, DO NOT crash the service: log a warning and return.
-      (Prevents Render restart loops while you fix migrations.)
     """
     db = SessionLocal()
     try:
@@ -184,7 +192,6 @@ def seed_defaults() -> None:
         def _load_default_tenant(session):
             return session.query(Tenant).filter(Tenant.slug == "default").first()
 
-        # 1) Load default tenant (may crash if DB schema behind)
         try:
             t = _load_default_tenant(db)
         except ProgrammingError as e:
@@ -192,16 +199,13 @@ def seed_defaults() -> None:
                 raise
 
             print("[seed_defaults] Missing tenants.is_archived; rolling back and attempting migrations then retrying once...")
-            # IMPORTANT: clear failed transaction
             try:
                 db.rollback()
             except Exception:
                 pass
 
-            # Attempt migrations (env-gated inside run_migrations)
             run_migrations()
 
-            # Best practice: create a fresh session for retry
             try:
                 db.close()
             except Exception:
@@ -223,7 +227,6 @@ def seed_defaults() -> None:
                     return
                 raise
 
-        # 2) Create tenant if not exists (safe)
         if not t:
             t = Tenant(id=str(uuid.uuid4()), slug="default", name="Default Tenant", status="active")
             if hasattr(t, "created_at"):
@@ -232,13 +235,11 @@ def seed_defaults() -> None:
             db.commit()
             db.refresh(t)
 
-        # 3) Ensure clinic_settings exists
         cs = db.query(ClinicSettings).filter(ClinicSettings.tenant_id == t.id).first()
         if not cs:
             db.add(ClinicSettings(tenant_id=t.id))
             db.commit()
 
-        # 4) Ensure plans exist
         def ensure_plan(code: str, name: str, days: int) -> Plan:
             p = db.query(Plan).filter(Plan.code == code).first()
             if not p:
@@ -252,7 +253,6 @@ def seed_defaults() -> None:
         ensure_plan("MONTHLY_30D", "Monthly (30 days)", 30)
         ensure_plan("YEARLY_365D", "Yearly (365 days)", 365)
 
-        # 5) Ensure subscription exists
         sub = (
             db.query(Subscription)
             .filter(Subscription.tenant_id == t.id)
@@ -273,7 +273,6 @@ def seed_defaults() -> None:
             )
             db.commit()
 
-        # 6) Optional bootstrap owner via env
         email = (os.getenv("BOOTSTRAP_OWNER_EMAIL") or "").strip().lower()
         pw = (os.getenv("BOOTSTRAP_OWNER_PASSWORD") or "").strip()
         if email and pw:
@@ -293,9 +292,7 @@ def seed_defaults() -> None:
                 )
                 db.commit()
                 print(f"BOOTSTRAP: created owner {email} for tenant {t.slug} (must reset password on first login)")
-                print(
-                    "BOOTSTRAP: IMPORTANT: remove BOOTSTRAP_OWNER_EMAIL and BOOTSTRAP_OWNER_PASSWORD from env after first login."
-                )
+                print("BOOTSTRAP: IMPORTANT: remove BOOTSTRAP_OWNER_EMAIL and BOOTSTRAP_OWNER_PASSWORD from env after first login.")
 
     finally:
         try:
@@ -306,8 +303,8 @@ def seed_defaults() -> None:
 
 @app.on_event("startup")
 def on_startup():
-    # ✅ Attempt migrations first (env-gated; set RUN_MIGRATIONS_ON_STARTUP=0 on Render if entrypoint already migrates)
+    # Attempt migrations first (env-gated)
     run_migrations()
 
-    # ✅ Seed (rollback-safe + retry-safe; won't crash service if DB behind)
+    # Seed safely
     seed_defaults()

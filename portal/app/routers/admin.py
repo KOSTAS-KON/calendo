@@ -4,16 +4,15 @@ import os
 import secrets
 import hashlib
 import uuid
-
-import bcrypt
 from datetime import datetime, timedelta
 from typing import Optional
 
+import bcrypt
+import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
-import sqlalchemy as sa
 
 from app.db import get_db
 from app.models.tenant import Tenant
@@ -48,11 +47,26 @@ def _session(request: Request) -> dict:
 
 
 def _get_admin_key_from_request(request: Request) -> str:
-    # Header first, session second. NO query param.
+    """
+    Order:
+    1) Header X-Admin-Key
+    2) Session 'admin_key'
+    3) Query param '?admin_key=' (one-time bootstrap, optional)
+    """
     hdr = (request.headers.get("X-Admin-Key") or request.headers.get("x-admin-key") or "").strip()
     if hdr:
         return hdr
-    return (_session(request).get("admin_key") or "").strip()
+
+    sess_key = (_session(request).get("admin_key") or "").strip()
+    if sess_key:
+        return sess_key
+
+    # Optional one-time bootstrap fallback
+    qp = (request.query_params.get("admin_key") or "").strip()
+    if qp:
+        return qp
+
+    return ""
 
 
 def _require_admin(request: Request) -> None:
@@ -119,7 +133,21 @@ def admin_index(request: Request):
     if not expected:
         return HTMLResponse("<h2>ADMIN_KEY not configured</h2>", status_code=403)
 
-    authenticated = (_get_admin_key_from_request(request) == expected)
+    got = _get_admin_key_from_request(request)
+    authenticated = (got == expected)
+
+    # If user passed ?admin_key=... and it is valid, store it once and redirect to tenants
+    qp = (request.query_params.get("admin_key") or "").strip()
+    if qp and qp == expected:
+        _set_admin_session_key(request, qp)
+        return RedirectResponse(url="/admin/tenants", status_code=303)
+
+    # If already authenticated, go directly to tenants (better UX)
+    if authenticated:
+        # ensure session contains key so subsequent requests work
+        if (_session(request).get("admin_key") or "").strip() != expected:
+            _set_admin_session_key(request, expected)
+        return RedirectResponse(url="/admin/tenants", status_code=303)
 
     return templates.TemplateResponse(
         "admin/index.html",
@@ -127,7 +155,7 @@ def admin_index(request: Request):
             "request": request,
             "base_url": base_url,
             "sms_base": sms_base,
-            "authenticated": authenticated,
+            "authenticated": False,
             "tenants_url": f"{base_url}/admin/tenants",
             "licensing_url": f"{base_url}/admin/licensing",
             "links_url": f"{base_url}/admin/links",
@@ -146,7 +174,8 @@ def admin_index_post(request: Request, admin_key: str = Form("")):
         return RedirectResponse(url="/admin?msg=invalid", status_code=303)
 
     _set_admin_session_key(request, admin_key)
-    return RedirectResponse(url="/admin", status_code=303)
+    # ✅ Redirect to tenants so it feels like "unlock then enter admin"
+    return RedirectResponse(url="/admin/tenants", status_code=303)
 
 
 @router.get("/admin/logout")
@@ -164,16 +193,9 @@ def admin_tenants(
     limit: int = 50,
     db: Session = Depends(get_db),
 ):
-    """
-    Scalable tenant management:
-    - server-side pagination
-    - search (slug/name/owner email)
-    - archive + soft delete + bulk actions
-    """
     _require_admin(request)
     base_url = _portal_base(request)
 
-    # Clamp pagination
     page = max(1, int(page or 1))
     limit = int(limit or 50)
     if limit < 10:
@@ -182,7 +204,6 @@ def admin_tenants(
         limit = 200
     offset = (page - 1) * limit
 
-    # Owner email subquery: prefer role owner/admin
     from app.models.user import User
 
     role_rank = sa.case(
@@ -203,15 +224,10 @@ def admin_tenants(
         .scalar_subquery()
     )
 
-    # Base query (exclude soft-deleted by default)
-    query = db.query(
-        Tenant,
-        owner_email_sq.label("owner_email"),
-    )
+    query = db.query(Tenant, owner_email_sq.label("owner_email"))
 
     q_clean = (q or "").strip().lower()
     if q_clean:
-        # Search tenant slug/name OR owner email
         query = query.filter(
             sa.or_(
                 sa.func.lower(Tenant.slug).contains(q_clean),
@@ -226,10 +242,8 @@ def admin_tenants(
     elif status == "deleted":
         query = query.filter(Tenant.deleted_at.is_not(None))
     elif status == "all":
-        # show everything except deleted? no, show all including deleted
         pass
     else:
-        # active
         query = query.filter(Tenant.deleted_at.is_(None), Tenant.is_archived.is_(False))
 
     total = query.count()
@@ -312,7 +326,6 @@ def admin_tenants_create(
         raise HTTPException(400, "Owner email is required")
 
     try:
-        # Create tenant
         t = Tenant(id=secrets.token_hex(16), slug=slug, name=name.strip(), status="active")
         if hasattr(t, "created_at"):
             t.created_at = datetime.utcnow()
@@ -321,11 +334,9 @@ def admin_tenants_create(
         db.commit()
         db.refresh(t)
 
-        # Create settings row WITHOUT id (DB must auto-generate integer id)
         db.add(ClinicSettings(tenant_id=t.id))
         db.commit()
 
-        # Start subscription
         plan = db.query(Plan).filter(Plan.code == plan_code).first()
         if not plan:
             raise HTTPException(400, f"Unknown plan: {plan_code}")
@@ -342,7 +353,6 @@ def admin_tenants_create(
             )
         )
 
-        # Create owner user with one-time temp password
         from app.models.user import User
 
         temp_password = secrets.token_urlsafe(10)
@@ -359,7 +369,6 @@ def admin_tenants_create(
         )
         db.add(owner)
 
-        # Audit
         db.add(
             LicenseAuditLog(
                 id=secrets.token_hex(16),
@@ -386,7 +395,6 @@ def admin_tenants_create(
         raise HTTPException(status_code=400, detail=f"Create tenant failed: {type(e).__name__}: {e}")
 
 
-
 @router.post("/admin/tenants/bulk")
 def admin_tenants_bulk(
     request: Request,
@@ -394,10 +402,6 @@ def admin_tenants_bulk(
     slugs: list[str] = Form([]),
     db: Session = Depends(get_db),
 ):
-    """
-    Bulk tenant operations for scale.
-    action: archive|unarchive|delete|restore
-    """
     _require_admin(request)
     action = (action or "").strip().lower()
     slugs = [s.strip().lower() for s in (slugs or []) if s and s.strip()]
@@ -407,8 +411,7 @@ def admin_tenants_bulk(
     now = datetime.utcnow()
     admin_actor = (_session(request).get("email") or "admin")
 
-    q = db.query(Tenant).filter(Tenant.slug.in_(slugs))
-    tenants = q.all()
+    tenants = db.query(Tenant).filter(Tenant.slug.in_(slugs)).all()
     if not tenants:
         raise HTTPException(404, "Tenants not found")
 
@@ -423,7 +426,6 @@ def admin_tenants_bulk(
                 t.is_archived = False
                 t.archived_at = None
     elif action == "delete":
-        # Soft delete only
         for t in tenants:
             t.deleted_at = now
             t.deleted_by = str(admin_actor)
@@ -433,7 +435,6 @@ def admin_tenants_bulk(
         for t in tenants:
             t.deleted_at = None
             t.deleted_by = None
-            # keep archived; admin can unarchive explicitly
     else:
         raise HTTPException(400, "Invalid action")
 
@@ -580,7 +581,12 @@ def admin_links(request: Request, db: Session = Depends(get_db)):
     rows = []
     for t in tenants:
         rows.append(
-            {"slug": t.slug, "name": t.name, "suite_url": f"{base_url}/t/{t.slug}/suite", "sms_url": _sms_url_for_tenant(t.slug)}
+            {
+                "slug": t.slug,
+                "name": t.name,
+                "suite_url": f"{base_url}/t/{t.slug}/suite",
+                "sms_url": _sms_url_for_tenant(t.slug),
+            }
         )
 
     return templates.TemplateResponse(
