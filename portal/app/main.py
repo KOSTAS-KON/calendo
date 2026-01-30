@@ -169,9 +169,10 @@ def seed_defaults() -> None:
     Seed core data safely.
 
     Production behavior:
-    - If DB schema is behind (missing tenants.is_archived), try migrations and retry once.
-    - If still behind, DO NOT crash the whole service: log a warning and return.
-      (This prevents Render restart loops while you fix migrations.)
+    - If DB schema is behind (missing tenants.is_archived), rollback, try migrations, then retry ONCE
+      using a fresh DB session (avoids InFailedSqlTransaction).
+    - If still behind, DO NOT crash the service: log a warning and return.
+      (Prevents Render restart loops while you fix migrations.)
     """
     db = SessionLocal()
     try:
@@ -180,24 +181,46 @@ def seed_defaults() -> None:
         from app.models.licensing import Plan, Subscription
         from app.models.user import User
 
+        def _load_default_tenant(session):
+            return session.query(Tenant).filter(Tenant.slug == "default").first()
+
         # 1) Load default tenant (may crash if DB schema behind)
         try:
-            t = db.query(Tenant).filter(Tenant.slug == "default").first()
+            t = _load_default_tenant(db)
         except ProgrammingError as e:
-            if _is_missing_tenant_archive_columns(e):
-                print("[seed_defaults] Missing tenants.is_archived; attempting migrations then retrying once...")
-                run_migrations()
-                try:
-                    t = db.query(Tenant).filter(Tenant.slug == "default").first()
-                except ProgrammingError as e2:
-                    if _is_missing_tenant_archive_columns(e2):
-                        print(
-                            "[seed_defaults] WARNING: tenants archive columns still missing after migration attempt. "
-                            "Service will start but seed_defaults is skipped. Run Alembic upgrade head."
-                        )
-                        return
-                    raise
-            else:
+            if not _is_missing_tenant_archive_columns(e):
+                raise
+
+            print("[seed_defaults] Missing tenants.is_archived; rolling back and attempting migrations then retrying once...")
+            # IMPORTANT: clear failed transaction
+            try:
+                db.rollback()
+            except Exception:
+                pass
+
+            # Attempt migrations (env-gated inside run_migrations)
+            run_migrations()
+
+            # Best practice: create a fresh session for retry
+            try:
+                db.close()
+            except Exception:
+                pass
+            db = SessionLocal()
+
+            try:
+                t = _load_default_tenant(db)
+            except ProgrammingError as e2:
+                if _is_missing_tenant_archive_columns(e2):
+                    print(
+                        "[seed_defaults] WARNING: tenants archive columns still missing after migration attempt. "
+                        "Service will start but seed_defaults is skipped. Run Alembic upgrade head."
+                    )
+                    try:
+                        db.rollback()
+                    except Exception:
+                        pass
+                    return
                 raise
 
         # 2) Create tenant if not exists (safe)
@@ -275,7 +298,10 @@ def seed_defaults() -> None:
                 )
 
     finally:
-        db.close()
+        try:
+            db.close()
+        except Exception:
+            pass
 
 
 @app.on_event("startup")
@@ -283,5 +309,5 @@ def on_startup():
     # ✅ Attempt migrations first (env-gated; set RUN_MIGRATIONS_ON_STARTUP=0 on Render if entrypoint already migrates)
     run_migrations()
 
-    # ✅ Seed (won't crash the whole service if DB is behind)
+    # ✅ Seed (rollback-safe + retry-safe; won't crash service if DB behind)
     seed_defaults()
