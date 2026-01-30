@@ -1,83 +1,90 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
-from typing import Optional
+import time
+from contextlib import contextmanager
 
-from sqlalchemy import create_engine, text
-
-# Alembic is a runtime dependency (listed in portal/requirements.txt)
-from alembic import command
-from alembic.config import Config
+from sqlalchemy import text
+from app.db import SessionLocal
 
 
-def _normalize_db_url(url: str) -> str:
-    u = (url or "").strip()
-    # SQLAlchemy expects postgresql:// not postgres://
-    if u.startswith("postgres://"):
-        u = "postgresql://" + u[len("postgres://"):]
-    return u
+@contextmanager
+def _db_session():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 
-def _should_run() -> bool:
-    # Explicit opt-out wins
-    if os.getenv("RUN_MIGRATIONS_ON_STARTUP", "").strip() in {"0", "false", "False", "no", "NO"}:
-        return False
+def _env_truthy(name: str, default: str = "0") -> bool:
+    return (os.getenv(name, default) or "").strip().lower() in ("1", "true", "yes", "on")
 
-    # Explicit opt-in
-    if os.getenv("RUN_MIGRATIONS_ON_STARTUP", "").strip() in {"1", "true", "True", "yes", "YES"}:
-        return True
 
-    # Default behavior:
-    # - On Render we DO want migrations to run before any ORM queries, to avoid startup crashes
-    # - Locally, it's also safe (idempotent), but you can disable via env var above.
-    if os.getenv("RENDER", "") or os.getenv("RENDER_SERVICE_ID", "") or os.getenv("RENDER_SERVICE_NAME", ""):
-        return True
+def run_migrations_if_enabled() -> None:
+    """
+    Safe migration runner.
 
-    # Default to False outside Render unless explicitly enabled
-    return False
+    - Only runs when RUN_MIGRATIONS_ON_STARTUP=1
+    - Uses pg_advisory_lock to avoid concurrent runs
+    - If lock isn't acquired quickly, it SKIPS (doesn't crash the app)
+    - Never exits the process
+    """
+    if not _env_truthy("RUN_MIGRATIONS_ON_STARTUP", "0"):
+        return
+
+    # Lazy imports so the app can still boot even if alembic isn't installed locally
+    try:
+        from alembic import command
+        from alembic.config import Config
+    except Exception as e:
+        print(f"[startup_migrate] Alembic not available: {e}. Skipping.")
+        return
+
+    # Try to acquire advisory lock (so only one instance migrates)
+    lock_key = 88442211  # arbitrary constant
+    max_wait_s = int(os.getenv("MIGRATION_LOCK_WAIT_SECONDS", "10"))
+    start = time.time()
+
+    acquired = False
+    with _db_session() as db:
+        while time.time() - start < max_wait_s:
+            try:
+                acquired = bool(db.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": lock_key}).scalar())
+            except Exception as e:
+                print(f"[startup_migrate] Lock check failed: {e}. Skipping migrations.")
+                return
+
+            if acquired:
+                break
+            time.sleep(0.5)
+
+        if not acquired:
+            print("[startup_migrate] Another process is migrating. Skipping.")
+            return
+
+        try:
+            cfg = Config("portal/alembic.ini")
+            print("[startup_migrate] Running alembic upgrade head...")
+            command.upgrade(cfg, "head")
+            print("[startup_migrate] Alembic upgrade complete.")
+        except Exception as e:
+            # DO NOT crash the app. Log and continue.
+            print(f"[startup_migrate] Alembic upgrade failed (non-fatal): {e}")
+        finally:
+            try:
+                db.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": lock_key})
+            except Exception:
+                pass
 
 
 def run_migrations() -> None:
     """
-    Run Alembic migrations to 'head' using portal/alembic.ini.
+    Backwards-compatible helper used by main.py startup hook.
 
-    Uses a Postgres advisory lock to avoid concurrent migration races when multiple
-    workers/instances start at the same time.
+    IMPORTANT:
+    - This intentionally calls the safe, env-gated runner.
+    - Set RUN_MIGRATIONS_ON_STARTUP=1 only if your platform does NOT already run migrations.
+    - On Render, usually set RUN_MIGRATIONS_ON_STARTUP=0 (avoid double-run).
     """
-    if not _should_run():
-        return
-
-    db_url = _normalize_db_url(os.getenv("DATABASE_URL", ""))
-    if not db_url:
-        # No DB configured; nothing to migrate
-        return
-
-    # Resolve config path relative to this file (portal/app/startup_migrate.py)
-    # portal/ is two parents up from app/
-    portal_dir = Path(__file__).resolve().parents[1]
-    cfg_path = portal_dir / "alembic.ini"
-    alembic_dir = portal_dir / "alembic"
-
-    cfg = Config(str(cfg_path))
-    # Make sure script_location points to the actual alembic directory
-    cfg.set_main_option("script_location", str(alembic_dir))
-    cfg.set_main_option("sqlalchemy.url", db_url)
-
-    # Postgres advisory lock
-    engine = create_engine(db_url, pool_pre_ping=True)
-    lock_id = 934188521  # stable constant for this app
-    with engine.connect() as conn:
-        try:
-            conn.execute(text("SELECT pg_advisory_lock(:id)"), {"id": lock_id})
-        except Exception:
-            # Not Postgres or lock failed; still try migrations without lock
-            pass
-
-        try:
-            command.upgrade(cfg, "head")
-        finally:
-            try:
-                conn.execute(text("SELECT pg_advisory_unlock(:id)"), {"id": lock_id})
-            except Exception:
-                pass
+    run_migrations_if_enabled()
