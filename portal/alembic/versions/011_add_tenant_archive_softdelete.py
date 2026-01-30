@@ -14,7 +14,6 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Only add the soft-delete fields here; archive fields are handled by 011_add_tenant_archived_at
     op.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL;")
     op.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS deleted_by VARCHAR(255) NULL;")
 
