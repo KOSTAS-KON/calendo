@@ -156,10 +156,105 @@ def admin_logout(request: Request):
 
 
 @router.get("/admin/tenants", response_class=HTMLResponse)
-def admin_tenants(request: Request, db: Session = Depends(get_db)):
+def admin_tenants(
+    request: Request,
+    q: str = "",
+    status: str = "active",  # active|archived|deleted|all
+    page: int = 1,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+):
+    """
+    Scalable tenant management:
+    - server-side pagination
+    - search (slug/name/owner email)
+    - archive + soft delete + bulk actions
+    """
     _require_admin(request)
-    tenants = db.query(Tenant).order_by(Tenant.created_at.desc()).all()
     base_url = _portal_base(request)
+
+    # Clamp pagination
+    page = max(1, int(page or 1))
+    limit = int(limit or 50)
+    if limit < 10:
+        limit = 10
+    if limit > 200:
+        limit = 200
+    offset = (page - 1) * limit
+
+    # Owner email subquery: prefer role owner/admin
+    from app.models.user import User
+
+    role_rank = sa.case(
+        (User.role == "owner", 0),
+        (User.role == "admin", 1),
+        else_=2,
+    )
+
+    owner_email_sq = (
+        sa.select(User.email)
+        .where(
+            User.tenant_id == Tenant.id,
+            User.is_active.is_(True),
+            User.role.in_(["owner", "admin"]),
+        )
+        .order_by(role_rank.asc(), User.email.asc())
+        .limit(1)
+        .scalar_subquery()
+    )
+
+    # Base query (exclude soft-deleted by default)
+    query = db.query(
+        Tenant,
+        owner_email_sq.label("owner_email"),
+    )
+
+    q_clean = (q or "").strip().lower()
+    if q_clean:
+        # Search tenant slug/name OR owner email
+        query = query.filter(
+            sa.or_(
+                sa.func.lower(Tenant.slug).contains(q_clean),
+                sa.func.lower(Tenant.name).contains(q_clean),
+                sa.func.lower(owner_email_sq).contains(q_clean),
+            )
+        )
+
+    status = (status or "active").strip().lower()
+    if status == "archived":
+        query = query.filter(Tenant.deleted_at.is_(None), Tenant.is_archived.is_(True))
+    elif status == "deleted":
+        query = query.filter(Tenant.deleted_at.is_not(None))
+    elif status == "all":
+        # show everything except deleted? no, show all including deleted
+        pass
+    else:
+        # active
+        query = query.filter(Tenant.deleted_at.is_(None), Tenant.is_archived.is_(False))
+
+    total = query.count()
+
+    rows = (
+        query.order_by(Tenant.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    tenants = []
+    for t, owner_email in rows:
+        tenants.append(
+            {
+                "slug": t.slug,
+                "name": t.name,
+                "status": t.status,
+                "is_archived": bool(getattr(t, "is_archived", False)),
+                "deleted_at": getattr(t, "deleted_at", None),
+                "owner_email": owner_email or "",
+                "suite_url": f"{base_url}/t/{t.slug}/suite",
+                "sms_url": _sms_url_for_tenant(t.slug),
+            }
+        )
 
     onboard = {
         "tenant_slug": _flash_pop(request, "onboard_tenant_slug", ""),
@@ -169,7 +264,20 @@ def admin_tenants(request: Request, db: Session = Depends(get_db)):
 
     return templates.TemplateResponse(
         "admin/tenants.html",
-        {"request": request, "tenants": tenants, "base_url": base_url, "onboard": onboard},
+        {
+            "request": request,
+            "tenants": tenants,
+            "base_url": base_url,
+            "onboard": onboard,
+            "q": q_clean,
+            "status": status,
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "page_start": (offset + 1) if total else 0,
+            "page_end": min(offset + limit, total),
+            "pages": (total + limit - 1) // limit if limit else 1,
+        },
     )
 
 
@@ -278,12 +386,121 @@ def admin_tenants_create(
         raise HTTPException(status_code=400, detail=f"Create tenant failed: {type(e).__name__}: {e}")
 
 
+
+@router.post("/admin/tenants/bulk")
+def admin_tenants_bulk(
+    request: Request,
+    action: str = Form(...),
+    slugs: list[str] = Form([]),
+    db: Session = Depends(get_db),
+):
+    """
+    Bulk tenant operations for scale.
+    action: archive|unarchive|delete|restore
+    """
+    _require_admin(request)
+    action = (action or "").strip().lower()
+    slugs = [s.strip().lower() for s in (slugs or []) if s and s.strip()]
+    if not slugs:
+        raise HTTPException(400, "No tenants selected")
+
+    now = datetime.utcnow()
+    admin_actor = (_session(request).get("email") or "admin")
+
+    q = db.query(Tenant).filter(Tenant.slug.in_(slugs))
+    tenants = q.all()
+    if not tenants:
+        raise HTTPException(404, "Tenants not found")
+
+    if action == "archive":
+        for t in tenants:
+            if t.deleted_at is None:
+                t.is_archived = True
+                t.archived_at = now
+    elif action == "unarchive":
+        for t in tenants:
+            if t.deleted_at is None:
+                t.is_archived = False
+                t.archived_at = None
+    elif action == "delete":
+        # Soft delete only
+        for t in tenants:
+            t.deleted_at = now
+            t.deleted_by = str(admin_actor)
+            t.is_archived = True
+            t.archived_at = now
+    elif action == "restore":
+        for t in tenants:
+            t.deleted_at = None
+            t.deleted_by = None
+            # keep archived; admin can unarchive explicitly
+    else:
+        raise HTTPException(400, "Invalid action")
+
+    db.commit()
+    return RedirectResponse(url="/admin/tenants", status_code=303)
+
+
+@router.post("/admin/tenants/{slug}/archive")
+def admin_tenant_archive(request: Request, slug: str, db: Session = Depends(get_db)):
+    _require_admin(request)
+    t = db.query(Tenant).filter(Tenant.slug == slug).first()
+    if not t:
+        raise HTTPException(404, "Tenant not found")
+    if t.deleted_at is None:
+        t.is_archived = True
+        t.archived_at = datetime.utcnow()
+        db.commit()
+    return RedirectResponse(url="/admin/tenants?status=active", status_code=303)
+
+
+@router.post("/admin/tenants/{slug}/unarchive")
+def admin_tenant_unarchive(request: Request, slug: str, db: Session = Depends(get_db)):
+    _require_admin(request)
+    t = db.query(Tenant).filter(Tenant.slug == slug).first()
+    if not t:
+        raise HTTPException(404, "Tenant not found")
+    if t.deleted_at is None:
+        t.is_archived = False
+        t.archived_at = None
+        db.commit()
+    return RedirectResponse(url="/admin/tenants?status=archived", status_code=303)
+
+
+@router.post("/admin/tenants/{slug}/delete")
+def admin_tenant_delete(request: Request, slug: str, db: Session = Depends(get_db)):
+    _require_admin(request)
+    t = db.query(Tenant).filter(Tenant.slug == slug).first()
+    if not t:
+        raise HTTPException(404, "Tenant not found")
+    now = datetime.utcnow()
+    actor = (_session(request).get("email") or "admin")
+    t.deleted_at = now
+    t.deleted_by = str(actor)
+    t.is_archived = True
+    t.archived_at = now
+    db.commit()
+    return RedirectResponse(url="/admin/tenants?status=active", status_code=303)
+
+
+@router.post("/admin/tenants/{slug}/restore")
+def admin_tenant_restore(request: Request, slug: str, db: Session = Depends(get_db)):
+    _require_admin(request)
+    t = db.query(Tenant).filter(Tenant.slug == slug).first()
+    if not t:
+        raise HTTPException(404, "Tenant not found")
+    t.deleted_at = None
+    t.deleted_by = None
+    db.commit()
+    return RedirectResponse(url="/admin/tenants?status=deleted", status_code=303)
+
+
 @router.get("/admin/licensing", response_class=HTMLResponse)
 def admin_licensing(request: Request, tenant: Optional[str] = None, db: Session = Depends(get_db)):
     _require_admin(request)
     ensure_default_plans(db)
 
-    tenants = db.query(Tenant).order_by(Tenant.slug.asc()).all()
+    tenants = db.query(Tenant).filter(Tenant.deleted_at.is_(None)).order_by(Tenant.slug.asc()).all()
     plans = db.query(Plan).order_by(Plan.duration_days.asc()).all()
 
     selected = None
@@ -358,7 +575,7 @@ def admin_links(request: Request, db: Session = Depends(get_db)):
     _require_admin(request)
 
     base_url = _portal_base(request)
-    tenants = db.query(Tenant).order_by(Tenant.slug.asc()).all()
+    tenants = db.query(Tenant).filter(Tenant.deleted_at.is_(None)).order_by(Tenant.slug.asc()).all()
 
     rows = []
     for t in tenants:

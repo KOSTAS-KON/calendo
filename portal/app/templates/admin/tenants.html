@@ -2,36 +2,155 @@
 {% block content %}
 
 {% if onboard and onboard.temp_password %}
-  <div style="margin:12px 0; padding:12px; border-radius:14px; background:#052e16; border:1px solid rgba(34,197,94,.45); color:#bbf7d0;">
+  <div class="card" style="border:1px solid rgba(34,197,94,.35); background: rgba(34,197,94,.08); margin-bottom:14px;">
     <div style="font-weight:900; margin-bottom:6px;">✅ Tenant created successfully</div>
     <div><b>Tenant:</b> <code>{{ onboard.tenant_slug }}</code></div>
     <div><b>Owner email:</b> <code>{{ onboard.owner_email }}</code></div>
     <div><b>Temporary password (show once):</b> <code>{{ onboard.temp_password }}</code></div>
-    <div style="margin-top:6px; font-size:13px; opacity:.9;">Owner must change password on first login.</div>
+    <div style="margin-top:6px; font-size:13px; opacity:.85;">Owner must change password on first login.</div>
+    <div style="margin-top:10px;">
+      <button class="btn btn-outline copy-btn"
+              data-copy="Tenant: {{ onboard.tenant_slug }}
+Login: {{ base_url }}/login?next=/t/{{ onboard.tenant_slug }}/suite
+Email: {{ onboard.owner_email }}
+Temp password: {{ onboard.temp_password }}">
+        📋 Copy onboarding info
+      </button>
+    </div>
   </div>
 {% endif %}
 
-<h1>Tenants</h1>
-<p><a class="btn" href="/admin/tenants/new">Create tenant</a>
-<a class="btn" href="/admin/licensing">Licensing</a></p>
+{% set header = "Tenants" %}
+{% set subheader = "Search, archive, and manage tenants at scale." %}
+{% set actions = [
+  {"label":"Create tenant","href": "/admin/tenants/new","variant":"primary"},
+  {"label":"Licensing","href": "/admin/licensing","variant":"outline"},
+  {"label":"Links","href": "/admin/links","variant":"outline"}
+] %}
 
-<table class="table">
-  <thead><tr><th>Slug</th><th>Name</th><th>Status</th><th>Links</th><th>Actions</th></tr></thead>
-  <tbody>
-  {% for t in tenants %}
-    <tr>
-      <td><strong>{{t.slug}}</strong></td>
-      <td>{{t.name}}</td>
-      <td>{{t.status}}</td>
-      <td>
-        <a href="{{base_url}}/t/{{t.slug}}/suite" target="_blank">Portal</a> |
-        <a href="{{ (base_url.replace('calendo-3ktr.onrender.com','calendo-sms.onrender.com')) }}/sms?tenant={{t.slug}}" target="_blank">SMS</a>
-      </td>
-      <td>
-        <a class="btn btn-sm btn-outline" href="/admin/tenants/{{t.slug}}/reset_password">🔑 Reset</a>
-      </td>
-    </tr>
-  {% endfor %}
-  </tbody>
-</table>
+<div class="card">
+  <div class="card-row between wrap" style="gap:12px;">
+    <div class="pill-group">
+      <a class="pill {% if status=='active' %}active{% endif %}" href="/admin/tenants?status=active">Active</a>
+      <a class="pill {% if status=='archived' %}active{% endif %}" href="/admin/tenants?status=archived">Archived</a>
+      <a class="pill {% if status=='deleted' %}active{% endif %}" href="/admin/tenants?status=deleted">Deleted</a>
+      <a class="pill {% if status=='all' %}active{% endif %}" href="/admin/tenants?status=all">All</a>
+    </div>
+
+    <form method="get" class="search-inline" style="display:flex; gap:10px; align-items:center;">
+      <input class="input" type="text" name="q" value="{{ q }}" placeholder="Search slug, clinic, or email…" style="min-width:260px;">
+      <input type="hidden" name="status" value="{{ status }}">
+      <input type="hidden" name="limit" value="{{ limit }}">
+      <button class="btn" type="submit">Search</button>
+    </form>
+  </div>
+
+  <div style="margin-top:10px; display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; opacity:.85; font-size:13px;">
+    <div>Showing <b>{{ page_start }}</b>–<b>{{ page_end }}</b> of <b>{{ total }}</b></div>
+    <div>
+      {% if page > 1 %}
+        <a class="btn btn-sm btn-outline" href="/admin/tenants?status={{status}}&q={{q}}&page={{page-1}}&limit={{limit}}">← Prev</a>
+      {% endif %}
+      {% if page < pages %}
+        <a class="btn btn-sm btn-outline" href="/admin/tenants?status={{status}}&q={{q}}&page={{page+1}}&limit={{limit}}">Next →</a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<form method="post" action="/admin/tenants/bulk" class="card" style="margin-top:14px;">
+  <div class="card-row between wrap" style="gap:12px; align-items:center;">
+    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+      <div style="font-weight:900;">Bulk actions</div>
+      <select class="input" name="action" style="width:200px;">
+        <option value="archive">Archive selected</option>
+        <option value="unarchive">Restore (unarchive)</option>
+        <option value="delete">Soft delete selected</option>
+        <option value="restore">Restore from deleted</option>
+      </select>
+      <button class="btn btn-outline" type="submit">Apply</button>
+      <div style="font-size:12px; opacity:.75;">Tip: Use Archive for dormant tenants. Soft delete removes from normal views.</div>
+    </div>
+
+    <button class="btn btn-sm btn-outline" type="button" onclick="toggleAllTenants(true)">Select all on page</button>
+  </div>
+
+  <div class="table-wrap" style="margin-top:10px;">
+    <table class="table table-cards js-responsive-table" data-cards="true">
+      <thead>
+        <tr>
+          <th style="width:38px;"><input type="checkbox" onclick="toggleAllTenants(this.checked)"></th>
+          <th>Slug</th>
+          <th>Clinic</th>
+          <th>Owner email</th>
+          <th>Status</th>
+          <th>Links</th>
+          <th style="width:260px;">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in tenants %}
+          <tr>
+            <td><input type="checkbox" name="slugs" value="{{ t.slug }}" class="tenant-check"></td>
+            <td><strong>{{ t.slug }}</strong></td>
+            <td>{{ t.name }}</td>
+            <td>{% if t.owner_email %}<code>{{ t.owner_email }}</code>{% else %}<span style="opacity:.65;">—</span>{% endif %}</td>
+            <td>
+              {% if t.deleted_at %}
+                <span class="pill danger">Deleted</span>
+              {% elif t.is_archived %}
+                <span class="pill">Archived</span>
+              {% else %}
+                <span class="pill success">Active</span>
+              {% endif %}
+            </td>
+            <td>
+              <a href="{{ t.suite_url }}" target="_blank">Portal</a>
+              {% if t.sms_url %} | <a href="{{ t.sms_url }}" target="_blank">SMS</a>{% endif %}
+            </td>
+            <td>
+              <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                <a class="btn btn-sm btn-outline" href="/admin/tenants/{{ t.slug }}/reset_password">🔑 Reset</a>
+
+                {% if t.deleted_at %}
+                  <form method="post" action="/admin/tenants/{{ t.slug }}/restore" style="display:inline;">
+                    <button class="btn btn-sm btn-outline" type="submit">♻ Restore</button>
+                  </form>
+                {% else %}
+                  {% if t.is_archived %}
+                    <form method="post" action="/admin/tenants/{{ t.slug }}/unarchive" style="display:inline;">
+                      <button class="btn btn-sm btn-outline" type="submit">↩ Unarchive</button>
+                    </form>
+                  {% else %}
+                    <form method="post" action="/admin/tenants/{{ t.slug }}/archive" style="display:inline;">
+                      <button class="btn btn-sm btn-outline" type="submit">🗄 Archive</button>
+                    </form>
+                  {% endif %}
+                  <form method="post" action="/admin/tenants/{{ t.slug }}/delete" style="display:inline;" onsubmit="return confirm('Soft delete tenant {{ t.slug }}? This hides it from normal views (data kept).');">
+                    <button class="btn btn-sm btn-danger" type="submit">🗑 Delete</button>
+                  </form>
+                {% endif %}
+
+                <button class="btn btn-sm btn-outline copy-btn"
+                        type="button"
+                        data-copy="Tenant: {{ t.slug }}
+Portal: {{ t.suite_url }}
+SMS: {{ t.sms_url }}">
+                  📋 Copy links
+                </button>
+              </div>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</form>
+
+<script>
+function toggleAllTenants(checked){
+  document.querySelectorAll('.tenant-check').forEach(cb => cb.checked = checked);
+}
+</script>
+
 {% endblock %}
