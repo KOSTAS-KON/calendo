@@ -20,8 +20,10 @@ try:
 except Exception:
     sentry_sdk = None
 
+from sqlalchemy.exc import ProgrammingError
+
 from app.db import SessionLocal
-from app.startup_migrate import run_migrations  # ✅ single import, env-gated
+from app.startup_migrate import run_migrations  # env-gated safe runner
 from app.routers.web import router as web_router
 from app.routers.auth import router as auth_router
 from app.routers.admin import router as admin_router
@@ -144,6 +146,17 @@ def _format_iso_utc(dt: datetime) -> str:
     return dt.replace(microsecond=0).isoformat() + "Z"
 
 
+def _is_missing_tenant_archive_columns(err: Exception) -> bool:
+    """
+    Detect the specific failure you keep seeing:
+      psycopg2.errors.UndefinedColumn: column tenants.is_archived does not exist
+    """
+    msg = str(err).lower()
+    return ("undefinedcolumn" in msg and "tenants.is_archived" in msg) or (
+        "does not exist" in msg and "tenants.is_archived" in msg
+    )
+
+
 # ... keep ALL your existing code unchanged here ...
 # TenantGateMiddleware, routes, etc.
 
@@ -152,6 +165,14 @@ def _format_iso_utc(dt: datetime) -> str:
 # Seed defaults + bootstrap owner
 # ----------------------------
 def seed_defaults() -> None:
+    """
+    Seed core data safely.
+
+    Production behavior:
+    - If DB schema is behind (missing tenants.is_archived), try migrations and retry once.
+    - If still behind, DO NOT crash the whole service: log a warning and return.
+      (This prevents Render restart loops while you fix migrations.)
+    """
     db = SessionLocal()
     try:
         from app.models.tenant import Tenant
@@ -159,7 +180,27 @@ def seed_defaults() -> None:
         from app.models.licensing import Plan, Subscription
         from app.models.user import User
 
-        t = db.query(Tenant).filter(Tenant.slug == "default").first()
+        # 1) Load default tenant (may crash if DB schema behind)
+        try:
+            t = db.query(Tenant).filter(Tenant.slug == "default").first()
+        except ProgrammingError as e:
+            if _is_missing_tenant_archive_columns(e):
+                print("[seed_defaults] Missing tenants.is_archived; attempting migrations then retrying once...")
+                run_migrations()
+                try:
+                    t = db.query(Tenant).filter(Tenant.slug == "default").first()
+                except ProgrammingError as e2:
+                    if _is_missing_tenant_archive_columns(e2):
+                        print(
+                            "[seed_defaults] WARNING: tenants archive columns still missing after migration attempt. "
+                            "Service will start but seed_defaults is skipped. Run Alembic upgrade head."
+                        )
+                        return
+                    raise
+            else:
+                raise
+
+        # 2) Create tenant if not exists (safe)
         if not t:
             t = Tenant(id=str(uuid.uuid4()), slug="default", name="Default Tenant", status="active")
             if hasattr(t, "created_at"):
@@ -168,11 +209,13 @@ def seed_defaults() -> None:
             db.commit()
             db.refresh(t)
 
+        # 3) Ensure clinic_settings exists
         cs = db.query(ClinicSettings).filter(ClinicSettings.tenant_id == t.id).first()
         if not cs:
             db.add(ClinicSettings(tenant_id=t.id))
             db.commit()
 
+        # 4) Ensure plans exist
         def ensure_plan(code: str, name: str, days: int) -> Plan:
             p = db.query(Plan).filter(Plan.code == code).first()
             if not p:
@@ -186,6 +229,7 @@ def seed_defaults() -> None:
         ensure_plan("MONTHLY_30D", "Monthly (30 days)", 30)
         ensure_plan("YEARLY_365D", "Yearly (365 days)", 365)
 
+        # 5) Ensure subscription exists
         sub = (
             db.query(Subscription)
             .filter(Subscription.tenant_id == t.id)
@@ -200,12 +244,13 @@ def seed_defaults() -> None:
                     plan_id=p_trial.id,
                     status="active",
                     starts_at=datetime.utcnow(),
-                    ends_at=datetime.utcnow() + timedelta(days=int(p_trial.duration_days)),
+                    ends_at=datetime.utcnow() + timedelta(days=int(getattr(p_trial, "duration_days", 7) or 7)),
                     source="manual",
                 )
             )
             db.commit()
 
+        # 6) Optional bootstrap owner via env
         email = (os.getenv("BOOTSTRAP_OWNER_EMAIL") or "").strip().lower()
         pw = (os.getenv("BOOTSTRAP_OWNER_PASSWORD") or "").strip()
         if email and pw:
@@ -225,15 +270,18 @@ def seed_defaults() -> None:
                 )
                 db.commit()
                 print(f"BOOTSTRAP: created owner {email} for tenant {t.slug} (must reset password on first login)")
-                print("BOOTSTRAP: IMPORTANT: remove BOOTSTRAP_OWNER_EMAIL and BOOTSTRAP_OWNER_PASSWORD from env after first login.")
+                print(
+                    "BOOTSTRAP: IMPORTANT: remove BOOTSTRAP_OWNER_EMAIL and BOOTSTRAP_OWNER_PASSWORD from env after first login."
+                )
+
     finally:
         db.close()
 
 
 @app.on_event("startup")
 def on_startup():
-    # ✅ Run migrations first (but only if RUN_MIGRATIONS_ON_STARTUP=1)
+    # ✅ Attempt migrations first (env-gated; set RUN_MIGRATIONS_ON_STARTUP=0 on Render if entrypoint already migrates)
     run_migrations()
 
-    # ✅ Only then seed (prevents UndefinedColumn crashes)
+    # ✅ Seed (won't crash the whole service if DB is behind)
     seed_defaults()

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import time
 from contextlib import contextmanager
+from pathlib import Path
 
 from sqlalchemy import text
 from app.db import SessionLocal
@@ -21,33 +22,56 @@ def _env_truthy(name: str, default: str = "0") -> bool:
     return (os.getenv(name, default) or "").strip().lower() in ("1", "true", "yes", "on")
 
 
+def _find_alembic_ini() -> str | None:
+    """
+    In production containers we've seen two layouts:
+      - /app/alembic.ini (root)
+      - /app/portal/alembic.ini (portal subfolder)
+    Prefer root if present.
+    """
+    candidates = [
+        Path("alembic.ini"),
+        Path("portal") / "alembic.ini",
+    ]
+    for p in candidates:
+        try:
+            if p.exists():
+                return str(p)
+        except Exception:
+            continue
+    return None
+
+
 def run_migrations_if_enabled() -> None:
     """
     Safe migration runner.
 
-    - Only runs when RUN_MIGRATIONS_ON_STARTUP=1
-    - Uses pg_advisory_lock to avoid concurrent runs
-    - If lock isn't acquired quickly, it SKIPS (doesn't crash the app)
-    - Never exits the process
+    - Runs only when RUN_MIGRATIONS_ON_STARTUP=1
+    - Uses pg_advisory_lock to prevent concurrent runs
+    - If lock can't be acquired quickly, SKIPS (doesn't crash)
+    - Uses the correct Alembic config file automatically
     """
     if not _env_truthy("RUN_MIGRATIONS_ON_STARTUP", "0"):
         return
 
-    # Lazy imports so the app can still boot even if alembic isn't installed locally
     try:
         from alembic import command
         from alembic.config import Config
     except Exception as e:
-        print(f"[startup_migrate] Alembic not available: {e}. Skipping.")
+        print(f"[startup_migrate] Alembic not available: {e}. Skipping migrations.")
         return
 
-    # Try to acquire advisory lock (so only one instance migrates)
-    lock_key = 88442211  # arbitrary constant
-    max_wait_s = int(os.getenv("MIGRATION_LOCK_WAIT_SECONDS", "10"))
+    ini_path = _find_alembic_ini()
+    if not ini_path:
+        print("[startup_migrate] No alembic.ini found (alembic.ini or portal/alembic.ini). Skipping.")
+        return
+
+    lock_key = 88442211
+    max_wait_s = int(os.getenv("MIGRATION_LOCK_WAIT_SECONDS", "12"))
     start = time.time()
 
-    acquired = False
     with _db_session() as db:
+        acquired = False
         while time.time() - start < max_wait_s:
             try:
                 acquired = bool(db.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": lock_key}).scalar())
@@ -64,12 +88,12 @@ def run_migrations_if_enabled() -> None:
             return
 
         try:
-            cfg = Config("portal/alembic.ini")
-            print("[startup_migrate] Running alembic upgrade head...")
+            cfg = Config(ini_path)
+            print(f"[startup_migrate] Running alembic upgrade head using {ini_path} ...")
             command.upgrade(cfg, "head")
             print("[startup_migrate] Alembic upgrade complete.")
         except Exception as e:
-            # DO NOT crash the app. Log and continue.
+            # do not kill the app
             print(f"[startup_migrate] Alembic upgrade failed (non-fatal): {e}")
         finally:
             try:
@@ -79,12 +103,5 @@ def run_migrations_if_enabled() -> None:
 
 
 def run_migrations() -> None:
-    """
-    Backwards-compatible helper used by main.py startup hook.
-
-    IMPORTANT:
-    - This intentionally calls the safe, env-gated runner.
-    - Set RUN_MIGRATIONS_ON_STARTUP=1 only if your platform does NOT already run migrations.
-    - On Render, usually set RUN_MIGRATIONS_ON_STARTUP=0 (avoid double-run).
-    """
+    """Compatibility wrapper used by main.py startup hook."""
     run_migrations_if_enabled()
