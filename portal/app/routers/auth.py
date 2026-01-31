@@ -8,6 +8,7 @@ from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 import bcrypt
 import sqlalchemy as sa
+import requests
 
 from app.db import SessionLocal
 
@@ -62,13 +63,37 @@ def ping():
 
 
 def _render_login_page(next_path: str, tenant_slug: str, error: str) -> HTMLResponse:
+    # Cloudflare Turnstile (optional)
+    turnstile_enabled = (os.getenv("TURNSTILE_ENABLED") or "false").strip().lower() == "true"
+    turnstile_site_key = (os.getenv("TURNSTILE_SITE_KEY") or "").strip()
+
     msg = ""
     if error:
-        msg = """
-        <div style="margin:10px 0; padding:10px; border-radius:12px;
-                    background:#3b0a0a; border:1px solid rgba(239,68,68,.5); color:#fecaca;">
-          <b>Login failed:</b> Please check email/password.
-        </div>
+        if error == "bot":
+            msg = """
+            <div style="margin:10px 0; padding:10px; border-radius:12px;
+                        background:#1f2937; border:1px solid rgba(148,163,184,.35); color:#e5e7eb;">
+              <b>Security check failed:</b> Please retry. If this continues, contact the administrator.
+            </div>
+            """
+        else:
+            msg = """
+            <div style="margin:10px 0; padding:10px; border-radius:12px;
+                        background:#3b0a0a; border:1px solid rgba(239,68,68,.5); color:#fecaca;">
+              <b>Login failed:</b> Please check email/password.
+            </div>
+            """
+
+    turnstile_block = ""
+    turnstile_script = ""
+    if turnstile_enabled and turnstile_site_key:
+        turnstile_block = f"""
+          <div style="margin-top:12px;">
+            <div class="cf-turnstile" data-sitekey="{turnstile_site_key}"></div>
+          </div>
+        """
+        turnstile_script = """
+          <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
         """
 
     html = f"""
@@ -96,14 +121,48 @@ def _render_login_page(next_path: str, tenant_slug: str, error: str) -> HTMLResp
               <input type="hidden" name="next" value="{quote(next_path)}"/>
               <input name="email" placeholder="Email" autocomplete="username" />
               <input name="password" placeholder="Password" autocomplete="current-password" type="password" />
+              {turnstile_block}
               <button type="submit">Log in</button>
             </form>
           </div>
         </div>
+        {turnstile_script}
       </body>
     </html>
     """
     return HTMLResponse(html)
+
+
+def _verify_turnstile_or_raise(token: str, ip: str) -> None:
+    """Cloudflare Turnstile verification for login (optional).
+
+    Enabled by TURNSTILE_ENABLED=true and requires TURNSTILE_SECRET_KEY.
+    Fails closed when enabled.
+    """
+
+    enabled = (os.getenv("TURNSTILE_ENABLED") or "false").strip().lower() == "true"
+    if not enabled:
+        return
+
+    secret = (os.getenv("TURNSTILE_SECRET_KEY") or "").strip()
+    if not secret:
+        # Enabled but misconfigured => fail closed
+        raise ValueError("Turnstile enabled but TURNSTILE_SECRET_KEY is missing")
+
+    token = (token or "").strip()
+    if not token:
+        raise ValueError("Turnstile token missing")
+
+    timeout = float((os.getenv("TURNSTILE_TIMEOUT_SECONDS") or "5").strip())
+
+    resp = requests.post(
+        "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+        data={"secret": secret, "response": token, "remoteip": ip},
+        timeout=timeout,
+    )
+    data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+    if not data.get("success"):
+        raise ValueError("Turnstile verification failed")
 
 
 def _get_client_ip(request: Request) -> str:
@@ -198,6 +257,7 @@ def auth_login_post(
     request: Request,
     email: str = Form(""),
     password: str = Form(""),
+    cf_turnstile_response: str = Form("", alias="cf-turnstile-response"),
     next: str = Form("/t/default/suite"),
 ):
     next_path = _safe_next(next)
@@ -216,6 +276,13 @@ def auth_login_post(
         allowed, _retry_after = _rate_limit_login(db, ip)
         if not allowed:
             return RedirectResponse(url=f"/auth/login?next={quote(next_path)}&error=1", status_code=303)
+
+        # Optional bot protection on login
+        try:
+            _verify_turnstile_or_raise(cf_turnstile_response, ip)
+        except Exception:
+            _record_login_failure(db, ip)
+            return RedirectResponse(url=f"/auth/login?next={quote(next_path)}&error=bot", status_code=303)
 
         from app.models.user import User
 

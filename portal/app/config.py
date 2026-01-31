@@ -26,4 +26,18 @@ class Settings(BaseSettings):
     # Super-admin access key for /admin pages (set in SaaS)
     ADMIN_KEY: str = ""
 
+    # SSO signing secret used to grant short-lived access to the SMS app.
+    # Set the same value on BOTH Portal + SMS services in Render.
+    # If empty, falls back to SECRET_KEY (not recommended for SaaS).
+    SSO_SHARED_SECRET: str = ""
+
+    # Security
+    ALLOWED_HOSTS: str = ""  # comma-separated, e.g. calendo-portal.onrender.com,calendo-sms.onrender.com
+    SESSION_MAX_AGE_SECONDS: int = 60 * 60 * 12  # 12 hours
+    COOKIE_SECURE: bool = True  # should be True in production (HTTPS)
+    COOKIE_SAMESITE: str = "lax"  # lax|strict|none
+
+    # Admin-key bootstrap via query string is risky. Disable by default.
+    ALLOW_ADMIN_KEY_QUERY: bool = False
+
 settings = Settings()

@@ -8,6 +8,7 @@ from urllib.parse import quote_plus, quote
 from fastapi import APIRouter, Depends, Request, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -27,6 +28,21 @@ templates = Jinja2Templates(directory="app/templates")
 def _rp(request: Request) -> str:
     return request.scope.get("root_path", "") or ""
 
+
+
+def _sso_serializer() -> URLSafeTimedSerializer:
+    secret = (settings.SSO_SHARED_SECRET or settings.SECRET_KEY or "").strip()
+    return URLSafeTimedSerializer(secret_key=secret, salt="calendo-sms-sso-v1")
+
+def _make_sms_sso_token(request: Request, tenant_slug: str) -> str:
+    s = _session(request)
+    payload = {
+        "tenant": (tenant_slug or "default").strip().lower(),
+        "user_id": s.get("user_id"),
+        "role": s.get("role"),
+        "email": s.get("email"),
+    }
+    return _sso_serializer().dumps(payload)
 
 def _session(request: Request) -> dict:
     s = request.scope.get("session")
@@ -105,14 +121,20 @@ def _render(request: Request, template_name: str, ctx: dict, db: Session, tenant
     cs = _get_settings(db, tctx.tenant_id)
     lic = _get_license(db)
 
-    sms_url = (settings.SMS_APP_URL or "").strip() or "/sms"
-    if sms_url.endswith("/"):
-        sms_url = sms_url[:-1]
-    sms_link = (
-        f"{sms_url}/sms?tenant={tctx.tenant_slug}"
-        if "onrender.com" in sms_url
-        else f"{sms_url}?tenant={tctx.tenant_slug}"
-    )
+    
+sms_url = (settings.SMS_APP_URL or "").strip() or "/sms"
+if sms_url.endswith("/"):
+    sms_url = sms_url[:-1]
+
+# Short-lived SSO token for the SMS app (prevents direct URL access without auth)
+sso = _make_sms_sso_token(request, tctx.tenant_slug)
+
+# Render deployments often mount Streamlit at /sms/ with a route under /sms
+# Keep compatibility with both on-prem gateway and Render paths.
+if "onrender.com" in sms_url:
+    sms_link = f"{sms_url}/sms?tenant={tctx.tenant_slug}&sso={sso}"
+else:
+    sms_link = f"{sms_url}?tenant={tctx.tenant_slug}&sso={sso}"
 
     base = {
         "request": request,

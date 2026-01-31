@@ -15,6 +15,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from app.db import get_db
+from app.config import settings
 from app.models.tenant import Tenant
 from app.models.clinic_settings import ClinicSettings
 from app.models.licensing import Plan, Subscription, ActivationCode, LicenseAuditLog
@@ -52,8 +53,12 @@ def _expected_admin_key() -> str:
     return (os.getenv("ADMIN_KEY") or "").strip()
 
 
+
 def _get_admin_key_from_request(request: Request) -> str:
-    """Header first, then session, then optional ?admin_key= bootstrap."""
+    """Header first, then session, then (optionally) ?admin_key= bootstrap.
+
+    WARNING: Query-string auth can leak via logs/referrers. Disabled by default.
+    """
     hdr = (request.headers.get("X-Admin-Key") or request.headers.get("x-admin-key") or "").strip()
     if hdr:
         return hdr
@@ -62,8 +67,11 @@ def _get_admin_key_from_request(request: Request) -> str:
     if sess_key:
         return sess_key
 
-    qp = (request.query_params.get("admin_key") or "").strip()
-    return qp
+    if settings.ALLOW_ADMIN_KEY_QUERY:
+        qp = (request.query_params.get("admin_key") or "").strip()
+        return qp
+
+    return ""
 
 
 def _set_admin_session_key(request: Request, key: str) -> None:

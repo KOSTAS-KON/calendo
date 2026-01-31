@@ -15,14 +15,23 @@ def _format_iso_utc(dt: datetime) -> str:
     return dt.replace(microsecond=0).isoformat() + "Z"
 
 
+
 def _resolve_tenant_slug(request: Request) -> str:
-    # Prefer explicit query param, else session, else default
-    tenant = (request.query_params.get("tenant") or "").strip().lower()
-    if tenant:
-        return tenant
+    """Resolve tenant for *public* endpoints safely.
+
+    Security: avoid leaking tenant-specific info to unauthenticated callers.
+    - If a user session exists, use its tenant_slug.
+    - Otherwise, only allow "default" (marketing/demo) and ignore arbitrary ?tenant=...
+    """
     s = request.scope.get("session")
     if isinstance(s, dict) and s.get("tenant_slug"):
         return str(s.get("tenant_slug") or "default").strip().lower()
+
+    tenant = (request.query_params.get("tenant") or "").strip().lower()
+    if tenant == "default" or not tenant:
+        return "default"
+
+    # Unauthenticated callers cannot enumerate other tenants
     return "default"
 
 

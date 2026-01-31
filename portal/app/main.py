@@ -7,8 +7,10 @@ from urllib.parse import unquote
 
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import HTMLResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 import bcrypt
 import sqlalchemy as sa
@@ -27,9 +29,61 @@ from app.routers.auth import router as auth_router
 from app.routers.admin import router as admin_router
 from app.api.public_alias import router as public_alias_router
 from app.dev_seed import ensure_test_users
+from app.config import settings
 
 
 app = FastAPI(title="Calendo Portal", version="1.0.0")
+
+
+# ----------------------------
+# Security middleware
+# ----------------------------
+def _parse_allowed_hosts() -> list[str]:
+    raw = (settings.ALLOWED_HOSTS or "").strip()
+    if not raw:
+        # Render / local dev: allow anything unless configured
+        return ["*"]
+    return [h.strip() for h in raw.split(",") if h.strip()]
+
+ALLOWED_HOSTS_LIST = _parse_allowed_hosts()
+if ALLOWED_HOSTS_LIST != ["*"]:
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS_LIST)
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+
+        # Basic hardening headers
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+        response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+        response.headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
+
+        # CSP tuned for the built-in templates + inline CSS (kept permissive but safe-by-default)
+        # If you later move inline styles/scripts to static files you can tighten this.
+        csp = (
+            "default-src 'self'; "
+            "img-src 'self' data:; "
+            "style-src 'self' 'unsafe-inline'; "
+            "script-src 'self' 'unsafe-inline'; "
+            "font-src 'self' data:; "
+            "connect-src 'self'; "
+            "frame-ancestors 'none'; "
+            "base-uri 'self'; "
+            "form-action 'self'"
+        )
+        response.headers.setdefault("Content-Security-Policy", csp)
+
+        # HSTS only when served over HTTPS (Render terminates TLS, but forwards proto)
+        xf_proto = (request.headers.get("x-forwarded-proto") or "").lower()
+        if xf_proto == "https":
+            response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+
+        return response
+
+app.add_middleware(SecurityHeadersMiddleware)
 
 
 # ----------------------------
@@ -89,14 +143,25 @@ def root_head():
 # ----------------------------
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
-SESSION_SECRET = (os.getenv("SESSION_SECRET") or "").strip() or "dev-only-change-me-please"
-HTTPS_ONLY = (os.getenv("HTTPS_ONLY") or "1").strip().lower() in ("1", "true", "yes", "on")
+
+SESSION_SECRET = (os.getenv("SESSION_SECRET") or "").strip() or (settings.SSO_SHARED_SECRET or settings.SECRET_KEY)
+HTTPS_ONLY = bool(settings.COOKIE_SECURE)
+
+def _is_weak_secret(value: str) -> bool:
+    v = (value or "").strip().lower()
+    return (not v) or v in {"change-me", "dev-only-change-me-please"} or len(v) < 32
+
+# Refuse to start with weak secrets unless explicitly allowed (DEV only).
+ALLOW_WEAK = (os.getenv("ALLOW_WEAK_SECRETS") or "").strip().lower() in ("1","true","yes","on")
+if _is_weak_secret(SESSION_SECRET) and not ALLOW_WEAK:
+    raise RuntimeError("Weak SESSION_SECRET/SECRET_KEY detected. Set a strong SECRET_KEY (>=32 chars) in production.")
 
 app.add_middleware(
     SessionMiddleware,
     secret_key=SESSION_SECRET,
-    same_site="lax",
+    same_site=str(settings.COOKIE_SAMESITE or "lax").lower(),
     https_only=HTTPS_ONLY,
+    max_age=int(settings.SESSION_MAX_AGE_SECONDS),
 )
 
 # Optional deterministic test users (ENABLE_TEST_USERS=1)

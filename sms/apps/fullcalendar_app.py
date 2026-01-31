@@ -56,6 +56,80 @@ try:
 except Exception:
     ZoneInfo = None  # type: ignore
 
+# ----------------------------
+# Access control (SSO)
+# ----------------------------
+# This app is designed to be opened from the Therapy Portal.
+# The Portal issues a short-lived signed token (?sso=...) that prevents
+# unauthorized access via a copied direct URL.
+from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired  # type: ignore
+
+def _get_query_params() -> dict:
+    try:
+        # Streamlit >= 1.33
+        return dict(st.query_params)
+    except Exception:
+        try:
+            return {k: v[0] if isinstance(v, list) and v else v for k, v in (st.experimental_get_query_params() or {}).items()}
+        except Exception:
+            return {}
+
+def _require_sso() -> tuple[str, bool]:
+    qp = _get_query_params()
+    tenant = (qp.get("tenant") or "default")
+    if isinstance(tenant, list):
+        tenant = tenant[0] if tenant else "default"
+    tenant = str(tenant).strip().lower() or "default"
+
+    # Make tenant available to provider secrets fetch (Portal internal endpoint expects ?tenant=...)
+    os.environ["TENANT_SLUG"] = tenant
+
+    sso = qp.get("sso") or ""
+    if isinstance(sso, list):
+        sso = sso[0] if sso else ""
+    sso = str(sso).strip()
+
+    # Cached session: allow refreshes without re-validating on every rerun
+    if st.session_state.get("_sso_ok") and st.session_state.get("_tenant") == tenant:
+        return tenant, True
+
+    secret = (os.getenv("SSO_SHARED_SECRET") or os.getenv("SESSION_SECRET") or os.getenv("SECRET_KEY") or "").strip()
+    if not secret:
+        st.error("Security is not configured: missing SSO_SHARED_SECRET. Please set it in the environment.")
+        st.stop()
+
+    max_age = int(os.getenv("SSO_MAX_AGE_SECONDS") or "900")  # 15 minutes
+    ser = URLSafeTimedSerializer(secret_key=secret, salt="calendo-sms-sso-v1")
+
+    if not sso:
+        st.warning("Please open the SMS Calendar from the Therapy Portal (you are missing an access token).")
+        st.markdown("- Go to the Portal → **Suite** → open **SMS Calendar**")
+        st.stop()
+
+    try:
+        payload = ser.loads(sso, max_age=max_age)
+    except SignatureExpired:
+        st.warning("Your access link has expired. Please open the SMS Calendar again from the Therapy Portal.")
+        st.stop()
+    except BadSignature:
+        st.error("Invalid access token. Please open the SMS Calendar again from the Therapy Portal.")
+        st.stop()
+    except Exception:
+        st.error("Access token validation failed. Please try again from the Therapy Portal.")
+        st.stop()
+
+    token_tenant = str((payload or {}).get("tenant") or "").strip().lower()
+    if token_tenant and token_tenant != tenant:
+        st.error("Tenant mismatch. Please open the SMS Calendar again from the Therapy Portal.")
+        st.stop()
+
+    st.session_state["_sso_ok"] = True
+    st.session_state["_tenant"] = tenant
+    return tenant, True
+
+TENANT_SLUG, _ = _require_sso()
+
+
 
 # ----------------------------
 # Paths / constants

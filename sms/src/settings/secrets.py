@@ -54,7 +54,8 @@ def _from_portal() -> InfobipSecrets:
     if not portal or not internal_key:
         return InfobipSecrets(base_url="", api_key="", sender="")
 
-    url = f"{portal}/api/internal/clinic_settings"
+    tenant = str(os.getenv("TENANT_SLUG", "")).strip().lower() or "default"
+    url = f"{portal}/api/internal/clinic_settings?tenant={tenant}"
     try:
         r = requests.get(url, headers={"X-Internal-Key": internal_key}, timeout=10)
         if r.status_code != 200:
