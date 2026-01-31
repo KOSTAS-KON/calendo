@@ -3,10 +3,10 @@ from __future__ import annotations
 import os
 from datetime import datetime
 import uuid
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, quote
 
 from fastapi import APIRouter, Depends, Request, Form, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
@@ -26,6 +26,35 @@ templates = Jinja2Templates(directory="app/templates")
 
 def _rp(request: Request) -> str:
     return request.scope.get("root_path", "") or ""
+
+
+def _session(request: Request) -> dict:
+    s = request.scope.get("session")
+    return s if isinstance(s, dict) else {}
+
+
+def _require_login_for_tenant(request: Request, tenant_slug: str) -> RedirectResponse | None:
+    """
+    Enforce that the user is logged in and belongs to this tenant.
+
+    Returns a RedirectResponse if access should be denied, else None.
+    """
+    s = _session(request)
+    user_id = s.get("user_id")
+    sess_tenant = (s.get("tenant_slug") or "default").strip().lower()
+    tenant_slug = (tenant_slug or "default").strip().lower()
+
+    if not user_id:
+        # Not logged in -> go to login and return here
+        rp = _rp(request)
+        return RedirectResponse(url=f"{rp}/login?next=/t/{tenant_slug}/suite", status_code=303)
+
+    # Logged in but for a different tenant
+    if sess_tenant != tenant_slug:
+        rp = _rp(request)
+        return RedirectResponse(url=f"{rp}/login?next=/t/{tenant_slug}/suite", status_code=303)
+
+    return None
 
 
 def _require_internal(request: Request) -> None:
@@ -77,10 +106,13 @@ def _render(request: Request, template_name: str, ctx: dict, db: Session, tenant
     lic = _get_license(db)
 
     sms_url = (settings.SMS_APP_URL or "").strip() or "/sms"
-    # pass tenant in querystring
     if sms_url.endswith("/"):
         sms_url = sms_url[:-1]
-    sms_link = f"{sms_url}/sms?tenant={tctx.tenant_slug}" if "onrender.com" in sms_url else f"{sms_url}?tenant={tctx.tenant_slug}"
+    sms_link = (
+        f"{sms_url}/sms?tenant={tctx.tenant_slug}"
+        if "onrender.com" in sms_url
+        else f"{sms_url}?tenant={tctx.tenant_slug}"
+    )
 
     base = {
         "request": request,
@@ -96,16 +128,27 @@ def _render(request: Request, template_name: str, ctx: dict, db: Session, tenant
 
 @router.get("/suite", response_class=HTMLResponse)
 def suite_default(request: Request, db: Session = Depends(get_db)):
+    # Require login for default tenant
+    redirect = _require_login_for_tenant(request, "default")
+    if redirect:
+        return redirect
     return _render(request, "pages/suite.html", {}, db, tenant_slug="default")
 
 
 @router.get("/t/{tenant_slug}/suite", response_class=HTMLResponse)
 def suite_tenant(request: Request, tenant_slug: str, db: Session = Depends(get_db)):
+    redirect = _require_login_for_tenant(request, tenant_slug)
+    if redirect:
+        return redirect
     return _render(request, "pages/suite.html", {}, db, tenant_slug=tenant_slug)
 
 
 @router.get("/sms-outbox", response_class=HTMLResponse)
 def sms_outbox_view(request: Request, tenant: str = "default", db: Session = Depends(get_db)):
+    redirect = _require_login_for_tenant(request, tenant)
+    if redirect:
+        return redirect
+
     tctx = resolve_tenant(db, request, tenant_slug=tenant)
     items = (
         db.query(SmsOutbox)
@@ -131,13 +174,17 @@ def sms_outbox_test_send(
     message: str = Form("Test SMS from Clinic Suite"),
     db: Session = Depends(get_db),
 ):
+    redirect = _require_login_for_tenant(request, tenant)
+    if redirect:
+        return redirect
+
     tctx = resolve_tenant(db, request, tenant_slug=tenant)
 
     to_phone = (to_phone or "").strip()
     message = (message or "").strip() or "Test SMS from Clinic Suite"
 
+    rp = _rp(request)
     if not to_phone:
-        rp = _rp(request)
         return RedirectResponse(url=f"{rp}/sms-outbox?tenant={tctx.tenant_slug}", status_code=303)
 
     row = SmsOutbox(
@@ -153,12 +200,15 @@ def sms_outbox_test_send(
     )
     db.add(row)
     db.commit()
-
-    rp = _rp(request)
     return RedirectResponse(url=f"{rp}/sms-outbox?tenant={tctx.tenant_slug}", status_code=303)
+
 
 @router.get("/children", response_class=HTMLResponse)
 def children_list(request: Request, tenant: str = "default", q: str = "", db: Session = Depends(get_db)):
+    redirect = _require_login_for_tenant(request, tenant)
+    if redirect:
+        return redirect
+
     tctx = resolve_tenant(db, request, tenant_slug=tenant)
     query = db.query(Child).filter(Child.tenant_id == tctx.tenant_id)
     if q:
@@ -175,6 +225,10 @@ def children_create(
     notes: str = Form(""),
     db: Session = Depends(get_db),
 ):
+    redirect = _require_login_for_tenant(request, tenant)
+    if redirect:
+        return redirect
+
     tctx = resolve_tenant(db, request, tenant_slug=tenant)
     c = Child(tenant_id=tctx.tenant_id, full_name=full_name.strip(), notes=(notes or "").strip() or None)
     db.add(c)
@@ -185,6 +239,10 @@ def children_create(
 
 @router.get("/therapists", response_class=HTMLResponse)
 def therapists_list(request: Request, tenant: str = "default", db: Session = Depends(get_db)):
+    redirect = _require_login_for_tenant(request, tenant)
+    if redirect:
+        return redirect
+
     tctx = resolve_tenant(db, request, tenant_slug=tenant)
     therapists = db.query(Therapist).filter(Therapist.tenant_id == tctx.tenant_id).order_by(Therapist.name.asc()).all()
     return _render(request, "pages/therapists.html", {"therapists": therapists}, db, tenant_slug=tctx.tenant_slug)
@@ -200,6 +258,10 @@ def therapists_create(
     role: str = Form(""),
     db: Session = Depends(get_db),
 ):
+    redirect = _require_login_for_tenant(request, tenant)
+    if redirect:
+        return redirect
+
     tctx = resolve_tenant(db, request, tenant_slug=tenant)
     t = Therapist(
         tenant_id=tctx.tenant_id,
@@ -216,6 +278,10 @@ def therapists_create(
 
 @router.get("/settings", response_class=HTMLResponse)
 def settings_view(request: Request, tenant: str = "default", db: Session = Depends(get_db)):
+    redirect = _require_login_for_tenant(request, tenant)
+    if redirect:
+        return redirect
+
     tctx = resolve_tenant(db, request, tenant_slug=tenant)
     cs = _get_settings(db, tctx.tenant_id)
     lic = _get_license(db)
@@ -244,6 +310,10 @@ def settings_update_clinic(
     google_maps_link: str = Form(""),
     db: Session = Depends(get_db),
 ):
+    redirect = _require_login_for_tenant(request, tenant)
+    if redirect:
+        return redirect
+
     tctx = resolve_tenant(db, request, tenant_slug=tenant)
     cs = _get_settings(db, tctx.tenant_id)
     cs.clinic_name = (clinic_name or "").strip()
@@ -265,6 +335,10 @@ def settings_update_infobip(
     infobip_sender: str = Form(""),
     db: Session = Depends(get_db),
 ):
+    redirect = _require_login_for_tenant(request, tenant)
+    if redirect:
+        return redirect
+
     tctx = resolve_tenant(db, request, tenant_slug=tenant)
     cs = _get_settings(db, tctx.tenant_id)
     cs.sms_provider = "infobip"
