@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from datetime import datetime, timedelta
 from urllib.parse import quote, unquote
 
@@ -11,7 +10,7 @@ import sqlalchemy as sa
 import requests
 
 from app.db import SessionLocal
-
+from app.config import settings
 
 router = APIRouter(tags=["auth"])
 
@@ -62,10 +61,27 @@ def ping():
     return {"ok": True}
 
 
+def _turnstile_configured() -> bool:
+    """
+    Turnstile is 'configured' only when:
+      - TURNSTILE_ENABLED=true
+      - SITE_KEY and SECRET_KEY are both set
+
+    If enabled but missing keys, we DO NOT enforce (avoid lockouts) and we log a warning.
+    """
+    enabled = bool(getattr(settings, "TURNSTILE_ENABLED", False))
+    site_key = (getattr(settings, "TURNSTILE_SITE_KEY", "") or "").strip()
+    secret_key = (getattr(settings, "TURNSTILE_SECRET_KEY", "") or "").strip()
+    if enabled and (not site_key or not secret_key):
+        # Avoid lockouts due to misconfiguration
+        print("[auth] WARNING: TURNSTILE_ENABLED=true but keys missing. Turnstile will be bypassed until configured.")
+        return False
+    return enabled and bool(site_key) and bool(secret_key)
+
+
 def _render_login_page(next_path: str, tenant_slug: str, error: str) -> HTMLResponse:
-    # Cloudflare Turnstile (optional)
-    turnstile_enabled = (os.getenv("TURNSTILE_ENABLED") or "false").strip().lower() == "true"
-    turnstile_site_key = (os.getenv("TURNSTILE_SITE_KEY") or "").strip()
+    configured = _turnstile_configured()
+    site_key = (getattr(settings, "TURNSTILE_SITE_KEY", "") or "").strip()
 
     msg = ""
     if error:
@@ -86,10 +102,10 @@ def _render_login_page(next_path: str, tenant_slug: str, error: str) -> HTMLResp
 
     turnstile_block = ""
     turnstile_script = ""
-    if turnstile_enabled and turnstile_site_key:
+    if configured and site_key:
         turnstile_block = f"""
           <div style="margin-top:12px;">
-            <div class="cf-turnstile" data-sitekey="{turnstile_site_key}"></div>
+            <div class="cf-turnstile" data-sitekey="{site_key}"></div>
           </div>
         """
         turnstile_script = """
@@ -134,26 +150,21 @@ def _render_login_page(next_path: str, tenant_slug: str, error: str) -> HTMLResp
 
 
 def _verify_turnstile_or_raise(token: str, ip: str) -> None:
-    """Cloudflare Turnstile verification for login (optional).
-
-    Enabled by TURNSTILE_ENABLED=true and requires TURNSTILE_SECRET_KEY.
-    Fails closed when enabled.
     """
+    Cloudflare Turnstile verification for login.
 
-    enabled = (os.getenv("TURNSTILE_ENABLED") or "false").strip().lower() == "true"
-    if not enabled:
+    Enforced ONLY when Turnstile is fully configured (enabled + both keys present).
+    If misconfigured, bypassed to avoid lockouts (see _turnstile_configured()).
+    """
+    if not _turnstile_configured():
         return
 
-    secret = (os.getenv("TURNSTILE_SECRET_KEY") or "").strip()
-    if not secret:
-        # Enabled but misconfigured => fail closed
-        raise ValueError("Turnstile enabled but TURNSTILE_SECRET_KEY is missing")
-
+    secret = (getattr(settings, "TURNSTILE_SECRET_KEY", "") or "").strip()
     token = (token or "").strip()
     if not token:
         raise ValueError("Turnstile token missing")
 
-    timeout = float((os.getenv("TURNSTILE_TIMEOUT_SECONDS") or "5").strip())
+    timeout = float(getattr(settings, "TURNSTILE_TIMEOUT_SECONDS", 5) or 5)
 
     resp = requests.post(
         "https://challenges.cloudflare.com/turnstile/v0/siteverify",
@@ -177,9 +188,9 @@ def _get_client_ip(request: Request) -> str:
 def _rate_limit_login(db, ip: str) -> tuple[bool, int]:
     from app.models.auth_rate_limit import AuthRateLimit
 
-    max_attempts = int((os.getenv("LOGIN_RATE_LIMIT_COUNT") or "10").strip())
-    window_seconds = int((os.getenv("LOGIN_RATE_LIMIT_WINDOW_SECONDS") or "600").strip())
-    block_seconds = int((os.getenv("LOGIN_RATE_LIMIT_BLOCK_SECONDS") or "900").strip())
+    max_attempts = int((getattr(settings, "LOGIN_RATE_LIMIT_COUNT", None) or 10))
+    window_seconds = int((getattr(settings, "LOGIN_RATE_LIMIT_WINDOW_SECONDS", None) or 600))
+    block_seconds = int((getattr(settings, "LOGIN_RATE_LIMIT_BLOCK_SECONDS", None) or 900))
 
     now = datetime.utcnow()
 
@@ -208,8 +219,8 @@ def _rate_limit_login(db, ip: str) -> tuple[bool, int]:
 def _record_login_failure(db, ip: str) -> None:
     from app.models.auth_rate_limit import AuthRateLimit
 
-    max_attempts = int((os.getenv("LOGIN_RATE_LIMIT_COUNT") or "10").strip())
-    block_seconds = int((os.getenv("LOGIN_RATE_LIMIT_BLOCK_SECONDS") or "900").strip())
+    max_attempts = int((getattr(settings, "LOGIN_RATE_LIMIT_COUNT", None) or 10))
+    block_seconds = int((getattr(settings, "LOGIN_RATE_LIMIT_BLOCK_SECONDS", None) or 900))
     now = datetime.utcnow()
 
     row = db.query(AuthRateLimit).filter(AuthRateLimit.ip == ip).first()
@@ -277,7 +288,7 @@ def auth_login_post(
         if not allowed:
             return RedirectResponse(url=f"/auth/login?next={quote(next_path)}&error=1", status_code=303)
 
-        # Optional bot protection on login
+        # Optional bot protection on login (enforced only when fully configured)
         try:
             _verify_turnstile_or_raise(cf_turnstile_response, ip)
         except Exception:
@@ -323,9 +334,17 @@ def login_post(
     request: Request,
     email: str = Form(""),
     password: str = Form(""),
+    cf_turnstile_response: str = Form("", alias="cf-turnstile-response"),
     next: str = Form("/t/default/suite"),
 ):
-    return auth_login_post(request=request, email=email, password=password, next=next)
+    # Keep /login working as an alias to /auth/login (including Turnstile)
+    return auth_login_post(
+        request=request,
+        email=email,
+        password=password,
+        cf_turnstile_response=cf_turnstile_response,
+        next=next,
+    )
 
 
 @router.get("/auth/logout")

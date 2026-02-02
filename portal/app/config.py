@@ -1,7 +1,9 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
     DATABASE_URL: str = "sqlite:///./therapy.db"
     SECRET_KEY: str = "change-me"
 
@@ -39,5 +41,18 @@ class Settings(BaseSettings):
 
     # Admin-key bootstrap via query string is risky. Disable by default.
     ALLOW_ADMIN_KEY_QUERY: bool = False
+
+    # ------------------------------------
+    # Cloudflare Turnstile (bot protection)
+    # ------------------------------------
+    # When enabled, login can require a Turnstile token (anti-bot).
+    # IMPORTANT:
+    # - If TURNSTILE_ENABLED=true but keys are missing, the app will NOT enforce Turnstile
+    #   (to avoid accidental lockouts) and will log a warning.
+    TURNSTILE_ENABLED: bool = False
+    TURNSTILE_SITE_KEY: str = ""     # public key (safe to expose in HTML)
+    TURNSTILE_SECRET_KEY: str = ""   # secret key (server-side only)
+    TURNSTILE_TIMEOUT_SECONDS: int = 5
+
 
 settings = Settings()
