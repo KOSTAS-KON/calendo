@@ -6,21 +6,53 @@
   <section class="xl:col-span-2">
     <div class="mb-3 text-sm text-slate-600">Select a child to view records, documents, appointments, and billing.</div>
 
-    <div class="list">
+    
+    <div class="list children-cards">
       {% for c in children %}
-        <a class="listrow" href="{{ rp }}/children/{{ c.id }}">
-          <div class="font-semibold">{{ c.full_name }}</div>
-          <div class="text-xs text-slate-500">ID {{ c.id }}{% if c.date_of_birth %} · DOB {{ c.date_of_birth }}{% endif %}</div>
-        </a>
+        {% set m = (meta.get(c.id) if meta else None) %}
+        <div class="child-card">
+          <a class="child-main" href="{{ rp }}/children/{{ c.id }}">
+            <div class="child-title">{{ c.full_name }}</div>
+            <div class="child-sub">ID {{ c.id }}{% if c.date_of_birth %} · DOB {{ c.date_of_birth }}{% endif %}</div>
+
+            <div class="child-badges">
+              {% if m and m.next_appt %}
+                <span class="pill p-blue">📅 Next {{ m.next_appt.strftime("%b %d, %H:%M") }}</span>
+              {% endif %}
+              {% if m and m.last_attendance %}
+                {% if m.last_attendance in ["ATTENDED"] %}
+                  <span class="pill p-green">✅ {{ m.last_attendance }}</span>
+                {% elif m.last_attendance in ["MISSED","CANCELLED"] %}
+                  <span class="pill p-red">⚠ {{ m.last_attendance }}</span>
+                {% else %}
+                  <span class="pill p-gray">ℹ {{ m.last_attendance }}</span>
+                {% endif %}
+              {% endif %}
+              {% if m and m.unpaid_count and m.unpaid_count > 0 %}
+                <span class="pill p-amber">💳 {{ m.unpaid_count }} unpaid</span>
+              {% endif %}
+            </div>
+          </a>
+
+          <div class="child-actions">
+            <a class="btn btn-sm btn-outline" href="{{ rp }}/children/{{ c.id }}?tab=appointments">+ Appointment</a>
+            <a class="btn btn-sm btn-outline" href="{{ rp }}/children/{{ c.id }}?tab=billing">+ Invoice</a>
+            {% if m and m.p1_phone %}
+              <a class="btn btn-sm btn-outline" href="tel:{{ m.p1_phone }}">📞 Parent</a>
+            {% endif %}
+          </div>
+        </div>
       {% else %}
         <div class="text-sm text-slate-500">No children yet.</div>
       {% endfor %}
     </div>
+
   </section>
 
   <aside class="card-soft">
     <div class="font-extrabold mb-3">Add child</div>
     <form class="space-y-3" method="post" action="{{ rp }}/children/create">
+      <input type="hidden" name="tenant" value="{{ tenant_slug }}">
       <div>
         <label class="label">Full name</label>
         <input name="full_name" required class="input" placeholder="e.g., John D." />

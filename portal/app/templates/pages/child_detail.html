@@ -1,235 +1,392 @@
 {% extends "layout.html" %}
-{% set header = "Child Record" %}
+{% set header = "Child" %}
 {% block content %}
 
-<div class="flex items-start justify-between gap-3 mb-4">
-  <div>
-    <div class="text-xs text-slate-500">Child</div>
-    <div class="text-2xl font-extrabold">{{ child.full_name }}</div>
-    <div class="text-sm text-slate-600">
-      ID {{ child.id }}{% if child.date_of_birth %} · DOB {{ child.date_of_birth }}{% endif %}
-    </div>
-    {% if child.parent1_name or child.parent1_phone or child.parent2_name or child.parent2_phone %}
-      <div class="mt-2 text-sm text-slate-700">
-        <div class="text-xs text-slate-500">Parents / guardians</div>
-        <div class="flex flex-wrap gap-2">
-          {% if child.parent1_name or child.parent1_phone %}
-            <span class="pill p-gray">👪 {{ child.parent1_name or "Parent 1" }}{% if child.parent1_phone %} · {{ child.parent1_phone }}{% endif %}</span>
-          {% endif %}
-          {% if child.parent2_name or child.parent2_phone %}
-            <span class="pill p-gray">👪 {{ child.parent2_name or "Parent 2" }}{% if child.parent2_phone %} · {{ child.parent2_phone }}{% endif %}</span>
-          {% endif %}
-        </div>
+{# Sticky header / command bar #}
+<div class="child-sticky">
+  <div class="child-sticky-inner">
+    <div>
+      <div class="text-xs text-slate-500">Child</div>
+      <div class="text-xl font-extrabold">{{ child.full_name }}</div>
+      <div class="text-sm text-slate-600">
+        ID {{ child.id }}
+        {% if child.date_of_birth %} · DOB {{ child.date_of_birth }}{% endif %}
       </div>
+      <div class="mt-2 flex flex-wrap gap-2">
+        {% if child.parent1_name or child.parent1_phone %}
+          <span class="pill p-gray">👪 {{ child.parent1_name or "Parent 1" }}{% if child.parent1_phone %} · <a href="tel:{{ child.parent1_phone }}">{{ child.parent1_phone }}</a>{% endif %}</span>
+        {% endif %}
+        {% if child.parent2_name or child.parent2_phone %}
+          <span class="pill p-gray">👪 {{ child.parent2_name or "Parent 2" }}{% if child.parent2_phone %} · <a href="tel:{{ child.parent2_phone }}">{{ child.parent2_phone }}</a>{% endif %}</span>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="child-sticky-actions">
+      <a class="btn btn-outline" href="{{ rp }}/children?tenant={{ tenant_slug }}">← Children</a>
+      <a class="btn" href="{{ rp }}/t/{{ tenant_slug }}/suite">Suite</a>
+      <a class="btn btn-outline" href="{{ sms_app_url }}" target="_blank">SMS</a>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <a class="tab {% if tab=='overview' %}active{% endif %}" href="{{ rp }}/children/{{ child.id }}?tab=overview">Overview</a>
+    <a class="tab {% if tab=='appointments' %}active{% endif %}" href="{{ rp }}/children/{{ child.id }}?tab=appointments">Appointments</a>
+    <a class="tab {% if tab=='notes' %}active{% endif %}" href="{{ rp }}/children/{{ child.id }}?tab=notes">Notes</a>
+    <a class="tab {% if tab=='billing' %}active{% endif %}" href="{{ rp }}/children/{{ child.id }}?tab=billing">Billing</a>
+    <a class="tab {% if tab=='parents' %}active{% endif %}" href="{{ rp }}/children/{{ child.id }}?tab=parents">Parents</a>
+  </div>
+</div>
+
+{# Toast from child_detail route (fallback: layout toast exists too) #}
+{% if toast and toast.text %}
+  <div class="toast toast-{{ toast.kind or 'success' }}" data-toast>
+    {{ toast.text }}
+  </div>
+{% endif %}
+
+{% if tab == 'overview' %}
+
+{# Summary tiles #}
+{% set next_appt = None %}
+{% for a in appts %}
+  {% if a.starts_at >= now %}
+    {% if next_appt is none or a.starts_at < next_appt.starts_at %}
+      {% set next_appt = a %}
+    {% endif %}
+  {% endif %}
+{% endfor %}
+{% set unpaid = 0 %}
+{% for b in bills %}
+  {% if b.paid == 'NO' %}{% set unpaid = unpaid + 1 %}{% endif %}
+{% endfor %}
+{% set last_att = None %}
+{% for a in appts %}
+  {% if last_att is none or a.starts_at > last_att.starts_at %}
+    {% set last_att = a %}
+  {% endif %}
+{% endfor %}
+
+<div class="stat-tiles">
+  <div class="stat-tile">
+    <div class="stat-label">Next appointment</div>
+    {% if next_appt %}
+      <div class="stat-value">{{ next_appt.starts_at.strftime("%Y-%m-%d %H:%M") }}</div>
+      <div class="stat-sub">{{ next_appt.procedure }} · {{ next_appt.therapist_name }}</div>
+    {% else %}
+      <div class="stat-value">—</div>
+      <div class="stat-sub">No upcoming appointments</div>
     {% endif %}
   </div>
-  <div class="flex gap-2">
-    <a class="btn" href="{{ rp }}/calendar?child_id={{ child.id }}">Calendar</a>
-    <a class="btn" href="{{ rp }}/billing?child_id={{ child.id }}">Billing</a>
-    <a class="btn" href="{{ rp }}/timeline?child_id={{ child.id }}">Timeline</a>
-    <a class="link" href="{{ rp }}/children">Back</a>
+  <div class="stat-tile">
+    <div class="stat-label">Unpaid invoices</div>
+    <div class="stat-value">{{ unpaid }}</div>
+    <div class="stat-sub">Billing items marked paid = NO</div>
+  </div>
+  <div class="stat-tile">
+    <div class="stat-label">Last attendance</div>
+    {% if last_att %}
+      <div class="stat-value">{{ last_att.attendance_status }}</div>
+      <div class="stat-sub">{{ last_att.starts_at.strftime("%Y-%m-%d") }}</div>
+    {% else %}
+      <div class="stat-value">—</div>
+      <div class="stat-sub">No appointments yet</div>
+    {% endif %}
   </div>
 </div>
 
-<div class="grid grid-cols-1 xl:grid-cols-3 gap-5">
-  <section class="xl:col-span-2">
-    <div class="subpanel">
-      <div class="subhead">Appointments</div>
-      <div class="subbody">
-        <div class="list">
-          {% for a in appts %}
-            <a class="listrow" href="{{ rp }}/appointments/{{ a.id }}">
-              <div class="flex items-center justify-between gap-2">
-                <div class="font-semibold">{{ a.starts_at.strftime("%b %d, %Y %I:%M %p") }}</div>
-                <div>{{ status_chip(a.attendance_status) | safe }}</div>
-              </div>
-              <div class="text-xs text-slate-500">{{ a.therapist_name }} · {{ a.procedure }}{% if a.session_note %} · ✅ note saved{% endif %}</div>
-            </a>
-          {% else %}
-            <div class="text-sm text-slate-500">No appointments yet.</div>
-          {% endfor %}
+
+  <div class="grid grid-cols-1 xl:grid-cols-3 gap-5">
+    <section class="xl:col-span-2">
+      <div class="card-soft">
+        <div class="font-extrabold mb-2">Notes</div>
+        {% if child.notes %}
+          <div class="text-sm whitespace-pre-wrap">{{ child.notes }}</div>
+        {% else %}
+          <div class="text-sm text-slate-500">No notes yet.</div>
+        {% endif %}
+      </div>
+
+      <div class="mt-5 card-soft">
+        <div class="font-extrabold mb-2">Upcoming appointments</div>
+        {% set upcoming = [] %}
+        {% for a in appts %}
+          {% if a.starts_at >= now %}{% set _ = upcoming.append(a) %}{% endif %}
+        {% endfor %}
+        {% if upcoming|length == 0 %}
+          <div class="text-sm text-slate-500">No upcoming appointments.</div>
+        {% else %}
+          <table class="table js-responsive-table" data-cards="true">
+            <thead><tr><th>Start</th><th>End</th><th>Therapist</th><th>Procedure</th><th>Status</th></tr></thead>
+            <tbody>
+              {% for a in upcoming[:10] %}
+                <tr>
+                  <td>{{ a.starts_at.strftime("%Y-%m-%d %H:%M") }}</td>
+                  <td>{{ a.ends_at.strftime("%Y-%m-%d %H:%M") }}</td>
+                  <td>{{ a.therapist_name }}</td>
+                  <td>{{ a.procedure }}</td>
+                  <td>{{ a.attendance_status }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% endif %}
+        <div class="mt-3">
+          <a class="btn btn-outline" href="{{ rp }}/children/{{ child.id }}?tab=appointments">Manage appointments</a>
         </div>
       </div>
-    </div>
+    </section>
 
-
-    <div class="subpanel mt-5">
-      <div class="subhead flex items-center justify-between">
-        <div>Timeline journey (latest)</div>
-        <a class="link" href="{{ rp }}/timeline?child_id={{ child.id }}">Open full timeline</a>
+    <aside>
+      <div class="card-soft">
+        <div class="font-extrabold mb-2">Quick actions</div>
+        <div class="grid grid-cols-1 gap-2">
+          <a class="btn" href="{{ rp }}/children/{{ child.id }}?tab=appointments">+ Appointment</a>
+          <a class="btn btn-outline" href="{{ rp }}/children/{{ child.id }}?tab=billing">+ Invoice</a>
+          <a class="btn btn-outline" href="{{ rp }}/children/{{ child.id }}?tab=notes">+ Session note</a>
+        </div>
       </div>
-      <div class="subbody">
-        <div class="timeline compact">
-          {% for e in timeline %}
-            <div class="t-item">
-              <div class="t-dot t-{{ (e.event_type or 'OTHER')|lower }}"></div>
-              <div class="t-card">
-                <div class="t-head">
-                  <div class="t-title">{{ e.title }}</div>
-                  <div class="t-meta">
-                    <span class="pill p-gray">{{ e.event_type }}</span>
-                    <span class="text-xs text-slate-500">{{ e.occurred_at.strftime("%b %d, %Y %I:%M %p") }}</span>
-                  </div>
+
+      <div class="card-soft mt-4">
+        <div class="font-extrabold mb-2">Billing snapshot</div>
+        {% set unpaid = 0 %}
+        {% for b in bills %}
+          {% if b.paid == 'NO' %}{% set unpaid = unpaid + 1 %}{% endif %}
+        {% endfor %}
+        <div class="text-sm">
+          <div><b>{{ unpaid }}</b> unpaid invoice(s)</div>
+          <div class="text-slate-500 mt-1">Go to Billing to mark paid / signed / invoice created.</div>
+        </div>
+        <div class="mt-3">
+          <a class="btn btn-outline" href="{{ rp }}/children/{{ child.id }}?tab=billing">Open billing</a>
+        </div>
+      </div>
+    </aside>
+  </div>
+{% endif %}
+
+{% if tab == 'appointments' %}
+  <div class="grid grid-cols-1 xl:grid-cols-3 gap-5">
+    <section class="xl:col-span-2">
+      <div class="card-soft">
+        <div class="font-extrabold mb-2">Appointments</div>
+        {% if appts|length == 0 %}
+          <div class="text-sm text-slate-500">No appointments yet.</div>
+        {% else %}
+          <table class="table js-responsive-table" data-cards="true">
+            <thead>
+              <tr><th>Start</th><th>End</th><th>Therapist</th><th>Procedure</th><th>Attendance</th><th>Note</th><th>Actions</th></tr>
+            </thead>
+            <tbody>
+              {% for a in appts %}
+                {% set note = notes_by_appt.get(a.id) %}
+                <tr>
+                  <td>{{ a.starts_at.strftime("%Y-%m-%d %H:%M") }}</td>
+                  <td>{{ a.ends_at.strftime("%Y-%m-%d %H:%M") }}</td>
+                  <td>{{ a.therapist_name }}</td>
+                  <td>{{ a.procedure }}</td>
+                  <td>{{ a.attendance_status }}</td>
+                  <td>{% if note %}✅{% else %}—{% endif %}</td>
+                  <td>
+                    <div class="row-actions">
+                      <form method="post" action="{{ rp }}/children/{{ child.id }}/appointments/{{ a.id }}/attendance" class="inline">
+                        <input type="hidden" name="attendance_status" value="ATTENDED"/>
+                        <button type="submit" class="btn btn-xs">Attended</button>
+                      </form>
+                      <form method="post" action="{{ rp }}/children/{{ child.id }}/appointments/{{ a.id }}/attendance" class="inline">
+                        <input type="hidden" name="attendance_status" value="MISSED"/>
+                        <button type="submit" class="btn btn-xs btn-outline">Missed</button>
+                      </form>
+                      <form method="post" action="{{ rp }}/children/{{ child.id }}/appointments/{{ a.id }}/attendance" class="inline">
+                        <input type="hidden" name="attendance_status" value="CANCELLED"/>
+                        <button type="submit" class="btn btn-xs btn-outline">Cancelled</button>
+                      </form>
+                    </div>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% endif %}
+      </div>
+    </section>
+
+    <aside>
+      <div class="card-soft">
+        <div class="font-extrabold mb-2">Add appointment</div>
+        <form method="post" action="{{ rp }}/children/{{ child.id }}/appointments/create" class="space-y-2">
+          <input type="datetime-local" name="starts_at" class="input" required />
+          <input type="datetime-local" name="ends_at" class="input" required />
+          <input name="therapist_name" class="input" placeholder="Therapist name" />
+          <input name="procedure" class="input" placeholder="Procedure (e.g. Speech Therapy)" />
+          <select name="attendance_status" class="input">
+            <option value="UNCONFIRMED">UNCONFIRMED</option>
+            <option value="ATTENDED">ATTENDED</option>
+            <option value="MISSED">MISSED</option>
+            <option value="CANCELLED">CANCELLED</option>
+          </select>
+          <button class="btn w-full" type="submit">Create</button>
+        </form>
+      </div>
+    </aside>
+  </div>
+{% endif %}
+
+{% if tab == 'billing' %}
+  <div class="grid grid-cols-1 xl:grid-cols-3 gap-5">
+    <section class="xl:col-span-2">
+      <div class="card-soft">
+        <div class="font-extrabold mb-2">Billing</div>
+        {% if bills|length == 0 %}
+          <div class="text-sm text-slate-500">No billing items yet.</div>
+        {% else %}
+          <table class="table js-responsive-table" data-cards="true">
+            <thead>
+              <tr><th>Due</th><th>Paid</th><th>Invoice</th><th>Signed</th><th>Actions</th></tr>
+            </thead>
+            <tbody>
+              {% for b in bills %}
+                <tr>
+                  <td>{{ b.billing_due }}</td>
+                  <td>{{ b.paid }}</td>
+                  <td>{{ b.invoice_created }}</td>
+                  <td>{{ b.parent_signed_off }}</td>
+                  <td>
+                    <div class="inline-actions">
+                      <form method="post" action="{{ rp }}/children/{{ child.id }}/billing/{{ b.id }}/set_flag">
+                        <input type="hidden" name="flag" value="paid">
+                        <input type="hidden" name="value" value="{% if b.paid=='YES' %}NO{% else %}YES{% endif %}">
+                        <button class="btn btn-sm btn-outline" type="submit">{% if b.paid=='YES' %}Mark unpaid{% else %}Mark paid{% endif %}</button>
+                      </form>
+                      <form method="post" action="{{ rp }}/children/{{ child.id }}/billing/{{ b.id }}/set_flag">
+                        <input type="hidden" name="flag" value="invoice_created">
+                        <input type="hidden" name="value" value="{% if b.invoice_created=='YES' %}NO{% else %}YES{% endif %}">
+                        <button class="btn btn-sm btn-outline" type="submit">Invoice {% if b.invoice_created=='YES' %}✖{% else %}✔{% endif %}</button>
+                      </form>
+                      <form method="post" action="{{ rp }}/children/{{ child.id }}/billing/{{ b.id }}/set_flag">
+                        <input type="hidden" name="flag" value="parent_signed_off">
+                        <input type="hidden" name="value" value="{% if b.parent_signed_off=='YES' %}NO{% else %}YES{% endif %}">
+                        <button class="btn btn-sm btn-outline" type="submit">Signed {% if b.parent_signed_off=='YES' %}✖{% else %}✔{% endif %}</button>
+                      </form>
+                    </div>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% endif %}
+      </div>
+    </section>
+
+    <aside>
+      <div class="card-soft">
+        <div class="font-extrabold mb-2">Create invoice</div>
+        <form method="post" action="{{ rp }}/children/{{ child.id }}/billing/create" class="space-y-2">
+          <input type="date" name="billing_due" class="input" required />
+          <select name="invoice_created" class="input">
+            <option value="NO">Invoice created? NO</option>
+            <option value="YES">Invoice created? YES</option>
+          </select>
+          <select name="paid" class="input">
+            <option value="NO">Paid? NO</option>
+            <option value="YES">Paid? YES</option>
+          </select>
+          <select name="parent_signed_off" class="input">
+            <option value="NO">Parent signed? NO</option>
+            <option value="YES">Parent signed? YES</option>
+          </select>
+          <button class="btn w-full" type="submit">Create</button>
+        </form>
+      </div>
+    </aside>
+  </div>
+{% endif %}
+
+{% if tab == 'notes' %}
+  <div class="grid grid-cols-1 xl:grid-cols-3 gap-5">
+    <section class="xl:col-span-2">
+      <div class="card-soft">
+        <div class="font-extrabold mb-2">Session notes</div>
+        <div class="text-sm text-slate-600 mb-3">Notes are stored per appointment (1 note per appointment).</div>
+
+        {% if appts|length == 0 %}
+          <div class="text-sm text-slate-500">Create an appointment first.</div>
+        {% else %}
+          <div class="space-y-3">
+            {% for a in appts %}
+              {% set note = notes_by_appt.get(a.id) %}
+              <div class="note-card">
+                <div class="note-head">
+                  <div class="font-semibold">{{ a.starts_at.strftime("%Y-%m-%d %H:%M") }} · {{ a.procedure }}</div>
+                  <div class="text-xs text-slate-500">{{ a.therapist_name }} · {{ a.attendance_status }}</div>
                 </div>
-                {% if e.details %}
-                  <div class="t-body">{{ e.details }}</div>
-                {% endif %}
-              </div>
-            </div>
-          {% else %}
-            <div class="text-sm text-slate-500">No timeline events yet. Add some from the Timeline Journey page.</div>
-          {% endfor %}
-        </div>
-      </div>
-    </div>
 
-
-<div class="subpanel mt-5">
-  <div class="subhead flex items-center justify-between">
-    <div>Billing rows</div>
-    <a class="link" href="{{ rp }}/billing?child_id={{ child.id }}">Open full billing</a>
-  </div>
-  <div class="subbody">
-    <div class="tablewrap">
-      <table class="apptable">
-        <thead>
-          <tr>
-            <th>billing due</th>
-            <th>paid</th>
-            <th>invoice created</th>
-            <th>parent signed off</th>
-            <th style="width:120px;">actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for b in bills %}
-          <tr>
-            <td>{{ b.billing_due }}</td>
-            <td>
-              <form method="post" action="{{ rp }}/billing/{{ b.id }}/update" class="rowform">
-                <input type="hidden" name="redirect" value="/children/{{ child.id }}">
-                <select name="paid" class="input input-sm">
-                  <option value="NO" {% if (b.paid or '').upper() != 'YES' %}selected{% endif %}>NO</option>
-                  <option value="YES" {% if (b.paid or '').upper() == 'YES' %}selected{% endif %}>YES</option>
-                </select>
-            </td>
-            <td>
-                <select name="invoice_created" class="input input-sm">
-                  <option value="NO" {% if (b.invoice_created or '').upper() != 'YES' %}selected{% endif %}>NO</option>
-                  <option value="YES" {% if (b.invoice_created or '').upper() == 'YES' %}selected{% endif %}>YES</option>
-                </select>
-            </td>
-            <td>
-                <select name="parent_signed_off" class="input input-sm">
-                  <option value="NO" {% if (b.parent_signed_off or '').upper() != 'YES' %}selected{% endif %}>NO</option>
-                  <option value="YES" {% if (b.parent_signed_off or '').upper() == 'YES' %}selected{% endif %}>YES</option>
-                </select>
-            </td>
-            <td>
-                <button class="btn btn-sm" type="submit">Save</button>
-              </form>
-            </td>
-          </tr>
-          {% else %}
-          <tr><td colspan="5" class="text-sm text-slate-500">No billing rows.</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </div>
-</div>
-
-
-    <div class="subpanel mt-5">
-      <div class="subhead">Documents (PDFs, notes)</div>
-      <div class="subbody">
-        <div class="space-y-2">
-          {% for u in uploads %}
-            <div class="docrow">
-              <a class="link truncate" style="max-width:70%;" href="{{ rp }}/files/{{ u.id }}">{{ u.original_name }}</a>
-              <div class="flex items-center gap-2">
-                <span class="text-xs text-slate-500">{{ u.created_at }}</span>
-                <form method="post" action="{{ rp }}/attachments/{{ u.id }}/delete" onsubmit="return confirm('Delete this file?');">
-                  <button class="btn-danger" type="submit">Delete</button>
+                <form method="post" action="{{ rp }}/children/{{ child.id }}/appointments/{{ a.id }}/note" class="space-y-2">
+                  <textarea name="summary" class="input" rows="2" placeholder="Summary">{{ note.summary if note else "" }}</textarea>
+                  <textarea name="what_went_wrong" class="input" rows="2" placeholder="What went wrong">{{ note.what_went_wrong if note else "" }}</textarea>
+                  <textarea name="improvements" class="input" rows="2" placeholder="Improvements">{{ note.improvements if note else "" }}</textarea>
+                  <textarea name="next_steps" class="input" rows="2" placeholder="Next steps">{{ note.next_steps if note else "" }}</textarea>
+                  <button class="btn btn-outline" type="submit">Save note</button>
                 </form>
               </div>
-            </div>
-          {% else %}
-            <div class="text-sm text-slate-500">No uploads yet.</div>
-          {% endfor %}
+            {% endfor %}
+          </div>
+        {% endif %}
+      </div>
+    </section>
+
+    <aside>
+      <div class="card-soft">
+        <div class="font-extrabold mb-2">Tip</div>
+        <div class="text-sm text-slate-600">
+          Use short bullet-style notes. Your future self will thank you.
         </div>
       </div>
-    </div>
-  </section>
+    </aside>
+  </div>
+{% endif %}
 
-  <aside class="card-soft space-y-6">
-    <div>
-      <div class="font-extrabold mb-2">Timeline snapshot</div>
-      <div class="text-sm text-slate-600 mb-3">Latest events for this child.</div>
-
-      <div class="timeline timeline-compact">
-        {% for e in timeline %}
-          <div class="t-item">
-            <div class="t-dot t-{{ (e.event_type or 'OTHER')|lower }}"></div>
-            <div class="t-card">
-              <div class="t-head">
-                <div class="t-title">{{ e.title }}</div>
-                <div class="t-meta">
-                  <span class="pill p-gray">{{ e.event_type }}</span>
-                  <span class="text-xs text-slate-500">{{ e.occurred_at.strftime("%b %d, %Y") }}</span>
-                </div>
-              </div>
-              {% if e.details %}
-                <div class="t-body">{{ e.details }}</div>
-              {% endif %}
+{% if tab == 'parents' %}
+  <div class="grid grid-cols-1 xl:grid-cols-3 gap-5">
+    <section class="xl:col-span-2">
+      <div class="card-soft">
+        <div class="font-extrabold mb-2">Parents</div>
+        <div class="text-sm text-slate-500">Edit parent details for this child.</div>
+        <form method="post" action="{{ rp }}/children/{{ child.id }}/parents/update" class="mt-3">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label class="label">Parent 1 name</label>
+              <input class="input" name="parent1_name" value="{{ child.parent1_name or '' }}" placeholder="e.g. Maria Papadopoulou"/>
+            </div>
+            <div>
+              <label class="label">Parent 1 phone</label>
+              <input class="input" name="parent1_phone" value="{{ child.parent1_phone or '' }}" placeholder="+30..."/>
+            </div>
+            <div>
+              <label class="label">Parent 2 name</label>
+              <input class="input" name="parent2_name" value="{{ child.parent2_name or '' }}" placeholder="e.g. Kostas Papadopoulos"/>
+            </div>
+            <div>
+              <label class="label">Parent 2 phone</label>
+              <input class="input" name="parent2_phone" value="{{ child.parent2_phone or '' }}" placeholder="+30..."/>
             </div>
           </div>
-        {% else %}
-          <div class="text-sm text-slate-500">No timeline events yet.</div>
-        {% endfor %}
+          <button class="btn mt-3" type="submit">Save parents</button>
+        </form>
       </div>
+    </section>
 
-      <a class="link" href="{{ rp }}/timeline?child_id={{ child.id }}">Open full timeline →</a>
-    </div>
-
-    <div>
-      <div class="font-extrabold mb-3">Create appointment</div>
-      <form class="space-y-3" method="post" action="{{ rp }}/children/{{ child.id }}/appointments/create">
-        <div>
-          <label class="label">Date/time</label>
-          <input type="datetime-local" name="starts_at" required class="input" />
+    <aside>
+      <div class="card-soft">
+        <div class="font-extrabold mb-2">Quick actions</div>
+        <div class="grid grid-cols-1 gap-2">
+          {% if child.parent1_phone %}<a class="btn btn-outline" href="tel:{{ child.parent1_phone }}">📞 Call Parent 1</a>{% endif %}
+          {% if child.parent2_phone %}<a class="btn btn-outline" href="tel:{{ child.parent2_phone }}">📞 Call Parent 2</a>{% endif %}
         </div>
-        <div>
-          <label class="label">Therapist</label>
-          <input name="therapist_name" required class="input" list="therapists" placeholder="e.g., James Sawyer" />
-        </div>
-        <div>
-          <label class="label">Procedure</label>
-          <input name="procedure" class="input" placeholder="Office Visit / Speech Session / Physio Session" />
-        </div>
-        <button class="btn w-full" type="submit">Add appointment</button>
-      </form>
-    </div>
+      </div>
+    </aside>
+  </div>
+{% endif %}
 
-    <div>
-      <div class="font-extrabold mb-3">Upload PDF / notes</div>
-      <form method="post" action="{{ rp }}/children/{{ child.id }}/upload" enctype="multipart/form-data">
-        <input type="file" name="file" class="block w-full text-sm" required />
-        <button class="btn w-full mt-3" type="submit">Upload</button>
-      </form>
-    </div>
-
-    <div>
-      <div class="font-extrabold mb-2">Child notes</div>
-      <div class="text-sm text-slate-700 whitespace-pre-wrap">{{ child.notes or "—" }}</div>
-    </div>
-  </aside>
-</div>
-
-<datalist id="therapists">
-  {% for t in therapists %}
-    <option value="{{ t.name }}"></option>
-  {% endfor %}
-</datalist>
 
 {% endblock %}

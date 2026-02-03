@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, date
+import sqlalchemy as sa
 import uuid
 from urllib.parse import quote_plus
 
@@ -38,6 +39,19 @@ def _session(request: Request) -> dict:
     return s if isinstance(s, dict) else {}
 
 
+def _toast_set(request: Request, kind: str, text: str) -> None:
+    s = request.scope.get("session")
+    if isinstance(s, dict):
+        s["toast"] = {"kind": kind, "text": text, "at": datetime.utcnow().isoformat()}
+
+
+def _toast_pop(request: Request):
+    s = request.scope.get("session")
+    if isinstance(s, dict):
+        return s.pop("toast", None)
+    return None
+
+
 def _session_tenant_slug(request: Request) -> str:
     s = _session(request)
     return (s.get("tenant_slug") or "default").strip().lower()
@@ -67,6 +81,17 @@ def _require_login_for_tenant(request: Request, tenant_slug: str) -> RedirectRes
     user_id = s.get("user_id")
     sess_tenant = (s.get("tenant_slug") or "default").strip().lower()
     tenant_slug = (tenant_slug or "default").strip().lower()
+
+def _sms_link_for(request: Request, tenant_slug: str) -> str:
+    sms_url = (settings.SMS_APP_URL or "").strip() or "/sms"
+    if sms_url.endswith("/"):
+        sms_url = sms_url[:-1]
+    sso = _make_sms_sso_token(request, tenant_slug)
+    # Render deployments often mount Streamlit at /sms/ with route /sms
+    if "onrender.com" in sms_url:
+        return f"{sms_url}/sms?tenant={tenant_slug}&sso={sso}"
+    return f"{sms_url}?tenant={tenant_slug}&sso={sso}"
+
 
     if not user_id:
         rp = _rp(request)
@@ -263,15 +288,86 @@ def children_list(request: Request, tenant: str = "default", q: str = "", db: Se
         return redirect
 
     tctx = resolve_tenant(db, request, tenant_slug=tenant)
+
     query = db.query(Child).filter(Child.tenant_id == tctx.tenant_id)
     if q:
         query = query.filter(Child.full_name.ilike(f"%{q}%"))
     children = query.order_by(Child.full_name.asc()).all()
 
+    # ---- lightweight "at a glance" meta for UX ----
+    now = datetime.utcnow()
+    next_appt: dict[int, datetime] = {}
+    last_att: dict[int, str] = {}
+    unpaid_cnt: dict[int, int] = {}
+
+    try:
+        rows = db.execute(
+            sa.text(
+                """
+                SELECT child_id, MIN(starts_at) AS next_start
+                FROM appointments
+                WHERE tenant_id = :tid AND starts_at >= :now
+                GROUP BY child_id
+                """
+            ),
+            {"tid": tctx.tenant_id, "now": now},
+        ).fetchall()
+        next_appt = {int(r[0]): r[1] for r in rows if r and r[0] is not None and r[1] is not None}
+    except Exception:
+        next_appt = {}
+
+    try:
+        rows = db.execute(
+            sa.text(
+                """
+                SELECT a.child_id, a.attendance_status
+                FROM appointments a
+                JOIN (
+                  SELECT child_id, MAX(starts_at) AS mx
+                  FROM appointments
+                  WHERE tenant_id = :tid
+                  GROUP BY child_id
+                ) x
+                ON a.child_id = x.child_id AND a.starts_at = x.mx
+                WHERE a.tenant_id = :tid
+                """
+            ),
+            {"tid": tctx.tenant_id},
+        ).fetchall()
+        last_att = {int(r[0]): (r[1] or "") for r in rows if r and r[0] is not None}
+    except Exception:
+        last_att = {}
+
+    try:
+        rows = db.execute(
+            sa.text(
+                """
+                SELECT child_id, COUNT(*) AS cnt
+                FROM billing_items
+                WHERE tenant_id = :tid AND paid = 'NO'
+                GROUP BY child_id
+                """
+            ),
+            {"tid": tctx.tenant_id},
+        ).fetchall()
+        unpaid_cnt = {int(r[0]): int(r[1]) for r in rows if r and r[0] is not None}
+    except Exception:
+        unpaid_cnt = {}
+
+    meta: dict[int, dict] = {}
+    for c in children:
+        meta[int(c.id)] = {
+            "next_appt": next_appt.get(int(c.id)),
+            "last_attendance": last_att.get(int(c.id), ""),
+            "unpaid_count": unpaid_cnt.get(int(c.id), 0),
+            "p1_phone": getattr(c, "parent1_phone", None),
+            "p2_phone": getattr(c, "parent2_phone", None),
+        }
+
     return _render(
         request,
         "pages/children_list.html",
-        {"children": children, "q": q},
+        {"children": children, "q": q, "meta": meta},
         db,
         tenant_slug=tctx.tenant_slug,
     )
@@ -282,7 +378,12 @@ def children_create(
     request: Request,
     tenant: str = Form("default"),
     full_name: str = Form(...),
+    date_of_birth: str = Form(""),
     notes: str = Form(""),
+    parent1_name: str = Form(""),
+    parent1_phone: str = Form(""),
+    parent2_name: str = Form(""),
+    parent2_phone: str = Form(""),
     db: Session = Depends(get_db),
 ):
     redirect = _require_login_for_tenant(request, tenant)
@@ -290,18 +391,47 @@ def children_create(
         return redirect
 
     tctx = resolve_tenant(db, request, tenant_slug=tenant)
-    c = Child(tenant_id=tctx.tenant_id, full_name=full_name.strip(), notes=(notes or "").strip() or None)
+
+    c = Child(
+        tenant_id=tctx.tenant_id,
+        full_name=(full_name or "").strip(),
+        notes=(notes or "").strip() or None,
+    )
+
+    # optional fields (only if the model has them)
+    dob = _parse_date(date_of_birth)
+    if dob is not None and hasattr(c, "date_of_birth"):
+        c.date_of_birth = dob  # type: ignore[attr-defined]
+
+    if hasattr(c, "parent1_name"):
+        c.parent1_name = (parent1_name or "").strip() or None  # type: ignore[attr-defined]
+    if hasattr(c, "parent1_phone"):
+        c.parent1_phone = (parent1_phone or "").strip() or None  # type: ignore[attr-defined]
+    if hasattr(c, "parent2_name"):
+        c.parent2_name = (parent2_name or "").strip() or None  # type: ignore[attr-defined]
+    if hasattr(c, "parent2_phone"):
+        c.parent2_phone = (parent2_phone or "").strip() or None  # type: ignore[attr-defined]
+
     db.add(c)
     db.commit()
+
+    _toast_set(request, "success", "Child created")
     rp = _rp(request)
     return RedirectResponse(url=f"{rp}/children?tenant={tctx.tenant_slug}", status_code=303)
 
-
 # ----------------------------
-# ✅ Tenant-safe Child Detail Page
+# POST: Update parents (tenant-safe)
 # ----------------------------
-@router.get("/children/{child_id}", response_class=HTMLResponse)
-def child_detail(request: Request, child_id: int, db: Session = Depends(get_db)):
+@router.post("/children/{child_id}/parents/update")
+def child_update_parents(
+    request: Request,
+    child_id: int,
+    parent1_name: str = Form(""),
+    parent1_phone: str = Form(""),
+    parent2_name: str = Form(""),
+    parent2_phone: str = Form(""),
+    db: Session = Depends(get_db),
+):
     tenant_slug = _session_tenant_slug(request)
     redirect = _require_login_for_tenant(request, tenant_slug)
     if redirect:
@@ -310,7 +440,32 @@ def child_detail(request: Request, child_id: int, db: Session = Depends(get_db))
     tctx = resolve_tenant(db, request, tenant_slug=tenant_slug)
     child = _child_or_404(db, tctx.tenant_id, child_id)
 
-    # appointments
+    child.parent1_name = (parent1_name or "").strip() or None
+    child.parent1_phone = (parent1_phone or "").strip() or None
+    child.parent2_name = (parent2_name or "").strip() or None
+    child.parent2_phone = (parent2_phone or "").strip() or None
+
+    db.add(child)
+    db.commit()
+
+    _toast_set(request, "Parents updated", kind="success")
+    rp = _rp(request)
+    return RedirectResponse(url=f"{rp}/children/{child_id}?tab=parents", status_code=303)
+
+
+# ----------------------------
+# ✅ Tenant-safe Child Detail Page
+# ----------------------------
+@router.get("/children/{child_id}", response_class=HTMLResponse)
+def child_detail(request: Request, child_id: int, tab: str = "overview", db: Session = Depends(get_db)):
+    tenant_slug = _session_tenant_slug(request)
+    redirect = _require_login_for_tenant(request, tenant_slug)
+    if redirect:
+        return redirect
+
+    tctx = resolve_tenant(db, request, tenant_slug=tenant_slug)
+    child = _child_or_404(db, tctx.tenant_id, child_id)
+
     appts = (
         db.query(Appointment)
         .filter(Appointment.tenant_id == tctx.tenant_id, Appointment.child_id == child_id)
@@ -319,7 +474,6 @@ def child_detail(request: Request, child_id: int, db: Session = Depends(get_db))
         .all()
     )
 
-    # billing
     bills = (
         db.query(BillingItem)
         .filter(BillingItem.tenant_id == tctx.tenant_id, BillingItem.child_id == child_id)
@@ -328,9 +482,8 @@ def child_detail(request: Request, child_id: int, db: Session = Depends(get_db))
         .all()
     )
 
-    # notes are per appointment (1:1). Collect them keyed by appointment_id
     appt_ids = [a.id for a in appts]
-    notes_by_appt: dict[int, SessionNote] = {}
+    notes_by_appt = {}
     if appt_ids:
         notes = (
             db.query(SessionNote)
@@ -339,265 +492,28 @@ def child_detail(request: Request, child_id: int, db: Session = Depends(get_db))
         )
         notes_by_appt = {n.appointment_id: n for n in notes}
 
-    # parents best-effort (won't crash if fields not present)
-    parents = []
-    for label, name_attr, phone_attr in [
-        ("Parent 1", "parent_name", "parent_phone"),
-        ("Parent 2", "parent2_name", "parent2_phone"),
-        ("Mother", "mother_name", "mother_phone"),
-        ("Father", "father_name", "father_phone"),
-    ]:
-        n = (getattr(child, name_attr, None) or "").strip() if hasattr(child, name_attr) else ""
-        p = (getattr(child, phone_attr, None) or "").strip() if hasattr(child, phone_attr) else ""
-        if n or p:
-            parents.append((label, n, p))
+    # toast (one-time)
+    toast = _toast_pop(request)
 
     rp = _rp(request)
-    child_name = getattr(child, "full_name", getattr(child, "name", f"Child #{child_id}"))
-    child_notes = getattr(child, "notes", "") or ""
+    return templates.TemplateResponse(
+        "pages/child_detail.html",
+        {
+            "request": request,
+            "rp": rp,
+            "tenant_slug": tctx.tenant_slug,
+            "child": child,
+            "appts": appts,
+            "bills": bills,
+            "notes_by_appt": notes_by_appt,
+            "tab": (tab or "overview"),
+            "toast": toast,
+            "now": datetime.utcnow(),
+            "sms_app_url": _sms_link_for(request, tctx.tenant_slug),
+        },
+    )
 
-    # build appointment rows + note preview
-    appt_rows = ""
-    appt_options = ""
-    for a in appts:
-        note = notes_by_appt.get(a.id)
-        note_badge = "No note"
-        if note and (note.summary or note.next_steps or note.improvements or note.what_went_wrong):
-            note_badge = "Has note"
-        appt_rows += (
-            "<tr>"
-            f"<td style='padding:8px'>{_fmt_dt(a.starts_at)}</td>"
-            f"<td style='padding:8px'>{_fmt_dt(a.ends_at)}</td>"
-            f"<td style='padding:8px'>{a.therapist_name}</td>"
-            f"<td style='padding:8px'>{a.procedure}</td>"
-            f"<td style='padding:8px'>{a.attendance_status}</td>"
-            f"<td style='padding:8px;opacity:.85'>{note_badge}</td>"
-            "</tr>"
-        )
-        appt_options += f"<option value='{a.id}'>#{a.id} — {_fmt_dt(a.starts_at)} — {a.procedure}</option>"
 
-    bill_rows = ""
-    for b in bills:
-        bill_rows += (
-            "<tr>"
-            f"<td style='padding:8px'>{b.billing_due.isoformat()}</td>"
-            f"<td style='padding:8px'>{b.paid}</td>"
-            f"<td style='padding:8px'>{b.invoice_created}</td>"
-            f"<td style='padding:8px'>{b.parent_signed_off}</td>"
-            "<td style='padding:8px;white-space:nowrap'>"
-            f"<form method='post' action='{rp}/children/{child_id}/billing/{b.id}/set_flag' style='display:inline;'>"
-            "<input type='hidden' name='flag' value='paid'/>"
-            "<input type='hidden' name='value' value='YES'/>"
-            "<button type='submit'>Paid</button>"
-            "</form> "
-            f"<form method='post' action='{rp}/children/{child_id}/billing/{b.id}/set_flag' style='display:inline;'>"
-            "<input type='hidden' name='flag' value='paid'/>"
-            "<input type='hidden' name='value' value='NO'/>"
-            "<button type='submit'>Unpaid</button>"
-            "</form> "
-            f"<form method='post' action='{rp}/children/{child_id}/billing/{b.id}/set_flag' style='display:inline;'>"
-            "<input type='hidden' name='flag' value='invoice_created'/>"
-            "<input type='hidden' name='value' value='YES'/>"
-            "<button type='submit'>Invoice ✔</button>"
-            "</form> "
-            f"<form method='post' action='{rp}/children/{child_id}/billing/{b.id}/set_flag' style='display:inline;'>"
-            "<input type='hidden' name='flag' value='parent_signed_off'/>"
-            "<input type='hidden' name='value' value='YES'/>"
-            "<button type='submit'>Signed ✔</button>"
-            "</form>"
-            "</td>"
-            "</tr>"
-        )
-
-    parents_html = ""
-    if parents:
-        rows = "".join(
-            f"<tr><td style='padding:8px;opacity:.85'>{label}</td><td style='padding:8px'>{n}</td><td style='padding:8px'>{p}</td></tr>"
-            for (label, n, p) in parents
-        )
-        parents_html = f"""
-          <div class="card">
-            <h3>Parents</h3>
-            <table class="tbl">
-              <thead><tr><th>Type</th><th>Name</th><th>Phone</th></tr></thead>
-              <tbody>{rows}</tbody>
-            </table>
-          </div>
-        """
-    else:
-        parents_html = """
-          <div class="card">
-            <h3>Parents</h3>
-            <div class="muted">No parent details found on this child record.</div>
-          </div>
-        """
-
-    html = f"""
-    <!doctype html>
-    <html>
-      <head>
-        <meta charset="utf-8"/>
-        <meta name="viewport" content="width=device-width, initial-scale=1"/>
-        <title>{child_name}</title>
-        <style>
-          body {{
-            font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
-            margin: 0; padding: 18px;
-            background: #0b1220; color: #e5e7eb;
-          }}
-          a {{ color: #60a5fa; text-decoration: none; }}
-          .top {{
-            display:flex; gap:10px; align-items:center; justify-content:space-between;
-            max-width: 1100px; margin: 0 auto 12px auto;
-          }}
-          .wrap {{ max-width: 1100px; margin: 0 auto; display:grid; gap: 12px; }}
-          .card {{
-            background: rgba(255,255,255,.06);
-            border: 1px solid rgba(255,255,255,.10);
-            border-radius: 14px;
-            padding: 14px;
-          }}
-          .muted {{ color: rgba(229,231,235,.75); }}
-          .btn {{
-            display:inline-block; padding: 9px 12px;
-            border-radius: 10px;
-            background: rgba(96,165,250,.18);
-            border: 1px solid rgba(96,165,250,.35);
-          }}
-          .grid2 {{ display:grid; grid-template-columns: 1fr 1fr; gap: 12px; }}
-          @media (max-width: 900px) {{
-            .grid2 {{ grid-template-columns: 1fr; }}
-            .top {{ flex-direction:column; align-items:flex-start; }}
-          }}
-          .tbl {{ width:100%; border-collapse: collapse; margin-top: 8px; }}
-          .tbl th {{
-            text-align:left; padding:8px;
-            border-bottom: 1px solid rgba(255,255,255,.14);
-            color: rgba(229,231,235,.85);
-            font-weight: 700;
-          }}
-          .tbl td {{
-            border-bottom: 1px solid rgba(255,255,255,.08);
-          }}
-          input, select, textarea {{
-            width:100%;
-            background:#0b1220; color:#e5e7eb;
-            border: 1px solid rgba(255,255,255,.18);
-            border-radius: 10px;
-            padding: 10px;
-            margin-top: 8px;
-          }}
-          textarea {{ min-height: 90px; }}
-          button {{
-            margin-top: 10px;
-            padding: 10px 12px;
-            border-radius: 10px;
-            border: 1px solid rgba(96,165,250,.35);
-            background: rgba(96,165,250,.18);
-            color: #e5e7eb;
-            cursor: pointer;
-          }}
-        </style>
-      </head>
-      <body>
-        <div class="top">
-          <div>
-            <div class="muted">Tenant: <b>{tctx.tenant_slug}</b></div>
-            <h2 style="margin:6px 0 0 0;">{child_name}</h2>
-          </div>
-          <div style="display:flex; gap:10px; flex-wrap:wrap;">
-            <a class="btn" href="{rp}/t/{tctx.tenant_slug}/suite">Back to Suite</a>
-            <a class="btn" href="{rp}/children?tenant={tctx.tenant_slug}">Back to Children</a>
-          </div>
-        </div>
-
-        <div class="wrap">
-          <div class="card">
-            <h3>Child Details</h3>
-            <div class="muted">ID: {child_id}</div>
-            <div style="margin-top:10px;">
-              <div class="muted" style="margin-bottom:6px;">Child notes</div>
-              <div style="white-space:pre-wrap;">{child_notes if child_notes else "<span class='muted'>No notes.</span>"}</div>
-            </div>
-          </div>
-
-          <div class="grid2">
-            {parents_html}
-
-            <div class="card">
-              <h3>Add Appointment</h3>
-              <form method="post" action="{rp}/children/{child_id}/appointments/create">
-                <input name="starts_at" type="datetime-local" required />
-                <input name="ends_at" type="datetime-local" required />
-                <input name="therapist_name" placeholder="Therapist name" />
-                <input name="procedure" placeholder="Procedure (e.g. Speech Therapy)" />
-                <select name="attendance_status">
-                  <option value="UNCONFIRMED">UNCONFIRMED</option>
-                  <option value="ATTENDED">ATTENDED</option>
-                  <option value="MISSED">MISSED</option>
-                  <option value="CANCELLED">CANCELLED</option>
-                </select>
-                <button type="submit">Create Appointment</button>
-              </form>
-            </div>
-          </div>
-
-          <div class="grid2">
-            <div class="card">
-              <h3>Appointments</h3>
-              {"<div class='muted'>No appointments found.</div>" if not appt_rows else ""}
-              {"<table class='tbl'><thead><tr><th>Start</th><th>End</th><th>Therapist</th><th>Procedure</th><th>Status</th><th>Note</th></tr></thead><tbody>"+appt_rows+"</tbody></table>" if appt_rows else ""}
-            </div>
-
-            <div class="card">
-              <h3>Session Note</h3>
-              <div class="muted">Notes are stored per appointment (1 note per appointment).</div>
-              <form method="post" action="{rp}/children/{child_id}/appointments/0/note" onsubmit="this.action=this.action.replace('/appointments/0/note','/appointments/'+document.getElementById('appt_sel').value+'/note');">
-                <select id="appt_sel" name="appointment_id" required>
-                  <option value="">Select appointment…</option>
-                  {appt_options}
-                </select>
-                <textarea name="summary" placeholder="Summary"></textarea>
-                <textarea name="what_went_wrong" placeholder="What went wrong"></textarea>
-                <textarea name="improvements" placeholder="Improvements"></textarea>
-                <textarea name="next_steps" placeholder="Next steps"></textarea>
-                <button type="submit">Save Note</button>
-              </form>
-            </div>
-          </div>
-
-          <div class="grid2">
-            <div class="card">
-              <h3>Billing</h3>
-              {"<div class='muted'>No billing entries found.</div>" if not bill_rows else ""}
-              {"<table class='tbl'><thead><tr><th>Due</th><th>Paid</th><th>Invoice</th><th>Signed</th><th>Actions</th></tr></thead><tbody>"+bill_rows+"</tbody></table>" if bill_rows else ""}
-            </div>
-
-            <div class="card">
-              <h3>Create Invoice</h3>
-              <form method="post" action="{rp}/children/{child_id}/billing/create">
-                <input name="billing_due" type="date" required />
-                <select name="invoice_created">
-                  <option value="NO">Invoice created? NO</option>
-                  <option value="YES">Invoice created? YES</option>
-                </select>
-                <select name="paid">
-                  <option value="NO">Paid? NO</option>
-                  <option value="YES">Paid? YES</option>
-                </select>
-                <select name="parent_signed_off">
-                  <option value="NO">Parent signed? NO</option>
-                  <option value="YES">Parent signed? YES</option>
-                </select>
-                <button type="submit">Create Billing Item</button>
-              </form>
-            </div>
-          </div>
-        </div>
-      </body>
-    </html>
-    """
-    return HTMLResponse(html)
 
 
 # ----------------------------
@@ -626,7 +542,7 @@ def child_create_appointment(
     edt = _parse_dt(ends_at)
     if not sdt or not edt or edt <= sdt:
         rp = _rp(request)
-        return RedirectResponse(url=f"{rp}/children/{child_id}", status_code=303)
+        return RedirectResponse(url=f"{rp}/children/{child_id}?tab=appointments", status_code=303)
 
     a = Appointment(
         tenant_id=tctx.tenant_id,
@@ -640,8 +556,53 @@ def child_create_appointment(
     db.add(a)
     db.commit()
 
+# ----------------------------
+# POST: Update appointment attendance (tenant-safe)
+# ----------------------------
+@router.post("/children/{child_id}/appointments/{appointment_id}/attendance")
+def appointment_set_attendance(
+    request: Request,
+    child_id: int,
+    appointment_id: int,
+    attendance_status: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    tenant_slug = _session_tenant_slug(request)
+    redirect = _require_login_for_tenant(request, tenant_slug)
+    if redirect:
+        return redirect
+
+    tctx = resolve_tenant(db, request, tenant_slug=tenant_slug)
+    _child_or_404(db, tctx.tenant_id, child_id)
+
+    appt = (
+        db.query(Appointment)
+        .filter(
+            Appointment.tenant_id == tctx.tenant_id,
+            Appointment.child_id == child_id,
+            Appointment.id == appointment_id,
+        )
+        .first()
+    )
+    if not appt:
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    status = (attendance_status or "").strip().upper()
+    allowed = {"UNCONFIRMED", "ATTENDED", "MISSED", "CANCELLED"}
+    if status not in allowed:
+        raise HTTPException(status_code=400, detail="Invalid attendance status")
+
+    appt.attendance_status = status
+    db.add(appt)
+    db.commit()
+
+    _toast_set(request, f"Attendance updated to {status}", kind="success")
     rp = _rp(request)
-    return RedirectResponse(url=f"{rp}/children/{child_id}", status_code=303)
+    return RedirectResponse(url=f"{rp}/children/{child_id}?tab=appointments", status_code=303)
+
+    rp = _rp(request)
+    _toast_set(request, "success", "Appointment created")
+    return RedirectResponse(url=f"{rp}/children/{child_id}?tab=appointments", status_code=303)
 
 
 # ----------------------------
@@ -668,7 +629,7 @@ def child_create_billing(
     due = _parse_date(billing_due)
     if not due:
         rp = _rp(request)
-        return RedirectResponse(url=f"{rp}/children/{child_id}", status_code=303)
+        return RedirectResponse(url=f"{rp}/children/{child_id}?tab=billing", status_code=303)
 
     b = BillingItem(
         tenant_id=tctx.tenant_id,
@@ -682,7 +643,8 @@ def child_create_billing(
     db.commit()
 
     rp = _rp(request)
-    return RedirectResponse(url=f"{rp}/children/{child_id}", status_code=303)
+    _toast_set(request, "success", "Billing item created")
+    return RedirectResponse(url=f"{rp}/children/{child_id}?tab=billing", status_code=303)
 
 
 # ----------------------------
@@ -726,7 +688,8 @@ def billing_set_flag(
     db.commit()
 
     rp = _rp(request)
-    return RedirectResponse(url=f"{rp}/children/{child_id}", status_code=303)
+    _toast_set(request, "success", "Billing updated")
+    return RedirectResponse(url=f"{rp}/children/{child_id}?tab=billing", status_code=303)
 
 
 # ----------------------------
@@ -769,7 +732,8 @@ def appointment_upsert_note(
     db.commit()
 
     rp = _rp(request)
-    return RedirectResponse(url=f"{rp}/children/{child_id}", status_code=303)
+    _toast_set(request, "success", "Session note saved")
+    return RedirectResponse(url=f"{rp}/children/{child_id}?tab=notes", status_code=303)
 
 
 # ----------------------------

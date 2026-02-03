@@ -21,7 +21,7 @@ Temp password: {{ onboard.temp_password }}">
 {% endif %}
 
 {% set header = "Tenants" %}
-{% set subheader = "Search, archive, and manage tenants at scale." %}
+{% set subheader = "Search, archive, manage tenants — and renew licenses." %}
 {% set actions = [
   {"label":"Create tenant","href": "/admin/tenants/new","variant":"primary"},
   {"label":"Licensing","href": "/admin/licensing","variant":"outline"},
@@ -85,7 +85,7 @@ Temp password: {{ onboard.temp_password }}">
           <th>Owner email</th>
           <th>Status</th>
           <th>Links</th>
-          <th style="width:260px;">Actions</th>
+          <th style="width:340px;">Actions</th>
         </tr>
       </thead>
       <tbody>
@@ -109,8 +109,21 @@ Temp password: {{ onboard.temp_password }}">
               {% if t.sms_url %} | <a href="{{ t.sms_url }}" target="_blank">SMS</a>{% endif %}
             </td>
             <td>
-              <div style="display:flex; gap:8px; flex-wrap:wrap;">
+              <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
                 <a class="btn btn-sm btn-outline" href="/admin/tenants/{{ t.slug }}/reset_password">🔑 Reset</a>
+                <a class="btn btn-sm btn-outline" href="/admin/licensing?tenant={{ t.slug }}">💳 Licensing</a>
+
+                <!-- ✅ NEW: Quick Renew -->
+                <form method="post" action="/admin/tenants/{{ t.slug }}/renew" style="display:inline; gap:6px; align-items:center;">
+                  <select class="input" name="plan_code" style="width:160px; display:inline-block;">
+                    <option value="TRIAL_7D">Renew: 7 days</option>
+                    <option value="MONTHLY_30D" selected>Renew: 30 days</option>
+                    <option value="YEARLY_365D">Renew: 365 days</option>
+                  </select>
+                  <button class="btn btn-sm btn-outline" type="submit" title="Extends from expiry if active; from now if expired.">
+                    🔁 Renew
+                  </button>
+                </form>
 
                 {% if t.deleted_at %}
                   <form method="post" action="/admin/tenants/{{ t.slug }}/restore" style="display:inline;">
@@ -138,6 +151,10 @@ Portal: {{ t.suite_url }}
 SMS: {{ t.sms_url }}">
                   📋 Copy links
                 </button>
+              </div>
+
+              <div style="margin-top:8px; font-size:12px; opacity:.75;">
+                Renewal rule: <b>active</b> → extend from expiry, <b>expired</b> → extend from today.
               </div>
             </td>
           </tr>

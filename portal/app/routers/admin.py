@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import secrets
 import hashlib
-import uuid
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -17,7 +16,6 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.config import settings
 from app.models.tenant import Tenant
-from app.models.clinic_settings import ClinicSettings
 from app.models.licensing import Plan, Subscription, ActivationCode, LicenseAuditLog
 from app.utils.security import generate_temp_password
 
@@ -50,8 +48,8 @@ def _flash_pop(request: Request, key: str, default=None):
 # Admin key auth
 # ----------------------------
 def _expected_admin_key() -> str:
-    return (os.getenv("ADMIN_KEY") or "").strip()
-
+    # Prefer settings (pydantic) so Render env vars are always loaded consistently
+    return (settings.ADMIN_KEY or os.getenv("ADMIN_KEY") or "").strip()
 
 
 def _get_admin_key_from_request(request: Request) -> str:
@@ -107,7 +105,8 @@ def _portal_base(request: Request) -> str:
 
 
 def _sms_base() -> str:
-    return (os.getenv("SMS_APP_URL") or "").strip().rstrip("/")
+    # Prefer settings as this is how you configure in Render
+    return (settings.SMS_APP_URL or os.getenv("SMS_APP_URL") or "").strip().rstrip("/")
 
 
 def _sms_url_for_tenant(slug: str) -> str:
@@ -132,8 +131,10 @@ def ensure_default_plans(db: Session) -> None:
     db.commit()
 
 
+# ----------------------------
+# Tenant lifecycle self-heal
+# ----------------------------
 def _tenant_lifecycle_ready(db: Session) -> bool:
-    """Detect whether tenant lifecycle columns exist."""
     try:
         needed = {"is_archived", "archived_at", "deleted_at", "deleted_by"}
         rows = db.execute(
@@ -152,12 +153,6 @@ def _tenant_lifecycle_ready(db: Session) -> bool:
 
 
 def _ensure_tenant_lifecycle_columns(db: Session) -> bool:
-    """
-    Self-healing guard: if lifecycle columns are missing, add them.
-
-    This prevents admin actions (archive/delete/bulk) from erroring out when
-    migrations haven't been applied yet.
-    """
     if _tenant_lifecycle_ready(db):
         return True
 
@@ -167,7 +162,6 @@ def _ensure_tenant_lifecycle_columns(db: Session) -> bool:
         db.execute(sa.text("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL;"))
         db.execute(sa.text("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS deleted_by VARCHAR(255) NULL;"))
 
-        # Remove default for cleanliness
         try:
             db.execute(sa.text("ALTER TABLE tenants ALTER COLUMN is_archived DROP DEFAULT;"))
         except Exception:
@@ -179,6 +173,84 @@ def _ensure_tenant_lifecycle_columns(db: Session) -> bool:
         db.rollback()
         print(f"[admin] WARNING: failed to ensure tenant lifecycle columns: {e}")
         return False
+
+
+# ----------------------------
+# ✅ License renewal core logic
+# ----------------------------
+def _renew_subscription_for_tenant(db: Session, tenant_id: str, plan: Plan, actor: str) -> tuple[datetime, datetime]:
+    """
+    Renewal rule:
+      - if active -> extend from expiry
+      - if expired -> extend from now
+
+    Returns: (old_end, new_end)
+    """
+    now = datetime.utcnow()
+
+    sub = (
+        db.query(Subscription)
+        .filter(Subscription.tenant_id == tenant_id)
+        .order_by(Subscription.ends_at.desc())
+        .first()
+    )
+
+    old_end = sub.ends_at if (sub and sub.ends_at) else now
+
+    base = now
+    if sub and sub.ends_at and sub.ends_at > now:
+        base = sub.ends_at  # active: extend from expiry
+    else:
+        base = now  # expired: extend from now
+
+    new_end = base + timedelta(days=int(plan.duration_days or 0))
+
+    if sub:
+        # extend existing row
+        if not sub.starts_at:
+            sub.starts_at = now
+        sub.ends_at = new_end
+        sub.status = "active"
+        sub.plan_id = plan.id
+        sub.source = getattr(sub, "source", None) or "admin"
+        db.add(sub)
+    else:
+        # create first subscription row
+        sub = Subscription(
+            id=secrets.token_hex(16),
+            tenant_id=tenant_id,
+            plan_id=plan.id,
+            status="active",
+            starts_at=now,
+            ends_at=new_end,
+            source="admin",
+        )
+        db.add(sub)
+
+    # audit
+    try:
+        db.add(
+            LicenseAuditLog(
+                id=secrets.token_hex(16),
+                tenant_id=tenant_id,
+                event_type="renew",
+                details_json=f'{{"plan":"{plan.code}","old_end":"{old_end.isoformat()}","new_end":"{new_end.isoformat()}","actor":"{actor}"}}',
+                created_at=now,
+            )
+        )
+    except Exception:
+        pass
+
+    db.commit()
+    return old_end, new_end
+
+
+def _get_tenant_row_schema_safe(db: Session, slug: str):
+    row = db.execute(
+        sa.text("SELECT id, slug, name, status FROM tenants WHERE slug = :slug LIMIT 1"),
+        {"slug": slug},
+    ).fetchone()
+    return row
 
 
 # ----------------------------
@@ -203,7 +275,6 @@ def admin_index(request: Request):
         return RedirectResponse(url="/admin/tenants", status_code=303)
 
     if authenticated:
-        # Ensure it sticks in session
         if (_session(request).get("admin_key") or "").strip() != expected:
             _set_admin_session_key(request, expected)
         return RedirectResponse(url="/admin/tenants", status_code=303)
@@ -243,7 +314,7 @@ def admin_logout(request: Request):
 
 
 # ----------------------------
-# Tenants (scale)
+# Tenants list
 # ----------------------------
 @router.get("/admin/tenants", response_class=HTMLResponse)
 def admin_tenants(
@@ -304,7 +375,6 @@ def admin_tenants(
 
     status = (status or "active").strip().lower()
 
-    # Apply filters only if lifecycle columns exist
     if lifecycle_ready:
         if status == "archived":
             query = query.filter(Tenant.deleted_at.is_(None), Tenant.is_archived.is_(True))
@@ -341,7 +411,6 @@ def admin_tenants(
             )
     except Exception:
         db.rollback()
-        # Minimal fallback
         total = db.execute(sa.text("SELECT COUNT(*) FROM tenants")).scalar() or 0
         rows = db.execute(
             sa.text(
@@ -394,6 +463,35 @@ def admin_tenants(
             "lifecycle_ready": lifecycle_ready,
         },
     )
+
+
+# ----------------------------
+# ✅ Renew license for a tenant (NEW)
+# ----------------------------
+@router.post("/admin/tenants/{slug}/renew")
+def admin_tenant_renew(
+    request: Request,
+    slug: str,
+    plan_code: str = Form(...),  # TRIAL_7D / MONTHLY_30D / YEARLY_365D
+    db: Session = Depends(get_db),
+):
+    _require_admin(request)
+    ensure_default_plans(db)
+
+    row = _get_tenant_row_schema_safe(db, slug)
+    if not row:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    tenant_id = row[0]
+
+    plan = db.query(Plan).filter(Plan.code == plan_code).first()
+    if not plan:
+        raise HTTPException(status_code=400, detail="Plan not found")
+
+    actor = (_session(request).get("email") or "admin")
+    _renew_subscription_for_tenant(db, tenant_id=tenant_id, plan=plan, actor=str(actor))
+
+    return RedirectResponse(url=f"/admin/licensing?tenant={slug}", status_code=303)
 
 
 # ----------------------------
@@ -467,7 +565,6 @@ def admin_reset_password_do(
     user.must_reset_password = True
     db.add(user)
 
-    # best-effort audit
     try:
         db.add(
             LicenseAuditLog(
@@ -634,9 +731,19 @@ def admin_licensing(request: Request, tenant: Optional[str] = None, db: Session 
                 .first()
             )
 
+    # Optional: show last generated code passed as query param
+    code = request.query_params.get("code") or ""
+
     return templates.TemplateResponse(
         "admin/licensing.html",
-        {"request": request, "tenants": tenants, "plans": plans, "selected": selected, "current_sub": current_sub},
+        {
+            "request": request,
+            "tenants": tenants,
+            "plans": plans,
+            "selected": selected,
+            "current_sub": current_sub,
+            "code": code,
+        },
     )
 
 
@@ -687,6 +794,30 @@ def admin_generate_code(
     db.commit()
 
     return RedirectResponse(url=f"/admin/licensing?tenant={tenant_slug}&code={raw}", status_code=303)
+
+
+@router.post("/admin/licensing/renew")
+def admin_renew_from_licensing(
+    request: Request,
+    tenant_slug: str = Form(...),
+    plan_code: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    _require_admin(request)
+    ensure_default_plans(db)
+
+    t = db.query(Tenant).filter(Tenant.slug == tenant_slug).first()
+    if not t:
+        raise HTTPException(404, "Tenant not found")
+
+    plan = db.query(Plan).filter(Plan.code == plan_code).first()
+    if not plan:
+        raise HTTPException(400, "Plan not found")
+
+    actor = (_session(request).get("email") or "admin")
+    _renew_subscription_for_tenant(db, tenant_id=t.id, plan=plan, actor=str(actor))
+
+    return RedirectResponse(url=f"/admin/licensing?tenant={tenant_slug}", status_code=303)
 
 
 # ----------------------------

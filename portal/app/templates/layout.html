@@ -3,76 +3,88 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>{{ title or "1st Providers Choice" }}</title>
+  <title>{{ title or "Calendo" }}</title>
 
   {# When served behind the nginx gateway under /therapy, FastAPI sets request.scope.root_path.
-     We use it to prefix internal links + static assets so styling works both directly (http://localhost:8010)
-     and behind the gateway (http://localhost:8080/therapy/). #}
+     We use it to prefix internal links + static assets so styling works both directly
+     and behind the gateway. #}
   {% set rp = request.scope.get("root_path", "") %}
+  {% set ts = (tenant_slug or request.query_params.get('tenant') or request.session.get('tenant_slug') or 'default') %}
+  {% set suite_url = rp ~ '/t/' ~ ts ~ '/suite' %}
+  {% set children_url = rp ~ '/children?tenant=' ~ ts %}
+  {% set therapists_url = rp ~ '/therapists?tenant=' ~ ts %}
+  {% set settings_url = rp ~ '/settings?tenant=' ~ ts %}
+  {% set outbox_url = rp ~ '/sms-outbox?tenant=' ~ ts %}
 
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="{{ rp }}/static/css/app.css" />
   <script defer src="{{ rp }}/static/js/app.js"></script>
 </head>
-
 <body class="bg-slate-100 text-slate-900">
+  {% set toast = request.session.pop('toast', None) %}
+  {% if toast and toast.text %}
+    <div class="toast toast-{{ toast.kind or 'success' }}" data-toast>{{ toast.text }}</div>
+  {% endif %}
   <div class="topbar">
     <div class="topbar-inner">
-      <div class="brand">
-        <div class="brand-mark">1st</div>
-        <div>
-          <div class="brand-title">Providers Choice</div>
-          <div class="brand-sub">{{ (clinic.clinic_name if clinic else "Therapy Portal") }}</div>
+      <div class="topbar-left">
+        <button class="menu-btn" type="button" aria-label="Open menu" data-action="toggle-sidebar">☰</button>
+
+        <div class="brand">
+          <div class="brand-mark">C</div>
+          <div>
+            <div class="brand-title">Calendo</div>
+            <div class="brand-sub">{{ (clinic.clinic_name if clinic else "Therapy Portal") }}</div>
+          </div>
+        </div>
+
+        <div class="tenant-chip" title="Current tenant">
+          <span class="tenant-chip-label">Tenant</span>
+          <span class="tenant-chip-value">{{ ts }}</span>
         </div>
       </div>
 
       <div class="topbar-right">
         <div class="userbox">
           <span class="userbox-label">User</span>
-          <span class="userbox-name">{{ user_name or "PAUL PORTAL TEST" }}</span>
+          <span class="userbox-name">{{ user_name or request.session.get('email') or "User" }}</span>
         </div>
-        <a class="logout" href="{{ sms_app_url }}">SMS CALENDAR</a>
-        <a class="logout" href="/">HOME</a>
+
+        <a class="logout" href="{{ sms_app_url }}" title="Open SMS Calendar">SMS</a>
+        <a class="logout" href="{{ suite_url }}" title="Go to Suite">Suite</a>
       </div>
     </div>
   </div>
 
   <div class="page">
-    <aside class="sidebar">
-      <div class="sidehdr">Core</div>
-      <a class="sideitem" href="{{ rp }}/">🏠 Dashboard</a>
-      <a class="sideitem" href="{{ rp }}/calendar">🗓️ Calendar</a>
-      <a class="sideitem" href="{{ rp }}/timeline">🧭 Timeline Journey</a>
+    <aside class="sidebar" aria-label="Sidebar navigation">
+      <div class="sidehdr">Workspace</div>
+      <a class="sideitem" href="{{ suite_url }}">🏠 Suite</a>
+      <a class="sideitem" href="{{ children_url }}">🧒 Children</a>
+      <a class="sideitem" href="{{ therapists_url }}">🧑‍⚕️ Therapists</a>
 
       <div class="side-sep"></div>
       <div class="sidehdr">Operations</div>
       <a class="sideitem" href="{{ rp }}/billing">💳 Billing</a>
-      <a class="sideitem" href="{{ rp }}/billing/inputs">🧾 Billing inputs</a>
-      <a class="sideitem" href="{{ rp }}/appointments">📅 Past Appointments</a>
+      <a class="sideitem" href="{{ outbox_url }}">📤 SMS Outbox</a>
 
       <div class="side-sep"></div>
-      <div class="sidehdr">Records</div>
-      <a class="sideitem" href="{{ rp }}/children">🧒 Children</a>
-      <a class="sideitem" href="{{ rp }}/therapists">🧑‍⚕️ Therapists</a>
-      <a class="sideitem" href="{{ rp }}/messages">✉️ Messages</a>
-      <a class="sideitem" href="{{ rp }}/questionnaires">📝 Questionnaires</a>
-      <a class="sideitem" href="{{ rp }}/profile">👤 Profile</a>
-
-      <div class="side-sep"></div>
-      <div class="sidehdr">System Admin</div>
-      <a class="sideitem" href="{{ rp }}/settings">⚙️ Clinic Setup</a>
+      <div class="sidehdr">Clinic</div>
+      <a class="sideitem" href="{{ settings_url }}">⚙️ Setup</a>
 
       <div class="side-sep"></div>
       <div class="sidehdr">Apps</div>
       <a class="sideitem" href="{{ sms_app_url }}">📣 SMS Calendar</a>
-      <a class="sideitem muted" href="/">🏠 Landing</a>
+      <a class="sideitem muted" href="{{ rp }}/">🏁 Landing</a>
     </aside>
+
+    <div class="sidebar-backdrop" data-action="close-sidebar" aria-hidden="true"></div>
 
     <main class="content">
       <div class="content-inner">
         <div class="panel">
           <div class="panel-head">
-            <div class="panel-title">{{ header or "Past Appointments" }}</div>
+            <div class="panel-title">{{ header or "Clinic Suite" }}</div>
           </div>
           <div class="panel-body">
             {% block content %}{% endblock %}
@@ -81,5 +93,23 @@
       </div>
     </main>
   </div>
+
+  <nav class="bottom-nav" aria-label="Bottom navigation">
+    <a class="bn-item" href="{{ suite_url }}">
+      <span class="bn-ico">🏠</span><span class="bn-txt">Suite</span>
+    </a>
+    <a class="bn-item" href="{{ children_url }}">
+      <span class="bn-ico">🧒</span><span class="bn-txt">Children</span>
+    </a>
+    <a class="bn-item" href="{{ rp }}/billing">
+      <span class="bn-ico">💳</span><span class="bn-txt">Billing</span>
+    </a>
+    <a class="bn-item" href="{{ outbox_url }}">
+      <span class="bn-ico">📤</span><span class="bn-txt">Outbox</span>
+    </a>
+    <a class="bn-item" href="{{ settings_url }}">
+      <span class="bn-ico">⚙️</span><span class="bn-txt">Setup</span>
+    </a>
+  </nav>
 </body>
 </html>

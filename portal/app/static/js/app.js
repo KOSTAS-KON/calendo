@@ -49,3 +49,112 @@ document.addEventListener("click", async (e) => {
     alert("Copy failed. Please copy manually.");
   }
 });
+
+
+function initSidebarToggle(){
+  const btns = document.querySelectorAll('[data-action="toggle-sidebar"]');
+  const closeEls = document.querySelectorAll('[data-action="close-sidebar"]');
+
+  function close(){ document.body.classList.remove('sidebar-open'); }
+  function toggle(){ document.body.classList.toggle('sidebar-open'); }
+
+  btns.forEach(b => b.addEventListener('click', toggle));
+  closeEls.forEach(el => el.addEventListener('click', close));
+
+  // close on ESC
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') close();
+  });
+}
+
+function initCopyButtons(){
+  document.querySelectorAll('.copy-btn[data-copy]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const text = btn.getAttribute('data-copy') || '';
+      try{
+        await navigator.clipboard.writeText(text);
+        const old = btn.textContent;
+        btn.textContent = '✅ Copied';
+        setTimeout(() => { btn.textContent = old; }, 1200);
+      }catch(e){
+        // fallback
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        ta.remove();
+      }
+    });
+  });
+}
+
+function initActiveNav(){
+  const path = window.location.pathname;
+  document.querySelectorAll('.sideitem, .bn-item').forEach((a) => {
+    const href = a.getAttribute('href') || '';
+    if (!href || href.startsWith('http')) return;
+    // Basic match (ignores query string)
+    const hrefPath = href.split('?')[0];
+    if (hrefPath !== '/' && path.startsWith(hrefPath)){
+      a.classList.add('is-active');
+    }
+  });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  initSidebarToggle();
+  initCopyButtons();
+  initActiveNav();
+});
+
+
+function initToasts(){
+  document.querySelectorAll('[data-toast]').forEach((el) => {
+    // auto-hide
+    setTimeout(() => { el.style.opacity = '0'; el.style.transform = 'translateY(-6px)'; }, 2600);
+    setTimeout(() => { el.remove(); }, 3200);
+  });
+}
+
+// Convert tables to cards on mobile (reads <th> labels)
+function initResponsiveTables(){
+  const tables = document.querySelectorAll('table.js-responsive-table[data-cards="true"]');
+  tables.forEach((table) => {
+    // avoid duplicating
+    if (table.dataset.cardsBuilt === '1') return;
+    const heads = Array.from(table.querySelectorAll('thead th')).map(th => (th.textContent || '').trim());
+    const rows = Array.from(table.querySelectorAll('tbody tr'));
+    const wrap = document.createElement('div');
+    wrap.className = 'table-cards-view';
+    rows.forEach((tr) => {
+      const card = document.createElement('div');
+      card.className = 'tcard';
+      const tds = Array.from(tr.children);
+      tds.forEach((td, idx) => {
+        const label = heads[idx] || ('Field ' + (idx+1));
+        const row = document.createElement('div');
+        row.className = 'row';
+        const k = document.createElement('div');
+        k.className = 'k';
+        k.textContent = label;
+        const v = document.createElement('div');
+        v.className = 'v';
+        // preserve inner HTML for buttons/forms
+        v.innerHTML = td.innerHTML;
+        row.appendChild(k);
+        row.appendChild(v);
+        card.appendChild(row);
+      });
+      wrap.appendChild(card);
+    });
+    table.insertAdjacentElement('afterend', wrap);
+    table.dataset.cardsBuilt = '1';
+  });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  initSidebarToggle();
+  initToasts();
+  initResponsiveTables();
+});
