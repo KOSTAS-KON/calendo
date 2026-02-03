@@ -48,15 +48,10 @@ def _flash_pop(request: Request, key: str, default=None):
 # Admin key auth
 # ----------------------------
 def _expected_admin_key() -> str:
-    # Prefer settings (pydantic) so Render env vars are always loaded consistently
     return (settings.ADMIN_KEY or os.getenv("ADMIN_KEY") or "").strip()
 
 
 def _get_admin_key_from_request(request: Request) -> str:
-    """Header first, then session, then (optionally) ?admin_key= bootstrap.
-
-    WARNING: Query-string auth can leak via logs/referrers. Disabled by default.
-    """
     hdr = (request.headers.get("X-Admin-Key") or request.headers.get("x-admin-key") or "").strip()
     if hdr:
         return hdr
@@ -105,7 +100,6 @@ def _portal_base(request: Request) -> str:
 
 
 def _sms_base() -> str:
-    # Prefer settings as this is how you configure in Render
     return (settings.SMS_APP_URL or os.getenv("SMS_APP_URL") or "").strip().rstrip("/")
 
 
@@ -161,12 +155,10 @@ def _ensure_tenant_lifecycle_columns(db: Session) -> bool:
         db.execute(sa.text("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP NULL;"))
         db.execute(sa.text("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL;"))
         db.execute(sa.text("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS deleted_by VARCHAR(255) NULL;"))
-
         try:
             db.execute(sa.text("ALTER TABLE tenants ALTER COLUMN is_archived DROP DEFAULT;"))
         except Exception:
             pass
-
         db.commit()
         return True
     except Exception as e:
@@ -176,16 +168,9 @@ def _ensure_tenant_lifecycle_columns(db: Session) -> bool:
 
 
 # ----------------------------
-# ✅ License renewal core logic
+# License renewal core logic
 # ----------------------------
 def _renew_subscription_for_tenant(db: Session, tenant_id: str, plan: Plan, actor: str) -> tuple[datetime, datetime]:
-    """
-    Renewal rule:
-      - if active -> extend from expiry
-      - if expired -> extend from now
-
-    Returns: (old_end, new_end)
-    """
     now = datetime.utcnow()
 
     sub = (
@@ -197,16 +182,12 @@ def _renew_subscription_for_tenant(db: Session, tenant_id: str, plan: Plan, acto
 
     old_end = sub.ends_at if (sub and sub.ends_at) else now
 
-    base = now
-    if sub and sub.ends_at and sub.ends_at > now:
-        base = sub.ends_at  # active: extend from expiry
-    else:
-        base = now  # expired: extend from now
-
+    # Rule:
+    # active -> extend from expiry, expired -> extend from now
+    base = sub.ends_at if (sub and sub.ends_at and sub.ends_at > now) else now
     new_end = base + timedelta(days=int(plan.duration_days or 0))
 
     if sub:
-        # extend existing row
         if not sub.starts_at:
             sub.starts_at = now
         sub.ends_at = new_end
@@ -215,7 +196,6 @@ def _renew_subscription_for_tenant(db: Session, tenant_id: str, plan: Plan, acto
         sub.source = getattr(sub, "source", None) or "admin"
         db.add(sub)
     else:
-        # create first subscription row
         sub = Subscription(
             id=secrets.token_hex(16),
             tenant_id=tenant_id,
@@ -227,7 +207,6 @@ def _renew_subscription_for_tenant(db: Session, tenant_id: str, plan: Plan, acto
         )
         db.add(sub)
 
-    # audit
     try:
         db.add(
             LicenseAuditLog(
@@ -246,11 +225,10 @@ def _renew_subscription_for_tenant(db: Session, tenant_id: str, plan: Plan, acto
 
 
 def _get_tenant_row_schema_safe(db: Session, slug: str):
-    row = db.execute(
+    return db.execute(
         sa.text("SELECT id, slug, name, status FROM tenants WHERE slug = :slug LIMIT 1"),
         {"slug": slug},
     ).fetchone()
-    return row
 
 
 # ----------------------------
@@ -265,16 +243,13 @@ def admin_index(request: Request):
     if not expected:
         return HTMLResponse("<h2>ADMIN_KEY not configured</h2>", status_code=403)
 
-    got = _get_admin_key_from_request(request)
-    authenticated = got == expected
-
-    # Optional bootstrap: /admin?admin_key=...
     qp = (request.query_params.get("admin_key") or "").strip()
-    if qp and qp == expected:
+    if qp and settings.ALLOW_ADMIN_KEY_QUERY and qp == expected:
         _set_admin_session_key(request, expected)
         return RedirectResponse(url="/admin/tenants", status_code=303)
 
-    if authenticated:
+    got = _get_admin_key_from_request(request)
+    if got == expected:
         if (_session(request).get("admin_key") or "").strip() != expected:
             _set_admin_session_key(request, expected)
         return RedirectResponse(url="/admin/tenants", status_code=303)
@@ -320,7 +295,7 @@ def admin_logout(request: Request):
 def admin_tenants(
     request: Request,
     q: str = "",
-    status: str = "active",  # active|archived|deleted|all
+    status: str = "active",
     page: int = 1,
     limit: int = 50,
     db: Session = Depends(get_db),
@@ -340,7 +315,6 @@ def admin_tenants(
             "Archive/Delete/Bulk actions will self-heal columns if possible, but you should run migrations."
         )
 
-    # Owner email subquery
     from app.models.user import User
 
     role_rank = sa.case(
@@ -387,56 +361,24 @@ def admin_tenants(
     else:
         status = "all"
 
-    try:
-        total = query.count()
-        rows = (
-            query.order_by(Tenant.created_at.desc())
-            .offset(offset)
-            .limit(limit)
-            .all()
+    total = query.count()
+    rows = query.order_by(Tenant.created_at.desc()).offset(offset).limit(limit).all()
+
+    tenants = []
+    for t, owner_email in rows:
+        tenants.append(
+            {
+                "slug": t.slug,
+                "name": t.name,
+                "status": t.status,
+                "is_archived": bool(getattr(t, "is_archived", False)),
+                "deleted_at": getattr(t, "deleted_at", None),
+                "owner_email": owner_email or "",
+                "suite_url": f"{base_url}/t/{t.slug}/suite",
+                "sms_url": _sms_url_for_tenant(t.slug),
+                "login_url": f"{base_url}/auth/login?next=/t/{t.slug}/suite",
+            }
         )
-        tenants = []
-        for t, owner_email in rows:
-            tenants.append(
-                {
-                    "slug": t.slug,
-                    "name": t.name,
-                    "status": t.status,
-                    "is_archived": bool(getattr(t, "is_archived", False)),
-                    "deleted_at": getattr(t, "deleted_at", None),
-                    "owner_email": owner_email or "",
-                    "suite_url": f"{base_url}/t/{t.slug}/suite",
-                    "sms_url": _sms_url_for_tenant(t.slug),
-                }
-            )
-    except Exception:
-        db.rollback()
-        total = db.execute(sa.text("SELECT COUNT(*) FROM tenants")).scalar() or 0
-        rows = db.execute(
-            sa.text(
-                """
-                SELECT slug, name, status
-                FROM tenants
-                ORDER BY created_at DESC NULLS LAST
-                OFFSET :off LIMIT :lim
-                """
-            ),
-            {"off": offset, "lim": limit},
-        ).fetchall()
-        tenants = []
-        for slug_val, name_val, status_val in rows:
-            tenants.append(
-                {
-                    "slug": slug_val,
-                    "name": name_val,
-                    "status": status_val,
-                    "is_archived": False,
-                    "deleted_at": None,
-                    "owner_email": "",
-                    "suite_url": f"{base_url}/t/{slug_val}/suite",
-                    "sms_url": _sms_url_for_tenant(slug_val),
-                }
-            )
 
     onboard = {
         "tenant_slug": _flash_pop(request, "onboard_tenant_slug", ""),
@@ -466,13 +408,13 @@ def admin_tenants(
 
 
 # ----------------------------
-# ✅ Renew license for a tenant (NEW)
+# Renew license for a tenant
 # ----------------------------
 @router.post("/admin/tenants/{slug}/renew")
 def admin_tenant_renew(
     request: Request,
     slug: str,
-    plan_code: str = Form(...),  # TRIAL_7D / MONTHLY_30D / YEARLY_365D
+    plan_code: str = Form(...),
     db: Session = Depends(get_db),
 ):
     _require_admin(request)
@@ -483,7 +425,6 @@ def admin_tenant_renew(
         raise HTTPException(status_code=404, detail="Tenant not found")
 
     tenant_id = row[0]
-
     plan = db.query(Plan).filter(Plan.code == plan_code).first()
     if not plan:
         raise HTTPException(status_code=400, detail="Plan not found")
@@ -495,7 +436,7 @@ def admin_tenant_renew(
 
 
 # ----------------------------
-# Reset password (schema-safe)
+# Reset password (FIXED: create user if missing)
 # ----------------------------
 @router.get("/admin/tenants/{slug}/reset_password", response_class=HTMLResponse)
 def admin_reset_password_page(request: Request, slug: str, db: Session = Depends(get_db)):
@@ -556,14 +497,34 @@ def admin_reset_password_do(
     from app.models.user import User
 
     email_lc = (user_email or "").strip().lower()
-    user = db.query(User).filter(User.tenant_id == tenant_id, User.email == email_lc).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found for this tenant")
+    if not email_lc:
+        raise HTTPException(status_code=400, detail="Email is required")
 
+    # ✅ Generate and set password hash
     temp_pw = generate_temp_password()
-    user.password_hash = bcrypt.hashpw(temp_pw.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-    user.must_reset_password = True
-    db.add(user)
+    pw_hash = bcrypt.hashpw(temp_pw.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+    # ✅ Create user if missing (guarantee login)
+    user = db.query(User).filter(User.tenant_id == tenant_id, sa.func.lower(User.email) == email_lc).first()
+    created = False
+    if not user:
+        user = User(
+            id=secrets.token_hex(16),
+            tenant_id=tenant_id,
+            email=email_lc,
+            password_hash=pw_hash,
+            role="owner",
+            is_active=True,
+            must_reset_password=True,
+        )
+        db.add(user)
+        created = True
+    else:
+        user.email = email_lc
+        user.password_hash = pw_hash
+        user.is_active = True
+        user.must_reset_password = True
+        db.add(user)
 
     try:
         db.add(
@@ -571,7 +532,7 @@ def admin_reset_password_do(
                 id=secrets.token_hex(16),
                 tenant_id=tenant_id,
                 event_type="reset_password",
-                details_json=f'{{"user":"{user.email}"}}',
+                details_json=f'{{"user":"{email_lc}","created":{str(created).lower()}}}',
                 created_at=datetime.utcnow(),
             )
         )
@@ -579,6 +540,8 @@ def admin_reset_password_do(
         pass
 
     db.commit()
+
+    login_url = f"/auth/login?next=/t/{tenant_slug}/suite"
 
     return templates.TemplateResponse(
         "admin/reset_password.html",
@@ -588,12 +551,13 @@ def admin_reset_password_do(
             "target_user": user,
             "done": True,
             "temp_password": temp_pw,
+            "login_url": login_url,
         },
     )
 
 
 # ----------------------------
-# Tenant lifecycle actions (self-healing)
+# Tenant lifecycle actions (unchanged)
 # ----------------------------
 @router.post("/admin/tenants/bulk")
 def admin_tenants_bulk(
@@ -731,7 +695,6 @@ def admin_licensing(request: Request, tenant: Optional[str] = None, db: Session 
                 .first()
             )
 
-    # Optional: show last generated code passed as query param
     code = request.query_params.get("code") or ""
 
     return templates.TemplateResponse(
@@ -782,17 +745,20 @@ def admin_generate_code(
             note="",
         )
     )
-    db.add(
-        LicenseAuditLog(
-            id=secrets.token_hex(16),
-            tenant_id=t.id,
-            event_type="code_generated",
-            details_json=f'{{"plan":"{plan.code}"}}',
-            created_at=datetime.utcnow(),
+    try:
+        db.add(
+            LicenseAuditLog(
+                id=secrets.token_hex(16),
+                tenant_id=t.id,
+                event_type="code_generated",
+                details_json=f'{{"plan":"{plan.code}"}}',
+                created_at=datetime.utcnow(),
+            )
         )
-    )
-    db.commit()
+    except Exception:
+        pass
 
+    db.commit()
     return RedirectResponse(url=f"/admin/licensing?tenant={tenant_slug}&code={raw}", status_code=303)
 
 

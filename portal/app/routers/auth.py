@@ -62,18 +62,10 @@ def ping():
 
 
 def _turnstile_configured() -> bool:
-    """
-    Turnstile is 'configured' only when:
-      - TURNSTILE_ENABLED=true
-      - SITE_KEY and SECRET_KEY are both set
-
-    If enabled but missing keys, we DO NOT enforce (avoid lockouts) and we log a warning.
-    """
     enabled = bool(getattr(settings, "TURNSTILE_ENABLED", False))
     site_key = (getattr(settings, "TURNSTILE_SITE_KEY", "") or "").strip()
     secret_key = (getattr(settings, "TURNSTILE_SECRET_KEY", "") or "").strip()
     if enabled and (not site_key or not secret_key):
-        # Avoid lockouts due to misconfiguration
         print("[auth] WARNING: TURNSTILE_ENABLED=true but keys missing. Turnstile will be bypassed until configured.")
         return False
     return enabled and bool(site_key) and bool(secret_key)
@@ -150,12 +142,6 @@ def _render_login_page(next_path: str, tenant_slug: str, error: str) -> HTMLResp
 
 
 def _verify_turnstile_or_raise(token: str, ip: str) -> None:
-    """
-    Cloudflare Turnstile verification for login.
-
-    Enforced ONLY when Turnstile is fully configured (enabled + both keys present).
-    If misconfigured, bypassed to avoid lockouts (see _turnstile_configured()).
-    """
     if not _turnstile_configured():
         return
 
@@ -239,9 +225,6 @@ def _record_login_failure(db, ip: str) -> None:
 
 
 def _get_tenant_id_by_slug(db, tenant_slug: str) -> str | None:
-    """
-    Schema-safe tenant lookup: avoid ORM Tenant model which may reference missing columns.
-    """
     row = db.execute(
         sa.text("SELECT id FROM tenants WHERE slug = :slug LIMIT 1"),
         {"slug": tenant_slug},
@@ -284,11 +267,10 @@ def auth_login_post(
 
     db = SessionLocal()
     try:
-        allowed, _retry_after = _rate_limit_login(db, ip)
+        allowed, _ = _rate_limit_login(db, ip)
         if not allowed:
             return RedirectResponse(url=f"/auth/login?next={quote(next_path)}&error=1", status_code=303)
 
-        # Optional bot protection on login (enforced only when fully configured)
         try:
             _verify_turnstile_or_raise(cf_turnstile_response, ip)
         except Exception:
@@ -302,7 +284,15 @@ def auth_login_post(
             _record_login_failure(db, ip)
             return RedirectResponse(url=f"/auth/login?next={quote(next_path)}&error=1", status_code=303)
 
-        u = db.query(User).filter(User.tenant_id == tenant_id, User.email == email).first()
+        # ✅ case-insensitive match
+        u = (
+            db.query(User)
+            .filter(
+                User.tenant_id == tenant_id,
+                sa.func.lower(User.email) == email,
+            )
+            .first()
+        )
         if not u or not getattr(u, "is_active", True):
             _record_login_failure(db, ip)
             return RedirectResponse(url=f"/auth/login?next={quote(next_path)}&error=1", status_code=303)
@@ -310,6 +300,15 @@ def auth_login_post(
         if not _hash_check(password, u.password_hash):
             _record_login_failure(db, ip)
             return RedirectResponse(url=f"/auth/login?next={quote(next_path)}&error=1", status_code=303)
+
+        # normalize stored email (optional but helps long-term)
+        if getattr(u, "email", "").lower() != email:
+            try:
+                u.email = email
+                db.add(u)
+                db.commit()
+            except Exception:
+                db.rollback()
 
         _session_set(request, "user_id", u.id)
         _session_set(request, "tenant_id", u.tenant_id)
@@ -319,9 +318,12 @@ def auth_login_post(
         _session_set(request, "logged_in_at", datetime.utcnow().isoformat())
 
         if hasattr(u, "last_login_at"):
-            u.last_login_at = datetime.utcnow()
-            db.add(u)
-            db.commit()
+            try:
+                u.last_login_at = datetime.utcnow()
+                db.add(u)
+                db.commit()
+            except Exception:
+                db.rollback()
 
         return RedirectResponse(url=next_path, status_code=303)
 
@@ -337,7 +339,6 @@ def login_post(
     cf_turnstile_response: str = Form("", alias="cf-turnstile-response"),
     next: str = Form("/t/default/suite"),
 ):
-    # Keep /login working as an alias to /auth/login (including Turnstile)
     return auth_login_post(
         request=request,
         email=email,

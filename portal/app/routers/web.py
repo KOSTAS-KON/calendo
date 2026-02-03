@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, date
-import sqlalchemy as sa
 import uuid
+import sqlalchemy as sa
 from urllib.parse import quote_plus
 
 from fastapi import APIRouter, Depends, Request, Form, HTTPException
@@ -60,7 +60,6 @@ def _session_tenant_slug(request: Request) -> str:
 def _sso_serializer() -> URLSafeTimedSerializer:
     secret = (settings.SSO_SHARED_SECRET or "").strip()
     if not secret:
-        # This prevents insecure fallback behavior.
         raise RuntimeError("Security is not configured: missing SSO_SHARED_SECRET. Please set it in the environment.")
     return URLSafeTimedSerializer(secret_key=secret, salt="calendo-sms-sso-v1")
 
@@ -76,22 +75,24 @@ def _make_sms_sso_token(request: Request, tenant_slug: str) -> str:
     return _sso_serializer().dumps(payload)
 
 
-def _require_login_for_tenant(request: Request, tenant_slug: str) -> RedirectResponse | None:
-    s = _session(request)
-    user_id = s.get("user_id")
-    sess_tenant = (s.get("tenant_slug") or "default").strip().lower()
-    tenant_slug = (tenant_slug or "default").strip().lower()
-
 def _sms_link_for(request: Request, tenant_slug: str) -> str:
     sms_url = (settings.SMS_APP_URL or "").strip() or "/sms"
     if sms_url.endswith("/"):
         sms_url = sms_url[:-1]
     sso = _make_sms_sso_token(request, tenant_slug)
-    # Render deployments often mount Streamlit at /sms/ with route /sms
     if "onrender.com" in sms_url:
         return f"{sms_url}/sms?tenant={tenant_slug}&sso={sso}"
     return f"{sms_url}?tenant={tenant_slug}&sso={sso}"
 
+
+def _require_login_for_tenant(request: Request, tenant_slug: str) -> RedirectResponse | None:
+    """
+    Enforce that user is logged in AND belongs to this tenant.
+    """
+    s = _session(request)
+    user_id = s.get("user_id")
+    sess_tenant = (s.get("tenant_slug") or "default").strip().lower()
+    tenant_slug = (tenant_slug or "default").strip().lower()
 
     if not user_id:
         rp = _rp(request)
@@ -146,24 +147,13 @@ def _render(request: Request, template_name: str, ctx: dict, db: Session, tenant
     cs = _get_settings(db, tctx.tenant_id)
     lic = _get_license(db)
 
-    sms_url = (settings.SMS_APP_URL or "").strip() or "/sms"
-    if sms_url.endswith("/"):
-        sms_url = sms_url[:-1]
-
-    sso = _make_sms_sso_token(request, tctx.tenant_slug)
-
-    if "onrender.com" in sms_url:
-        sms_link = f"{sms_url}/sms?tenant={tctx.tenant_slug}&sso={sso}"
-    else:
-        sms_link = f"{sms_url}?tenant={tctx.tenant_slug}&sso={sso}"
-
     base = {
         "request": request,
         "tenant_slug": tctx.tenant_slug,
         "tenant_name": tctx.tenant_name,
         "clinic": cs,
         "license": lic,
-        "sms_app_url": sms_link,
+        "sms_app_url": _sms_link_for(request, tctx.tenant_slug),
     }
     base.update(ctx or {})
     return templates.TemplateResponse(template_name, base)
@@ -248,7 +238,7 @@ def suite_tenant(request: Request, tenant_slug: str, db: Session = Depends(get_d
 
 
 # ----------------------------
-# Legacy compatibility routes (avoid 404 from old UI links)
+# Legacy compatibility routes
 # ----------------------------
 @router.get("/billing")
 def billing_legacy(request: Request):
@@ -294,7 +284,7 @@ def children_list(request: Request, tenant: str = "default", q: str = "", db: Se
         query = query.filter(Child.full_name.ilike(f"%{q}%"))
     children = query.order_by(Child.full_name.asc()).all()
 
-    # ---- lightweight "at a glance" meta for UX ----
+    # "at a glance" meta
     now = datetime.utcnow()
     next_appt: dict[int, datetime] = {}
     last_att: dict[int, str] = {}
@@ -398,7 +388,6 @@ def children_create(
         notes=(notes or "").strip() or None,
     )
 
-    # optional fields (only if the model has them)
     dob = _parse_date(date_of_birth)
     if dob is not None and hasattr(c, "date_of_birth"):
         c.date_of_birth = dob  # type: ignore[attr-defined]
@@ -418,6 +407,7 @@ def children_create(
     _toast_set(request, "success", "Child created")
     rp = _rp(request)
     return RedirectResponse(url=f"{rp}/children?tenant={tctx.tenant_slug}", status_code=303)
+
 
 # ----------------------------
 # POST: Update parents (tenant-safe)
@@ -440,21 +430,26 @@ def child_update_parents(
     tctx = resolve_tenant(db, request, tenant_slug=tenant_slug)
     child = _child_or_404(db, tctx.tenant_id, child_id)
 
-    child.parent1_name = (parent1_name or "").strip() or None
-    child.parent1_phone = (parent1_phone or "").strip() or None
-    child.parent2_name = (parent2_name or "").strip() or None
-    child.parent2_phone = (parent2_phone or "").strip() or None
+    # Only set if fields exist
+    if hasattr(child, "parent1_name"):
+        child.parent1_name = (parent1_name or "").strip() or None
+    if hasattr(child, "parent1_phone"):
+        child.parent1_phone = (parent1_phone or "").strip() or None
+    if hasattr(child, "parent2_name"):
+        child.parent2_name = (parent2_name or "").strip() or None
+    if hasattr(child, "parent2_phone"):
+        child.parent2_phone = (parent2_phone or "").strip() or None
 
     db.add(child)
     db.commit()
 
-    _toast_set(request, "Parents updated", kind="success")
+    _toast_set(request, "success", "Parents updated")
     rp = _rp(request)
     return RedirectResponse(url=f"{rp}/children/{child_id}?tab=parents", status_code=303)
 
 
 # ----------------------------
-# ✅ Tenant-safe Child Detail Page
+# Child detail (tenant-safe)
 # ----------------------------
 @router.get("/children/{child_id}", response_class=HTMLResponse)
 def child_detail(request: Request, child_id: int, tab: str = "overview", db: Session = Depends(get_db)):
@@ -483,7 +478,7 @@ def child_detail(request: Request, child_id: int, tab: str = "overview", db: Ses
     )
 
     appt_ids = [a.id for a in appts]
-    notes_by_appt = {}
+    notes_by_appt: dict[int, SessionNote] = {}
     if appt_ids:
         notes = (
             db.query(SessionNote)
@@ -492,10 +487,9 @@ def child_detail(request: Request, child_id: int, tab: str = "overview", db: Ses
         )
         notes_by_appt = {n.appointment_id: n for n in notes}
 
-    # toast (one-time)
     toast = _toast_pop(request)
-
     rp = _rp(request)
+
     return templates.TemplateResponse(
         "pages/child_detail.html",
         {
@@ -514,10 +508,8 @@ def child_detail(request: Request, child_id: int, tab: str = "overview", db: Ses
     )
 
 
-
-
 # ----------------------------
-# POST: Create appointment (tenant-safe)
+# POST: Create appointment
 # ----------------------------
 @router.post("/children/{child_id}/appointments/create")
 def child_create_appointment(
@@ -541,6 +533,7 @@ def child_create_appointment(
     sdt = _parse_dt(starts_at)
     edt = _parse_dt(ends_at)
     if not sdt or not edt or edt <= sdt:
+        _toast_set(request, "danger", "Invalid appointment times")
         rp = _rp(request)
         return RedirectResponse(url=f"{rp}/children/{child_id}?tab=appointments", status_code=303)
 
@@ -551,13 +544,18 @@ def child_create_appointment(
         ends_at=edt,
         therapist_name=(therapist_name or "").strip(),
         procedure=(procedure or "Session").strip() or "Session",
-        attendance_status=(attendance_status or "UNCONFIRMED").strip() or "UNCONFIRMED",
+        attendance_status=(attendance_status or "UNCONFIRMED").strip().upper() or "UNCONFIRMED",
     )
     db.add(a)
     db.commit()
 
+    _toast_set(request, "success", "Appointment created")
+    rp = _rp(request)
+    return RedirectResponse(url=f"{rp}/children/{child_id}?tab=appointments", status_code=303)
+
+
 # ----------------------------
-# POST: Update appointment attendance (tenant-safe)
+# POST: Update appointment attendance
 # ----------------------------
 @router.post("/children/{child_id}/appointments/{appointment_id}/attendance")
 def appointment_set_attendance(
@@ -575,17 +573,7 @@ def appointment_set_attendance(
     tctx = resolve_tenant(db, request, tenant_slug=tenant_slug)
     _child_or_404(db, tctx.tenant_id, child_id)
 
-    appt = (
-        db.query(Appointment)
-        .filter(
-            Appointment.tenant_id == tctx.tenant_id,
-            Appointment.child_id == child_id,
-            Appointment.id == appointment_id,
-        )
-        .first()
-    )
-    if not appt:
-        raise HTTPException(status_code=404, detail="Not Found")
+    appt = _appointment_or_404(db, tctx.tenant_id, child_id, appointment_id)
 
     status = (attendance_status or "").strip().upper()
     allowed = {"UNCONFIRMED", "ATTENDED", "MISSED", "CANCELLED"}
@@ -596,17 +584,13 @@ def appointment_set_attendance(
     db.add(appt)
     db.commit()
 
-    _toast_set(request, f"Attendance updated to {status}", kind="success")
+    _toast_set(request, "success", f"Attendance updated to {status}")
     rp = _rp(request)
-    return RedirectResponse(url=f"{rp}/children/{child_id}?tab=appointments", status_code=303)
-
-    rp = _rp(request)
-    _toast_set(request, "success", "Appointment created")
     return RedirectResponse(url=f"{rp}/children/{child_id}?tab=appointments", status_code=303)
 
 
 # ----------------------------
-# POST: Create billing item (tenant-safe)
+# POST: Create billing item
 # ----------------------------
 @router.post("/children/{child_id}/billing/create")
 def child_create_billing(
@@ -628,6 +612,7 @@ def child_create_billing(
 
     due = _parse_date(billing_due)
     if not due:
+        _toast_set(request, "danger", "Invalid billing due date")
         rp = _rp(request)
         return RedirectResponse(url=f"{rp}/children/{child_id}?tab=billing", status_code=303)
 
@@ -642,13 +627,13 @@ def child_create_billing(
     db.add(b)
     db.commit()
 
-    rp = _rp(request)
     _toast_set(request, "success", "Billing item created")
+    rp = _rp(request)
     return RedirectResponse(url=f"{rp}/children/{child_id}?tab=billing", status_code=303)
 
 
 # ----------------------------
-# POST: Set billing flags (paid / invoice_created / parent_signed_off)
+# POST: Set billing flags
 # ----------------------------
 @router.post("/children/{child_id}/billing/{billing_id}/set_flag")
 def billing_set_flag(
@@ -687,13 +672,13 @@ def billing_set_flag(
     db.add(row)
     db.commit()
 
-    rp = _rp(request)
     _toast_set(request, "success", "Billing updated")
+    rp = _rp(request)
     return RedirectResponse(url=f"{rp}/children/{child_id}?tab=billing", status_code=303)
 
 
 # ----------------------------
-# POST: Upsert session note for appointment (tenant-safe)
+# POST: Upsert session note for appointment
 # ----------------------------
 @router.post("/children/{child_id}/appointments/{appointment_id}/note")
 def appointment_upsert_note(
@@ -731,8 +716,8 @@ def appointment_upsert_note(
     db.add(note)
     db.commit()
 
-    rp = _rp(request)
     _toast_set(request, "success", "Session note saved")
+    rp = _rp(request)
     return RedirectResponse(url=f"{rp}/children/{child_id}?tab=notes", status_code=303)
 
 
@@ -746,7 +731,12 @@ def therapists_list(request: Request, tenant: str = "default", db: Session = Dep
         return redirect
 
     tctx = resolve_tenant(db, request, tenant_slug=tenant)
-    therapists = db.query(Therapist).filter(Therapist.tenant_id == tctx.tenant_id).order_by(Therapist.name.asc()).all()
+    therapists = (
+        db.query(Therapist)
+        .filter(Therapist.tenant_id == tctx.tenant_id)
+        .order_by(Therapist.name.asc())
+        .all()
+    )
     return _render(request, "pages/therapists.html", {"therapists": therapists}, db, tenant_slug=tctx.tenant_slug)
 
 
@@ -828,6 +818,7 @@ def settings_update_clinic(
     db.add(cs)
     db.commit()
     rp = _rp(request)
+    _toast_set(request, "success", "Clinic settings updated")
     return RedirectResponse(url=f"{rp}/settings?tenant={tctx.tenant_slug}", status_code=303)
 
 
@@ -854,11 +845,12 @@ def settings_update_infobip(
     db.add(cs)
     db.commit()
     rp = _rp(request)
+    _toast_set(request, "success", "SMS provider settings updated")
     return RedirectResponse(url=f"{rp}/settings?tenant={tctx.tenant_slug}", status_code=303)
 
 
 # ----------------------------
-# Internal endpoints for SMS service (tenant-aware via ?tenant=slug)
+# Internal endpoints for SMS service
 # ----------------------------
 @router.get("/api/internal/clinic_settings")
 def api_internal_clinic_settings(request: Request, tenant: str = "default", db: Session = Depends(get_db)):
