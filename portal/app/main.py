@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 import uuid
 import os
-from urllib.parse import unquote
 
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import HTMLResponse
@@ -45,9 +44,11 @@ def _parse_allowed_hosts() -> list[str]:
         return ["*"]
     return [h.strip() for h in raw.split(",") if h.strip()]
 
+
 ALLOWED_HOSTS_LIST = _parse_allowed_hosts()
 if ALLOWED_HOSTS_LIST != ["*"]:
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS_LIST)
+
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -61,15 +62,19 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
         response.headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
 
-        # CSP tuned for the built-in templates + inline CSS (kept permissive but safe-by-default)
-        # If you later move inline styles/scripts to static files you can tighten this.
+        # CSP tuned for built-in templates + inline CSS.
+        # IMPORTANT: Turnstile requires:
+        #   - loading JS from challenges.cloudflare.com
+        #   - iframe from challenges.cloudflare.com
+        #   - sometimes XHR/fetch to challenges.cloudflare.com
         csp = (
             "default-src 'self'; "
             "img-src 'self' data:; "
             "style-src 'self' 'unsafe-inline'; "
-            "script-src 'self' 'unsafe-inline'; "
+            "script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; "
+            "connect-src 'self' https://challenges.cloudflare.com; "
+            "frame-src https://challenges.cloudflare.com; "
             "font-src 'self' data:; "
-            "connect-src 'self'; "
             "frame-ancestors 'none'; "
             "base-uri 'self'; "
             "form-action 'self'"
@@ -82,6 +87,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 
         return response
+
 
 app.add_middleware(SecurityHeadersMiddleware)
 
@@ -147,12 +153,14 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 SESSION_SECRET = (os.getenv("SESSION_SECRET") or "").strip() or (settings.SSO_SHARED_SECRET or settings.SECRET_KEY)
 HTTPS_ONLY = bool(settings.COOKIE_SECURE)
 
+
 def _is_weak_secret(value: str) -> bool:
     v = (value or "").strip().lower()
     return (not v) or v in {"change-me", "dev-only-change-me-please"} or len(v) < 32
 
+
 # Refuse to start with weak secrets unless explicitly allowed (DEV only).
-ALLOW_WEAK = (os.getenv("ALLOW_WEAK_SECRETS") or "").strip().lower() in ("1","true","yes","on")
+ALLOW_WEAK = (os.getenv("ALLOW_WEAK_SECRETS") or "").strip().lower() in ("1", "true", "yes", "on")
 if _is_weak_secret(SESSION_SECRET) and not ALLOW_WEAK:
     raise RuntimeError("Weak SESSION_SECRET/SECRET_KEY detected. Set a strong SECRET_KEY (>=32 chars) in production.")
 
