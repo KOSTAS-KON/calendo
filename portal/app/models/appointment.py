@@ -13,7 +13,7 @@ class Appointment(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
 
-    # Tenant scoping (already present) :contentReference[oaicite:2]{index=2}
+    # Tenant scoping (already present)
     tenant_id: Mapped[str] = mapped_column(String(36), ForeignKey("tenants.id"), index=True)
 
     child_id: Mapped[int] = mapped_column(Integer, ForeignKey("children.id"), index=True)
@@ -25,11 +25,9 @@ class Appointment(Base):
 
     attendance_status: Mapped[str] = mapped_column(String(40), default="UNCONFIRMED")
 
-    # Existing relationship :contentReference[oaicite:3]{index=3}
     child = relationship("Child", back_populates="appointments")
 
-    # FIX: SessionNote expects back_populates="session_note" on Appointment side :contentReference[oaicite:4]{index=4}
-    # Your SessionNote.appointment_id is unique=True (one-to-one), so set uselist=False.
+    # one-to-one session note
     session_note = relationship(
         "SessionNote",
         back_populates="appointment",

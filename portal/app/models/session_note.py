@@ -13,10 +13,10 @@ class SessionNote(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
-    # NEW: enforce tenant_id on notes (required for multi-tenant consistency)
+    # enforce tenant_id on notes (required for multi-tenant consistency)
     tenant_id: Mapped[str] = mapped_column(String(36), ForeignKey("tenants.id"), index=True)
 
-    # Keep current shape: one note per appointment (unique=True) :contentReference[oaicite:5]{index=5}
+    # one note per appointment (unique=True)
     appointment_id: Mapped[int] = mapped_column(
         ForeignKey("appointments.id", ondelete="CASCADE"),
         unique=True,
@@ -28,11 +28,10 @@ class SessionNote(Base):
     improvements: Mapped[str | None] = mapped_column(Text, nullable=True)
     next_steps: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # Keep current columns but use correct datetime typing (column type unchanged)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
-    # FIX: must match Appointment.session_note relationship name
+    # must match Appointment.session_note relationship name
     appointment = relationship("Appointment", back_populates="session_note")
 
     activities = relationship(
@@ -53,7 +52,6 @@ class ActivityItem(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
-    # Keep current column :contentReference[oaicite:6]{index=6}
     session_note_id: Mapped[int] = mapped_column(
         ForeignKey("session_notes.id", ondelete="CASCADE"),
         index=True,
