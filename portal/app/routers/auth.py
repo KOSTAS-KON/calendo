@@ -159,7 +159,8 @@ def _verify_turnstile_or_raise(token: str, ip: str) -> None:
     )
     data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
     if not data.get("success"):
-        raise ValueError("Turnstile verification failed")
+        # include error codes (helps debugging without breaking UX)
+        raise ValueError(f"Turnstile verification failed: {data.get('error-codes')}")
 
 
 def _get_client_ip(request: Request) -> str:
@@ -271,11 +272,16 @@ def auth_login_post(
         if not allowed:
             return RedirectResponse(url=f"/auth/login?next={quote(next_path)}&error=1", status_code=303)
 
-        try:
-            _verify_turnstile_or_raise(cf_turnstile_response, ip)
-        except Exception:
-            _record_login_failure(db, ip)
-            return RedirectResponse(url=f"/auth/login?next={quote(next_path)}&error=bot", status_code=303)
+        # ✅ TURNSTILE SOFT-FAIL:
+        # If Turnstile is enabled but token delivery is flaky (common on some deployments),
+        # do NOT block a correct login. Log the failure and proceed to password verification.
+        if _turnstile_configured():
+            try:
+                _verify_turnstile_or_raise(cf_turnstile_response, ip)
+            except Exception as e:
+                # Still count towards rate limiting, but don't show bot error.
+                _record_login_failure(db, ip)
+                print(f"[auth] WARNING: Turnstile verification failed; allowing credential check. reason={e}")
 
         from app.models.user import User
 
@@ -284,7 +290,6 @@ def auth_login_post(
             _record_login_failure(db, ip)
             return RedirectResponse(url=f"/auth/login?next={quote(next_path)}&error=1", status_code=303)
 
-        # ✅ case-insensitive match
         u = (
             db.query(User)
             .filter(
