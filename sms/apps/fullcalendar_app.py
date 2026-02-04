@@ -2083,8 +2083,6 @@ def _apply_portal_settings_to_env() -> Dict[str, Any]:
     We log what we managed to load so you can debug from Render "Application logs".
     """
     out: Dict[str, Any] = {}
-    tenant_slug = (os.getenv("TENANT_SLUG") or TENANT_SLUG or "default").strip().lower()
-
 
     # Clinic display name (non-secret)
     clinic = _fetch_portal_json("/api/clinic_settings") or {}
@@ -2094,7 +2092,7 @@ def _apply_portal_settings_to_env() -> Dict[str, Any]:
     # 1) Preferred: fetch everything from /api/internal/clinic_settings using INTERNAL_API_KEY
     internal_key = (os.getenv("INTERNAL_API_KEY") or "").strip()
     if internal_key:
-        data = _fetch_portal_json(f"/api/internal/clinic_settings?tenant={tenant_slug}", headers={"X-Internal-Key": internal_key}) or {}
+        data = _fetch_portal_json(f"/api/internal/clinic_settings?tenant={tenant}", headers={"X-Internal-Key": internal_key}) or {}
         # Portal may return either a flat payload or {"clinic": {...}}
         clinic_obj = {}
         if isinstance(data, dict):
@@ -2126,7 +2124,7 @@ def _apply_portal_settings_to_env() -> Dict[str, Any]:
     # 2) Fallback: /api/internal/infobip using INTERNAL_TOKEN (matches Portal SECRET_KEY)
     tok = (os.getenv("INTERNAL_TOKEN") or "").strip()
     if tok:
-        creds = _fetch_portal_json(f"/api/internal/infobip?tenant={tenant_slug}", headers={"x-internal-token": tok}) or {}
+        creds = _fetch_portal_json(f"/api/internal/infobip?tenant={tenant}", headers={"x-internal-token": tok}) or {}
         base_url = str(creds.get("infobip_base_url") or "").strip()
         sender = str(creds.get("infobip_sender") or "").strip()
         api_key = str(creds.get("infobip_api_key") or "").strip()
@@ -2162,14 +2160,12 @@ def main() -> None:
 
     # Pull per-client settings from the Therapy Portal (clinic name + Infobip creds)
     portal_applied = _apply_portal_settings_to_env()
-    tenant_slug = (os.getenv("TENANT_SLUG") or TENANT_SLUG or "default").strip().lower()
-
 
     # License gating (lightweight offline gate)
     # Tenant-aware license check (no session cookies in Render service-to-service calls)
     internal_key = (os.getenv("INTERNAL_API_KEY") or "").strip()
     lic_headers = {"X-Internal-Key": internal_key} if internal_key else {}
-    lic = _fetch_portal_json(f"/api/license?tenant={tenant_slug}", headers=lic_headers) or {}
+    lic = _fetch_portal_json(f"/api/license?tenant={tenant}", headers=lic_headers) or {}
     if lic:
         pm = str(lic.get("product_mode", "BOTH")).upper()
         if not bool(lic.get("active", True)):

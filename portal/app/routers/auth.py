@@ -61,7 +61,7 @@ def _turnstile_configured() -> bool:
     site_key = (getattr(settings, "TURNSTILE_SITE_KEY", "") or "").strip()
     secret_key = (getattr(settings, "TURNSTILE_SECRET_KEY", "") or "").strip()
     if enabled and (not site_key or not secret_key):
-        print("[auth] WARNING: TURNSTILE_ENABLED=true but keys missing. Turnstile will be bypassed until configured.")
+        print("[auth] WARNING: TURNSTILE_ENABLED=true but keys missing. Turnstile bypassed.")
         return False
     return enabled and bool(site_key) and bool(secret_key)
 
@@ -218,10 +218,7 @@ def _record_login_failure(db, ip: str) -> None:
 
 
 def _get_tenant_id_by_slug(db, tenant_slug: str) -> str | None:
-    row = db.execute(
-        sa.text("SELECT id FROM tenants WHERE slug = :slug LIMIT 1"),
-        {"slug": tenant_slug},
-    ).fetchone()
+    row = db.execute(sa.text("SELECT id FROM tenants WHERE slug = :slug LIMIT 1"), {"slug": tenant_slug}).fetchone()
     return row[0] if row else None
 
 
@@ -263,7 +260,7 @@ def auth_login_post(
         if not allowed:
             return RedirectResponse(url=f"/auth/login?next={quote(next_path)}&error=1", status_code=303)
 
-        # ✅ Turnstile soft-fail: do not block valid credentials
+        # soft-fail turnstile (do not block valid credentials)
         if _turnstile_configured():
             try:
                 _verify_turnstile_or_raise(cf_turnstile_response, ip)
@@ -278,11 +275,7 @@ def auth_login_post(
             _record_login_failure(db, ip)
             return RedirectResponse(url=f"/auth/login?next={quote(next_path)}&error=1", status_code=303)
 
-        u = (
-            db.query(User)
-            .filter(User.tenant_id == tenant_id, sa.func.lower(User.email) == email)
-            .first()
-        )
+        u = db.query(User).filter(User.tenant_id == tenant_id, sa.func.lower(User.email) == email).first()
         if not u or not getattr(u, "is_active", True):
             _record_login_failure(db, ip)
             return RedirectResponse(url=f"/auth/login?next={quote(next_path)}&error=1", status_code=303)
@@ -298,14 +291,6 @@ def auth_login_post(
         _session_set(request, "email", u.email)
         _session_set(request, "logged_in_at", datetime.utcnow().isoformat())
 
-        if hasattr(u, "last_login_at"):
-            try:
-                u.last_login_at = datetime.utcnow()
-                db.add(u)
-                db.commit()
-            except Exception:
-                db.rollback()
-
         return RedirectResponse(url=next_path, status_code=303)
     finally:
         db.close()
@@ -319,13 +304,7 @@ def login_post(
     cf_turnstile_response: str = Form("", alias="cf-turnstile-response"),
     next: str = Form("/t/default/suite"),
 ):
-    return auth_login_post(
-        request=request,
-        email=email,
-        password=password,
-        cf_turnstile_response=cf_turnstile_response,
-        next=next,
-    )
+    return auth_login_post(request=request, email=email, password=password, cf_turnstile_response=cf_turnstile_response, next=next)
 
 
 @router.get("/auth/logout")

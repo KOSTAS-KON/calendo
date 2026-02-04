@@ -18,11 +18,7 @@ class Base(DeclarativeBase):
 def get_db():
     """
     DB session dependency.
-
-    IMPORTANT:
-    If any exception occurs during request handling, rollback the transaction.
-    Otherwise the session becomes "poisoned" (InFailedSqlTransaction) and all
-    subsequent queries in the same request will fail.
+    Roll back on exceptions to avoid InFailedSqlTransaction cascades.
     """
     db = SessionLocal()
     try:

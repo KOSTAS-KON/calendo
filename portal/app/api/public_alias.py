@@ -28,7 +28,13 @@ def _resolve_tenant_slug(request: Request) -> str:
     if isinstance(s, dict) and s.get("tenant_slug"):
         return str(s.get("tenant_slug") or "default").strip().lower()
 
+    # Allow internal service-to-service callers to specify tenant explicitly.
+    internal_key = (request.headers.get("X-Internal-Key") or request.headers.get("x-internal-key") or "").strip()
+    expected = (settings.INTERNAL_API_KEY or "").strip()
     tenant = (request.query_params.get("tenant") or "").strip().lower()
+    if internal_key and expected and internal_key == expected and tenant:
+        return tenant
+
     if tenant == "default" or not tenant:
         return "default"
 
