@@ -1,9 +1,20 @@
 {% extends "admin/_admin_base.html" %}{% set title="Tenants" %}
 {% block admin_content %}
+
+{% if onboard and onboard.temp_password %}
+<div class="card" style="border:1px solid rgba(34,197,94,.35); background: rgba(34,197,94,.08); margin-bottom:14px;">
+  <div style="font-weight:900; margin-bottom:6px;">✅ Tenant created</div>
+  <div><b>Tenant:</b> <code>{{ onboard.tenant_slug }}</code></div>
+  <div><b>Owner email:</b> <code>{{ onboard.owner_email }}</code></div>
+  <div><b>Temp password:</b> <code>{{ onboard.temp_password }}</code></div>
+  <div style="margin-top:6px;"><a class="btn" href="{{ onboard.login_url }}">Open login</a></div>
+</div>
+{% endif %}
+
 <div class="card">
   <div style="display:flex; justify-content:space-between; align-items:center;">
     <div style="font-weight:800;">Tenants</div>
-    <a class="btn" href="/admin/tenants/new?admin_key={{ request.query_params.get('admin_key','') }}">New tenant</a>
+    <a class="btn" href="/admin/tenants/new">New tenant</a>
   </div>
   <div style="margin-top:10px;">
     <table class="table">
@@ -22,6 +33,6 @@
   </div>
 </div>
 <div style="margin-top:14px;">
-  <a class="btn" href="/admin/licensing?admin_key={{ request.query_params.get('admin_key','') }}">Licensing</a>
+  <a class="btn" href="/admin/licensing">Licensing</a>
 </div>
 {% endblock %}

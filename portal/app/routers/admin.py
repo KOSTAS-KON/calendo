@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import secrets
 import hashlib
 from datetime import datetime, timedelta
@@ -17,6 +18,8 @@ from app.db import get_db
 from app.config import settings
 from app.models.tenant import Tenant
 from app.models.licensing import Plan, Subscription, ActivationCode, LicenseAuditLog
+from app.models.clinic_settings import ClinicSettings
+from app.models.user import User
 from app.utils.security import generate_temp_password
 
 router = APIRouter()
@@ -24,7 +27,7 @@ templates = Jinja2Templates(directory="app/templates")
 
 
 # ----------------------------
-# Session + Admin auth
+# Admin auth (header/session; query optional)
 # ----------------------------
 def _session(request: Request) -> dict:
     s = request.scope.get("session")
@@ -32,19 +35,21 @@ def _session(request: Request) -> dict:
 
 
 def _expected_admin_key() -> str:
-    # Prefer settings (pydantic) so Render env vars are always loaded consistently
     return (settings.ADMIN_KEY or os.getenv("ADMIN_KEY") or "").strip()
 
 
 def _get_admin_key_from_request(request: Request) -> str:
+    # Header preferred
     hdr = (request.headers.get("X-Admin-Key") or request.headers.get("x-admin-key") or "").strip()
     if hdr:
         return hdr
 
+    # Session
     sess_key = (_session(request).get("admin_key") or "").strip()
     if sess_key:
         return sess_key
 
+    # Optional query bootstrap (off by default)
     if getattr(settings, "ALLOW_ADMIN_KEY_QUERY", False):
         return (request.query_params.get("admin_key") or "").strip()
 
@@ -110,10 +115,9 @@ def ensure_default_plans(db: Session) -> None:
 
 
 def _renew_subscription_for_tenant(db: Session, tenant_id: str, plan: Plan, actor: str) -> tuple[datetime, datetime]:
-    """
-    Renewal rule:
-      - if active -> extend from expiry
-      - if expired -> extend from now
+    """Renewal rule:
+    - if active -> extend from expiry
+    - if expired -> extend from now
     """
     now = datetime.utcnow()
 
@@ -166,6 +170,26 @@ def _renew_subscription_for_tenant(db: Session, tenant_id: str, plan: Plan, acto
     return old_end, new_end
 
 
+def _slugify(raw: str) -> str:
+    s = (raw or "").strip().lower()
+    s = re.sub(r"[^a-z0-9_-]+", "-", s)
+    s = re.sub(r"-{2,}", "-", s).strip("-")
+    return s
+
+
+def _flash_set(request: Request, key: str, val: str) -> None:
+    s = request.scope.get("session")
+    if isinstance(s, dict):
+        s[key] = val
+
+
+def _flash_pop(request: Request, key: str) -> str:
+    s = request.scope.get("session")
+    if isinstance(s, dict):
+        return str(s.pop(key, "") or "")
+    return ""
+
+
 # ----------------------------
 # Admin landing / unlock
 # ----------------------------
@@ -175,12 +199,17 @@ def admin_index(request: Request):
     if not expected:
         return HTMLResponse("<h2>ADMIN_KEY not configured</h2>", status_code=403)
 
+    # Optional query bootstrap
+    qp = (request.query_params.get("admin_key") or "").strip()
+    if qp and getattr(settings, "ALLOW_ADMIN_KEY_QUERY", False) and qp == expected:
+        _set_admin_session_key(request, expected)
+        return RedirectResponse(url="/admin/tenants", status_code=303)
+
     got = _get_admin_key_from_request(request)
     if got == expected:
         _set_admin_session_key(request, expected)
         return RedirectResponse(url="/admin/tenants", status_code=303)
 
-    # Uses existing template in repo
     return templates.TemplateResponse("admin/index.html", {"request": request})
 
 
@@ -204,14 +233,12 @@ def admin_logout(request: Request):
 
 
 # ----------------------------
-# Tenants list (template: tenants_list.html)
+# Tenants list
 # ----------------------------
 @router.get("/admin/tenants", response_class=HTMLResponse)
 def admin_tenants(request: Request, db: Session = Depends(get_db)):
     _require_admin(request)
     base_url = _portal_base(request)
-
-    from app.models.user import User
 
     role_rank = sa.case((User.role == "owner", 0), (User.role == "admin", 1), else_=2)
     owner_email_sq = (
@@ -223,7 +250,6 @@ def admin_tenants(request: Request, db: Session = Depends(get_db)):
     )
 
     rows = db.query(Tenant, owner_email_sq.label("owner_email")).order_by(Tenant.created_at.desc()).all()
-
     tenants = []
     for t, owner_email in rows:
         tenants.append(
@@ -231,20 +257,129 @@ def admin_tenants(request: Request, db: Session = Depends(get_db)):
                 "slug": t.slug,
                 "name": t.name,
                 "status": t.status,
+                "created_at": getattr(t, "created_at", None),
                 "owner_email": owner_email or "",
                 "suite_url": f"{base_url}/t/{t.slug}/suite",
                 "sms_url": _sms_url_for_tenant(t.slug),
             }
         )
 
+    onboard = {
+        "tenant_slug": _flash_pop(request, "onboard_tenant_slug"),
+        "owner_email": _flash_pop(request, "onboard_owner_email"),
+        "temp_password": _flash_pop(request, "onboard_temp_password"),
+        "login_url": _flash_pop(request, "onboard_login_url"),
+    }
+
     return templates.TemplateResponse(
         "admin/tenants_list.html",
-        {"request": request, "tenants": tenants, "base_url": base_url},
+        {
+            "request": request,
+            "tenants": tenants,
+            "base_url": base_url,
+            "onboard": onboard,
+        },
     )
 
 
 # ----------------------------
-# Renew license for tenant
+# Create tenant (NEW page)
+# ----------------------------
+@router.get("/admin/tenants/new", response_class=HTMLResponse)
+def admin_tenants_new_get(request: Request):
+    _require_admin(request)
+    return templates.TemplateResponse("admin/tenant_new.html", {"request": request})
+
+
+@router.post("/admin/tenants/new")
+def admin_tenants_new_post(
+    request: Request,
+    slug: str = Form(...),
+    name: str = Form(...),
+    owner_email: str = Form(...),
+    plan_code: str = Form("TRIAL_7D"),
+    db: Session = Depends(get_db),
+):
+    _require_admin(request)
+    ensure_default_plans(db)
+
+    slug_clean = _slugify(slug)
+    if not slug_clean:
+        raise HTTPException(status_code=400, detail="Invalid slug")
+
+    # uniqueness
+    if db.query(Tenant).filter(Tenant.slug == slug_clean).first():
+        raise HTTPException(status_code=400, detail="Tenant slug already exists")
+
+    t = Tenant(id=secrets.token_hex(16), slug=slug_clean, name=(name or "").strip(), status="active")
+    db.add(t)
+    db.flush()
+
+    # clinic settings row (safe defaults)
+    cs = ClinicSettings(tenant_id=t.id, clinic_name=t.name)
+    db.add(cs)
+
+    # owner user
+    email_lc = (owner_email or "").strip().lower()
+    temp_pw = generate_temp_password()
+    pw_hash = bcrypt.hashpw(temp_pw.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+    u = User(
+        id=secrets.token_hex(16),
+        tenant_id=t.id,
+        email=email_lc,
+        password_hash=pw_hash,
+        role="owner",
+        is_active=True,
+        must_reset_password=True,
+    )
+    db.add(u)
+
+    plan = db.query(Plan).filter(Plan.code == plan_code).first()
+    if not plan:
+        plan = db.query(Plan).filter(Plan.code == "TRIAL_7D").first()
+    if not plan:
+        raise HTTPException(status_code=500, detail="Plan not found")
+
+    now = datetime.utcnow()
+    ends = now + timedelta(days=int(plan.duration_days or 7))
+    sub = Subscription(
+        id=secrets.token_hex(16),
+        tenant_id=t.id,
+        plan_id=plan.id,
+        status="active",
+        starts_at=now,
+        ends_at=ends,
+        source="admin_create",
+    )
+    db.add(sub)
+
+    try:
+        db.add(
+            LicenseAuditLog(
+                id=secrets.token_hex(16),
+                tenant_id=t.id,
+                event_type="tenant_created",
+                details_json=f'{{"plan":"{plan.code}","owner":"{email_lc}"}}',
+                created_at=now,
+            )
+        )
+    except Exception:
+        pass
+
+    db.commit()
+
+    login_url = f"/auth/login?next=/t/{t.slug}/suite"
+    _flash_set(request, "onboard_tenant_slug", t.slug)
+    _flash_set(request, "onboard_owner_email", email_lc)
+    _flash_set(request, "onboard_temp_password", temp_pw)
+    _flash_set(request, "onboard_login_url", login_url)
+
+    return RedirectResponse(url="/admin/tenants", status_code=303)
+
+
+# ----------------------------
+# Renew license
 # ----------------------------
 @router.post("/admin/tenants/{slug}/renew")
 def admin_tenant_renew(request: Request, slug: str, plan_code: str = Form(...), db: Session = Depends(get_db)):
@@ -261,24 +396,21 @@ def admin_tenant_renew(request: Request, slug: str, plan_code: str = Form(...), 
 
     actor = (_session(request).get("email") or "admin")
     _renew_subscription_for_tenant(db, tenant_id=t.id, plan=plan, actor=str(actor))
-    return RedirectResponse(url=f"/admin/diagnostics?tenant={slug}", status_code=303)
+    return RedirectResponse(url=f"/admin/licensing?tenant={slug}", status_code=303)
 
 
 # ----------------------------
 # Reset password (create user if missing)
-# Template: diagnostics.html is used to display results via simple fields
 # ----------------------------
 @router.get("/admin/tenants/{slug}/reset_password", response_class=HTMLResponse)
 def admin_reset_password_page(request: Request, slug: str, db: Session = Depends(get_db)):
     _require_admin(request)
 
-    row = db.execute(sa.text("SELECT id, slug, name FROM tenants WHERE slug = :s LIMIT 1"), {"s": slug}).fetchone()
+    row = db.execute(sa.text("SELECT id, slug, name FROM tenants WHERE slug=:s LIMIT 1"), {"s": slug}).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Tenant not found")
 
     tenant_id, tenant_slug, tenant_name = row[0], row[1], row[2]
-
-    from app.models.user import User
 
     role_rank = sa.case((User.role == "owner", 0), (User.role == "admin", 1), else_=2)
     target = (
@@ -288,16 +420,13 @@ def admin_reset_password_page(request: Request, slug: str, db: Session = Depends
         .first()
     )
 
-    # Use diagnostics page as a simple view
     return templates.TemplateResponse(
-        "admin/diagnostics.html",
+        "admin/reset_password.html",
         {
             "request": request,
-            "tenant": {"slug": tenant_slug, "name": tenant_name},
+            "tenant": {"id": tenant_id, "slug": tenant_slug, "name": tenant_name},
             "target_user": target,
-            "temp_password": "",
-            "login_url": f"/auth/login?next=/t/{tenant_slug}/suite",
-            "mode": "reset_password",
+            "done": False,
         },
     )
 
@@ -306,13 +435,11 @@ def admin_reset_password_page(request: Request, slug: str, db: Session = Depends
 def admin_reset_password_do(request: Request, slug: str, user_email: str = Form(...), db: Session = Depends(get_db)):
     _require_admin(request)
 
-    row = db.execute(sa.text("SELECT id, slug, name FROM tenants WHERE slug = :s LIMIT 1"), {"s": slug}).fetchone()
+    row = db.execute(sa.text("SELECT id, slug, name FROM tenants WHERE slug=:s LIMIT 1"), {"s": slug}).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Tenant not found")
 
     tenant_id, tenant_slug, tenant_name = row[0], row[1], row[2]
-
-    from app.models.user import User
 
     email_lc = (user_email or "").strip().lower()
     if not email_lc:
@@ -322,7 +449,6 @@ def admin_reset_password_do(request: Request, slug: str, user_email: str = Form(
     pw_hash = bcrypt.hashpw(temp_pw.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
     user = db.query(User).filter(User.tenant_id == tenant_id, sa.func.lower(User.email) == email_lc).first()
-    created = False
     if not user:
         user = User(
             id=secrets.token_hex(16),
@@ -334,7 +460,6 @@ def admin_reset_password_do(request: Request, slug: str, user_email: str = Form(
             must_reset_password=True,
         )
         db.add(user)
-        created = True
     else:
         user.email = email_lc
         user.password_hash = pw_hash
@@ -348,7 +473,7 @@ def admin_reset_password_do(request: Request, slug: str, user_email: str = Form(
                 id=secrets.token_hex(16),
                 tenant_id=tenant_id,
                 event_type="reset_password",
-                details_json=f'{{"user":"{email_lc}","created":{str(created).lower()}}}',
+                details_json=f'{{"user":"{email_lc}"}}',
                 created_at=datetime.utcnow(),
             )
         )
@@ -358,30 +483,31 @@ def admin_reset_password_do(request: Request, slug: str, user_email: str = Form(
     db.commit()
 
     return templates.TemplateResponse(
-        "admin/diagnostics.html",
+        "admin/reset_password.html",
         {
             "request": request,
-            "tenant": {"slug": tenant_slug, "name": tenant_name},
+            "tenant": {"id": tenant_id, "slug": tenant_slug, "name": tenant_name},
             "target_user": user,
+            "done": True,
             "temp_password": temp_pw,
             "login_url": f"/auth/login?next=/t/{tenant_slug}/suite",
-            "mode": "reset_password_done",
         },
     )
 
 
 # ----------------------------
-# Diagnostics / Licensing view
-# Template: diagnostics.html exists in your repo
+# Licensing page (GET) + actions
 # ----------------------------
-@router.get("/admin/diagnostics", response_class=HTMLResponse)
-def admin_diagnostics(request: Request, tenant: Optional[str] = None, db: Session = Depends(get_db)):
+@router.get("/admin/licensing", response_class=HTMLResponse)
+def admin_licensing(request: Request, tenant: Optional[str] = None, db: Session = Depends(get_db)):
     _require_admin(request)
     ensure_default_plans(db)
 
+    tenants = db.query(Tenant).order_by(Tenant.slug.asc()).all()
+    plans = db.query(Plan).order_by(Plan.duration_days.asc()).all()
+
     selected = None
     current_sub = None
-
     if tenant:
         selected = db.query(Tenant).filter(Tenant.slug == tenant).first()
         if selected:
@@ -392,22 +518,44 @@ def admin_diagnostics(request: Request, tenant: Optional[str] = None, db: Sessio
                 .first()
             )
 
+    code = request.query_params.get("code") or ""
+
     return templates.TemplateResponse(
-        "admin/diagnostics.html",
+        "admin/licensing.html",
         {
             "request": request,
+            "tenants": tenants,
+            "plans": plans,
             "selected": selected,
             "current_sub": current_sub,
-            "plans": db.query(Plan).order_by(Plan.duration_days.asc()).all(),
-            "mode": "diagnostics",
+            "code": code,
         },
     )
 
 
-# ----------------------------
-# Activation codes (admin generated)
-# Template: code_created.html exists in your repo
-# ----------------------------
+@router.post("/admin/licensing/renew")
+def admin_renew_from_licensing(
+    request: Request,
+    tenant_slug: str = Form(...),
+    plan_code: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    _require_admin(request)
+    ensure_default_plans(db)
+
+    t = db.query(Tenant).filter(Tenant.slug == tenant_slug).first()
+    if not t:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    plan = db.query(Plan).filter(Plan.code == plan_code).first()
+    if not plan:
+        raise HTTPException(status_code=400, detail="Plan not found")
+
+    actor = (_session(request).get("email") or "admin")
+    _renew_subscription_for_tenant(db, tenant_id=t.id, plan=plan, actor=str(actor))
+    return RedirectResponse(url=f"/admin/licensing?tenant={tenant_slug}", status_code=303)
+
+
 @router.post("/admin/licensing/generate")
 def admin_generate_code(
     request: Request,
@@ -459,48 +607,17 @@ def admin_generate_code(
 
     db.commit()
 
-    return templates.TemplateResponse(
-        "admin/code_created.html",
-        {
-            "request": request,
-            "tenant_slug": tenant_slug,
-            "plan_code": plan_code,
-            "activation_code": raw,
-        },
-    )
-
-
-@router.post("/admin/licensing/renew")
-def admin_renew_from_licensing(
-    request: Request,
-    tenant_slug: str = Form(...),
-    plan_code: str = Form(...),
-    db: Session = Depends(get_db),
-):
-    _require_admin(request)
-    ensure_default_plans(db)
-
-    t = db.query(Tenant).filter(Tenant.slug == tenant_slug).first()
-    if not t:
-        raise HTTPException(status_code=404, detail="Tenant not found")
-
-    plan = db.query(Plan).filter(Plan.code == plan_code).first()
-    if not plan:
-        raise HTTPException(status_code=400, detail="Plan not found")
-
-    actor = (_session(request).get("email") or "admin")
-    _renew_subscription_for_tenant(db, tenant_id=t.id, plan=plan, actor=str(actor))
-    return RedirectResponse(url=f"/admin/diagnostics?tenant={tenant_slug}", status_code=303)
+    return RedirectResponse(url=f"/admin/licensing?tenant={tenant_slug}&code={raw}", status_code=303)
 
 
 # ----------------------------
-# Links page (optional)
+# Links page
 # ----------------------------
 @router.get("/admin/links", response_class=HTMLResponse)
 def admin_links(request: Request, db: Session = Depends(get_db)):
     _require_admin(request)
-    base_url = _portal_base(request)
 
+    base_url = _portal_base(request)
     tenants = db.query(Tenant).order_by(Tenant.slug.asc()).all()
     rows = []
     for t in tenants:
@@ -513,8 +630,11 @@ def admin_links(request: Request, db: Session = Depends(get_db)):
             }
         )
 
-    # If you don't have a dedicated template, reuse diagnostics
     return templates.TemplateResponse(
-        "admin/diagnostics.html",
-        {"request": request, "links": rows, "mode": "links"},
+        "admin/links.html",
+        {
+            "request": request,
+            "tenants": rows,
+            "base_url": base_url,
+        },
     )
