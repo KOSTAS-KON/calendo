@@ -48,6 +48,10 @@ def _flash_pop(request: Request, key: str, default=None):
 # Admin key auth
 # ----------------------------
 def _expected_admin_key() -> str:
+<<<<<<< HEAD
+=======
+    # Prefer settings (pydantic) so Render env vars are always loaded consistently
+>>>>>>> 6921369 (Admin: add reset password endpoint + temp password generator)
     return (settings.ADMIN_KEY or os.getenv("ADMIN_KEY") or "").strip()
 
 
@@ -100,6 +104,10 @@ def _portal_base(request: Request) -> str:
 
 
 def _sms_base() -> str:
+<<<<<<< HEAD
+=======
+    # Prefer settings as this is how you configure in Render
+>>>>>>> 6921369 (Admin: add reset password endpoint + temp password generator)
     return (settings.SMS_APP_URL or os.getenv("SMS_APP_URL") or "").strip().rstrip("/")
 
 
@@ -155,6 +163,10 @@ def _ensure_tenant_lifecycle_columns(db: Session) -> bool:
         db.execute(sa.text("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP NULL;"))
         db.execute(sa.text("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL;"))
         db.execute(sa.text("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS deleted_by VARCHAR(255) NULL;"))
+<<<<<<< HEAD
+=======
+
+>>>>>>> 6921369 (Admin: add reset password endpoint + temp password generator)
         try:
             db.execute(sa.text("ALTER TABLE tenants ALTER COLUMN is_archived DROP DEFAULT;"))
         except Exception:
@@ -168,9 +180,22 @@ def _ensure_tenant_lifecycle_columns(db: Session) -> bool:
 
 
 # ----------------------------
+<<<<<<< HEAD
 # License renewal core logic
 # ----------------------------
 def _renew_subscription_for_tenant(db: Session, tenant_id: str, plan: Plan, actor: str) -> tuple[datetime, datetime]:
+=======
+# ✅ License renewal core logic
+# ----------------------------
+def _renew_subscription_for_tenant(db: Session, tenant_id: str, plan: Plan, actor: str) -> tuple[datetime, datetime]:
+    """
+    Renewal rule:
+      - if active -> extend from expiry
+      - if expired -> extend from now
+
+    Returns: (old_end, new_end)
+    """
+>>>>>>> 6921369 (Admin: add reset password endpoint + temp password generator)
     now = datetime.utcnow()
 
     sub = (
@@ -182,12 +207,25 @@ def _renew_subscription_for_tenant(db: Session, tenant_id: str, plan: Plan, acto
 
     old_end = sub.ends_at if (sub and sub.ends_at) else now
 
+<<<<<<< HEAD
     # Rule:
     # active -> extend from expiry, expired -> extend from now
     base = sub.ends_at if (sub and sub.ends_at and sub.ends_at > now) else now
     new_end = base + timedelta(days=int(plan.duration_days or 0))
 
     if sub:
+=======
+    base = now
+    if sub and sub.ends_at and sub.ends_at > now:
+        base = sub.ends_at  # active: extend from expiry
+    else:
+        base = now  # expired: extend from now
+
+    new_end = base + timedelta(days=int(plan.duration_days or 0))
+
+    if sub:
+        # extend existing row
+>>>>>>> 6921369 (Admin: add reset password endpoint + temp password generator)
         if not sub.starts_at:
             sub.starts_at = now
         sub.ends_at = new_end
@@ -196,6 +234,10 @@ def _renew_subscription_for_tenant(db: Session, tenant_id: str, plan: Plan, acto
         sub.source = getattr(sub, "source", None) or "admin"
         db.add(sub)
     else:
+<<<<<<< HEAD
+=======
+        # create first subscription row
+>>>>>>> 6921369 (Admin: add reset password endpoint + temp password generator)
         sub = Subscription(
             id=secrets.token_hex(16),
             tenant_id=tenant_id,
@@ -207,6 +249,10 @@ def _renew_subscription_for_tenant(db: Session, tenant_id: str, plan: Plan, acto
         )
         db.add(sub)
 
+<<<<<<< HEAD
+=======
+    # audit
+>>>>>>> 6921369 (Admin: add reset password endpoint + temp password generator)
     try:
         db.add(
             LicenseAuditLog(
@@ -225,10 +271,18 @@ def _renew_subscription_for_tenant(db: Session, tenant_id: str, plan: Plan, acto
 
 
 def _get_tenant_row_schema_safe(db: Session, slug: str):
+<<<<<<< HEAD
     return db.execute(
         sa.text("SELECT id, slug, name, status FROM tenants WHERE slug = :slug LIMIT 1"),
         {"slug": slug},
     ).fetchone()
+=======
+    row = db.execute(
+        sa.text("SELECT id, slug, name, status FROM tenants WHERE slug = :slug LIMIT 1"),
+        {"slug": slug},
+    ).fetchone()
+    return row
+>>>>>>> 6921369 (Admin: add reset password endpoint + temp password generator)
 
 
 # ----------------------------
@@ -248,8 +302,12 @@ def admin_index(request: Request):
         _set_admin_session_key(request, expected)
         return RedirectResponse(url="/admin/tenants", status_code=303)
 
+<<<<<<< HEAD
     got = _get_admin_key_from_request(request)
     if got == expected:
+=======
+    if authenticated:
+>>>>>>> 6921369 (Admin: add reset password endpoint + temp password generator)
         if (_session(request).get("admin_key") or "").strip() != expected:
             _set_admin_session_key(request, expected)
         return RedirectResponse(url="/admin/tenants", status_code=303)
@@ -379,6 +437,51 @@ def admin_tenants(
                 "login_url": f"{base_url}/auth/login?next=/t/{t.slug}/suite",
             }
         )
+<<<<<<< HEAD
+=======
+        tenants = []
+        for t, owner_email in rows:
+            tenants.append(
+                {
+                    "slug": t.slug,
+                    "name": t.name,
+                    "status": t.status,
+                    "is_archived": bool(getattr(t, "is_archived", False)),
+                    "deleted_at": getattr(t, "deleted_at", None),
+                    "owner_email": owner_email or "",
+                    "suite_url": f"{base_url}/t/{t.slug}/suite",
+                    "sms_url": _sms_url_for_tenant(t.slug),
+                }
+            )
+    except Exception:
+        db.rollback()
+        total = db.execute(sa.text("SELECT COUNT(*) FROM tenants")).scalar() or 0
+        rows = db.execute(
+            sa.text(
+                """
+                SELECT slug, name, status
+                FROM tenants
+                ORDER BY created_at DESC NULLS LAST
+                OFFSET :off LIMIT :lim
+                """
+            ),
+            {"off": offset, "lim": limit},
+        ).fetchall()
+        tenants = []
+        for slug_val, name_val, status_val in rows:
+            tenants.append(
+                {
+                    "slug": slug_val,
+                    "name": name_val,
+                    "status": status_val,
+                    "is_archived": False,
+                    "deleted_at": None,
+                    "owner_email": "",
+                    "suite_url": f"{base_url}/t/{slug_val}/suite",
+                    "sms_url": _sms_url_for_tenant(slug_val),
+                }
+            )
+>>>>>>> 6921369 (Admin: add reset password endpoint + temp password generator)
 
     onboard = {
         "tenant_slug": _flash_pop(request, "onboard_tenant_slug", ""),
@@ -408,13 +511,21 @@ def admin_tenants(
 
 
 # ----------------------------
+<<<<<<< HEAD
 # Renew license for a tenant
+=======
+# ✅ Renew license for a tenant (NEW)
+>>>>>>> 6921369 (Admin: add reset password endpoint + temp password generator)
 # ----------------------------
 @router.post("/admin/tenants/{slug}/renew")
 def admin_tenant_renew(
     request: Request,
     slug: str,
+<<<<<<< HEAD
     plan_code: str = Form(...),
+=======
+    plan_code: str = Form(...),  # TRIAL_7D / MONTHLY_30D / YEARLY_365D
+>>>>>>> 6921369 (Admin: add reset password endpoint + temp password generator)
     db: Session = Depends(get_db),
 ):
     _require_admin(request)
@@ -425,6 +536,10 @@ def admin_tenant_renew(
         raise HTTPException(status_code=404, detail="Tenant not found")
 
     tenant_id = row[0]
+<<<<<<< HEAD
+=======
+
+>>>>>>> 6921369 (Admin: add reset password endpoint + temp password generator)
     plan = db.query(Plan).filter(Plan.code == plan_code).first()
     if not plan:
         raise HTTPException(status_code=400, detail="Plan not found")
@@ -436,7 +551,11 @@ def admin_tenant_renew(
 
 
 # ----------------------------
+<<<<<<< HEAD
 # Reset password (FIXED: create user if missing)
+=======
+# Reset password (schema-safe)
+>>>>>>> 6921369 (Admin: add reset password endpoint + temp password generator)
 # ----------------------------
 @router.get("/admin/tenants/{slug}/reset_password", response_class=HTMLResponse)
 def admin_reset_password_page(request: Request, slug: str, db: Session = Depends(get_db)):
@@ -497,15 +616,27 @@ def admin_reset_password_do(
     from app.models.user import User
 
     email_lc = (user_email or "").strip().lower()
+<<<<<<< HEAD
     if not email_lc:
         raise HTTPException(status_code=400, detail="Email is required")
+=======
+    # Create owner user if missing (guarantees login for every tenant)
+    user = (
+        db.query(User)
+        .filter(User.tenant_id == tenant_id, sa.func.lower(User.email) == email_lc)
+        .first()
+    )
+>>>>>>> 6921369 (Admin: add reset password endpoint + temp password generator)
 
     # ✅ Generate and set password hash
     temp_pw = generate_temp_password()
     pw_hash = bcrypt.hashpw(temp_pw.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
+<<<<<<< HEAD
     # ✅ Create user if missing (guarantee login)
     user = db.query(User).filter(User.tenant_id == tenant_id, sa.func.lower(User.email) == email_lc).first()
+=======
+>>>>>>> 6921369 (Admin: add reset password endpoint + temp password generator)
     created = False
     if not user:
         user = User(
@@ -695,6 +826,10 @@ def admin_licensing(request: Request, tenant: Optional[str] = None, db: Session 
                 .first()
             )
 
+<<<<<<< HEAD
+=======
+    # Optional: show last generated code passed as query param
+>>>>>>> 6921369 (Admin: add reset password endpoint + temp password generator)
     code = request.query_params.get("code") or ""
 
     return templates.TemplateResponse(

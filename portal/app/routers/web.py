@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import uuid
 import sqlalchemy as sa
 from urllib.parse import quote_plus
@@ -266,6 +266,32 @@ def timeline_legacy(request: Request):
     tenant_slug = _session_tenant_slug(request)
     rp = _rp(request)
     return RedirectResponse(url=f"{rp}/t/{tenant_slug}/suite", status_code=303)
+
+
+# ----------------------------
+# SMS Outbox
+# ----------------------------
+@router.get("/sms-outbox", response_class=HTMLResponse)
+def sms_outbox_view(request: Request, tenant: str = "default", db: Session = Depends(get_db)):
+    redirect = _require_login_for_tenant(request, tenant)
+    if redirect:
+        return redirect
+
+    tctx = resolve_tenant(db, request, tenant_slug=tenant)
+    items = (
+        db.query(SmsOutbox)
+        .filter(SmsOutbox.tenant_id == tctx.tenant_id)
+        .order_by(SmsOutbox.scheduled_at.desc())
+        .limit(200)
+        .all()
+    )
+    return _render(
+        request,
+        "pages/sms_outbox.html",
+        {"outbox": items},
+        db,
+        tenant_slug=tctx.tenant_slug,
+    )
 
 
 # ----------------------------
@@ -787,10 +813,53 @@ def settings_view(request: Request, tenant: str = "default", db: Session = Depen
         if addr:
             link = f"https://www.google.com/maps/search/?api=1&query={quote_plus(addr)}"
 
+    # Tenant subscription status (new multi-tenant licensing source of truth)
+    sub_active = False
+    sub_until = None
+    sub_plan_code = ""
+    try:
+        from app.models.licensing import Subscription, Plan
+        sub = (
+            db.query(Subscription)
+            .filter(Subscription.tenant_id == tctx.tenant_id)
+            .order_by(Subscription.ends_at.desc())
+            .first()
+        )
+        if sub and getattr(sub, "ends_at", None):
+            sub_until = sub.ends_at
+            sub_active = bool(sub.ends_at > datetime.utcnow() and str(getattr(sub, "status", "active")).lower() == "active")
+            try:
+                p = db.query(Plan).filter(Plan.id == sub.plan_id).first()
+                if p:
+                    sub_plan_code = getattr(p, "code", "") or ""
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # Client .env export preview
+    env_preview = "".join(
+        [
+            f"TENANT={tctx.tenant_slug}\n",
+            f"PORTAL_BASE_URL={settings.SMS_APP_URL or ''}\n",
+            f"INFOBIP_BASE_URL={cs.infobip_base_url or ''}\n",
+            f"INFOBIP_API_KEY={(cs.infobip_api_key or '')}\n",
+            f"INFOBIP_SENDER={(cs.infobip_sender or '')}\n",
+        ]
+    )
+
     return _render(
         request,
         "pages/settings.html",
-        {"clinic": cs, "license": lic, "google_maps_link": link},
+        {
+            "clinic": cs,
+            "license": lic,
+            "google_maps_link": link,
+            "env_preview": env_preview,
+            "sub_active": sub_active,
+            "sub_until": sub_until,
+            "sub_plan_code": sub_plan_code,
+        },
         db,
         tenant_slug=tctx.tenant_slug,
     )
@@ -847,6 +916,185 @@ def settings_update_infobip(
     rp = _rp(request)
     _toast_set(request, "success", "SMS provider settings updated")
     return RedirectResponse(url=f"{rp}/settings?tenant={tctx.tenant_slug}", status_code=303)
+
+
+@router.get("/settings/env")
+def settings_env_download(request: Request, db: Session = Depends(get_db)):
+    """Download a simple client.env file for the current tenant."""
+    tenant_slug = _session_tenant_slug(request)
+    redirect = _require_login_for_tenant(request, tenant_slug)
+    if redirect:
+        return redirect
+
+    tctx = resolve_tenant(db, request, tenant_slug=tenant_slug)
+    cs = _get_settings(db, tctx.tenant_id)
+
+    content = "".join(
+        [
+            f"TENANT={tctx.tenant_slug}\n",
+            f"PORTAL_BASE_URL={str(request.base_url).rstrip('/')}\n",
+            f"SMS_APP_URL={settings.SMS_APP_URL or ''}\n",
+            f"INFOBIP_BASE_URL={cs.infobip_base_url or ''}\n",
+            f"INFOBIP_API_KEY={(cs.infobip_api_key or '')}\n",
+            f"INFOBIP_SENDER={(cs.infobip_sender or '')}\n",
+        ]
+    )
+
+    from fastapi.responses import Response
+
+    return Response(
+        content,
+        media_type="text/plain",
+        headers={"Content-Disposition": f"attachment; filename={tctx.tenant_slug}.client.env"},
+    )
+
+
+@router.post("/settings/activate")
+def settings_activate_code(
+    request: Request,
+    activation_code: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    """Redeem an admin-generated activation code for the current tenant.
+
+    Admin-generated codes are bound to tenant_id (ActivationCode.tenant_id). We only accept codes
+    that match this tenant, are not revoked, and have remaining redemptions.
+
+    Renewal rule:
+      - if active -> extend from expiry
+      - if expired -> extend from now
+    """
+    tenant_slug = _session_tenant_slug(request)
+    redirect = _require_login_for_tenant(request, tenant_slug)
+    if redirect:
+        return redirect
+
+    code = (activation_code or "").strip()
+    rp = _rp(request)
+    if not code:
+        return RedirectResponse(url=f"{rp}/settings?tenant={tenant_slug}#tab-license&err=missing_code", status_code=303)
+
+    import hashlib
+    from app.models.licensing import ActivationCode, Plan, Subscription, LicenseAuditLog
+
+    tctx = resolve_tenant(db, request, tenant_slug=tenant_slug)
+    code_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()
+
+    ac = db.query(ActivationCode).filter(ActivationCode.code_hash == code_hash).first()
+    if not ac:
+        return RedirectResponse(url=f"{rp}/settings?tenant={tenant_slug}#tab-license&err=invalid_code", status_code=303)
+
+    # must match tenant
+    if ac.tenant_id != tctx.tenant_id:
+        return RedirectResponse(url=f"{rp}/settings?tenant={tenant_slug}#tab-license&err=invalid_code", status_code=303)
+
+    now = datetime.utcnow()
+    if ac.revoked_at is not None:
+        return RedirectResponse(url=f"{rp}/settings?tenant={tenant_slug}#tab-license&err=invalid_code", status_code=303)
+    if ac.redeem_by is not None and ac.redeem_by < now:
+        return RedirectResponse(url=f"{rp}/settings?tenant={tenant_slug}#tab-license&err=invalid_code", status_code=303)
+    if int(ac.redeemed_count or 0) >= int(ac.max_redemptions or 1):
+        return RedirectResponse(url=f"{rp}/settings?tenant={tenant_slug}#tab-license&err=invalid_code", status_code=303)
+
+    plan = db.query(Plan).filter(Plan.id == ac.plan_id).first()
+    if not plan:
+        return RedirectResponse(url=f"{rp}/settings?tenant={tenant_slug}#tab-license&err=invalid_code", status_code=303)
+
+    sub = (
+        db.query(Subscription)
+        .filter(Subscription.tenant_id == tctx.tenant_id)
+        .order_by(Subscription.ends_at.desc())
+        .first()
+    )
+
+    base = now
+    if sub and sub.ends_at and sub.ends_at > now and str(getattr(sub, "status", "active")).lower() == "active":
+        base = sub.ends_at
+
+    new_end = base + timedelta(days=int(plan.duration_days or 0))
+
+    if sub:
+        sub.ends_at = new_end
+        sub.status = "active"
+        sub.plan_id = plan.id
+        sub.source = "activation_code"
+        db.add(sub)
+    else:
+        sub = Subscription(
+            id=str(uuid.uuid4()),
+            tenant_id=tctx.tenant_id,
+            plan_id=plan.id,
+            status="active",
+            starts_at=now,
+            ends_at=new_end,
+            source="activation_code",
+        )
+        db.add(sub)
+
+    ac.redeemed_count = int(ac.redeemed_count or 0) + 1
+    db.add(ac)
+
+    try:
+        db.add(
+            LicenseAuditLog(
+                id=str(uuid.uuid4()),
+                tenant_id=tctx.tenant_id,
+                event_type="activation_redeemed",
+                details_json=f'{{"plan":"{plan.code}","ends_at":"{new_end.isoformat()}"}}',
+                created_at=now,
+            )
+        )
+    except Exception:
+        pass
+
+    db.commit()
+
+    return RedirectResponse(url=f"{rp}/settings?tenant={tenant_slug}#tab-license&ok=activated", status_code=303)
+
+
+@router.post("/settings/license")
+def settings_manual_license(
+    request: Request,
+    product_mode: str = Form("BOTH"),
+    action: str = Form("TRIAL"),
+    weeks: int = Form(4),
+    db: Session = Depends(get_db),
+):
+    """Legacy manual license controls (kept for demos).
+
+    This updates the single-row AppLicense record.
+    Production licensing should use subscriptions + activation codes.
+    """
+    tenant_slug = _session_tenant_slug(request)
+    redirect = _require_login_for_tenant(request, tenant_slug)
+    if redirect:
+        return redirect
+
+    tctx = resolve_tenant(db, request, tenant_slug=tenant_slug)
+    lic = _get_license(db)
+    lic.product_mode = (product_mode or "BOTH").upper()
+    now = datetime.utcnow()
+
+    act = (action or "").upper()
+    w = max(1, int(weeks or 4))
+
+    if act in ("TRIAL", "RENEW_WEEKS"):
+        end = (lic.license_end or now) if (lic.license_end and lic.license_end > now) else now
+        lic.license_end = end + timedelta(weeks=w)
+    elif act == "RENEW_YEAR":
+        end = (lic.license_end or now) if (lic.license_end and lic.license_end > now) else now
+        lic.license_end = end + timedelta(days=365)
+    else:
+        # default: extend trial
+        end = (lic.trial_end or now) if (lic.trial_end and lic.trial_end > now) else now
+        lic.trial_end = end + timedelta(weeks=w)
+
+    lic.updated_at = now
+    db.add(lic)
+    db.commit()
+
+    rp = _rp(request)
+    return RedirectResponse(url=f"{rp}/settings?tenant={tctx.tenant_slug}#tab-license", status_code=303)
 
 
 # ----------------------------

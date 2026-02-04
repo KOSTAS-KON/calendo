@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from app.db import SessionLocal
+from app.config import settings
 
 router = APIRouter(prefix="/api", tags=["api-alias"])
 
@@ -30,6 +31,12 @@ def _resolve_tenant_slug(request: Request) -> str:
     tenant = (request.query_params.get("tenant") or "").strip().lower()
     if tenant == "default" or not tenant:
         return "default"
+
+    # Allow internal services (SMS) to request a tenant explicitly, but only with INTERNAL_API_KEY.
+    internal_key = (request.headers.get("x-internal-key") or request.headers.get("X-Internal-Key") or "").strip()
+    expected = (settings.INTERNAL_API_KEY or "").strip()
+    if expected and internal_key and internal_key == expected:
+        return tenant
 
     # Unauthenticated callers cannot enumerate other tenants
     return "default"

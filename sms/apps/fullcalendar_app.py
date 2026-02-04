@@ -2092,8 +2092,14 @@ def _apply_portal_settings_to_env() -> Dict[str, Any]:
     # 1) Preferred: fetch everything from /api/internal/clinic_settings using INTERNAL_API_KEY
     internal_key = (os.getenv("INTERNAL_API_KEY") or "").strip()
     if internal_key:
-        data = _fetch_portal_json("/api/internal/clinic_settings", headers={"X-Internal-Key": internal_key}) or {}
-        clinic_obj = (data.get("clinic") or {}) if isinstance(data, dict) else {}
+        data = _fetch_portal_json(f"/api/internal/clinic_settings?tenant={tenant}", headers={"X-Internal-Key": internal_key}) or {}
+        # Portal may return either a flat payload or {"clinic": {...}}
+        clinic_obj = {}
+        if isinstance(data, dict):
+            if isinstance(data.get("clinic"), dict):
+                clinic_obj = data.get("clinic") or {}
+            else:
+                clinic_obj = data
         if clinic_obj:
             base_url = str(clinic_obj.get("infobip_base_url") or "").strip()
             sender = str(clinic_obj.get("infobip_sender") or "").strip()
@@ -2118,7 +2124,7 @@ def _apply_portal_settings_to_env() -> Dict[str, Any]:
     # 2) Fallback: /api/internal/infobip using INTERNAL_TOKEN (matches Portal SECRET_KEY)
     tok = (os.getenv("INTERNAL_TOKEN") or "").strip()
     if tok:
-        creds = _fetch_portal_json("/api/internal/infobip", headers={"x-internal-token": tok}) or {}
+        creds = _fetch_portal_json(f"/api/internal/infobip?tenant={tenant}", headers={"x-internal-token": tok}) or {}
         base_url = str(creds.get("infobip_base_url") or "").strip()
         sender = str(creds.get("infobip_sender") or "").strip()
         api_key = str(creds.get("infobip_api_key") or "").strip()
@@ -2156,7 +2162,10 @@ def main() -> None:
     portal_applied = _apply_portal_settings_to_env()
 
     # License gating (lightweight offline gate)
-    lic = _fetch_portal_json("/api/license") or {}
+    # Tenant-aware license check (no session cookies in Render service-to-service calls)
+    internal_key = (os.getenv("INTERNAL_API_KEY") or "").strip()
+    lic_headers = {"X-Internal-Key": internal_key} if internal_key else {}
+    lic = _fetch_portal_json(f"/api/license?tenant={tenant}", headers=lic_headers) or {}
     if lic:
         pm = str(lic.get("product_mode", "BOTH")).upper()
         if not bool(lic.get("active", True)):

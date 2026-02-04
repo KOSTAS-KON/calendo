@@ -19,6 +19,7 @@ class TenantContext:
 
 
 def resolve_tenant(db: Session, request: Request, tenant_slug: str = "default") -> TenantContext:
+<<<<<<< HEAD
     """
     Resolve tenant from slug with strong safety:
     - normalize slug
@@ -36,6 +37,23 @@ def resolve_tenant(db: Session, request: Request, tenant_slug: str = "default") 
             db.rollback()
     except Exception:
         # If rollback fails here, later query will raise and be caught below.
+=======
+    """Resolve tenant safely.
+
+    - Normalizes slug
+    - If the DB session is in a failed transaction state, rollback so we don't cascade failures
+    - Raises consistent HTTP errors
+    """
+
+    slug = (tenant_slug or "default").strip().lower() or "default"
+
+    # If any earlier statement failed, SQLAlchemy will mark the transaction as failed.
+    # In that case, every subsequent query will raise InFailedSqlTransaction until rollback.
+    try:
+        if db.in_transaction():
+            db.rollback()
+    except Exception:
+>>>>>>> 6921369 (Admin: add reset password endpoint + temp password generator)
         pass
 
     try:
@@ -61,5 +79,7 @@ def tenant_query(model: Type[Any], db: Session, tenant_id: str) -> Query:
     Raises if the model does not expose a tenant_id attribute.
     """
     if not hasattr(model, "tenant_id"):
-        raise RuntimeError(f"Model {getattr(model, '__name__', str(model))} is not tenant-scoped (missing tenant_id).")
+        raise RuntimeError(
+            f"Model {getattr(model, '__name__', str(model))} is not tenant-scoped (missing tenant_id)."
+        )
     return db.query(model).filter(getattr(model, "tenant_id") == tenant_id)
