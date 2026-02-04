@@ -9,12 +9,28 @@ if settings.DATABASE_URL.startswith("sqlite"):
 engine = create_engine(settings.DATABASE_URL, pool_pre_ping=True, connect_args=connect_args)
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
+
 class Base(DeclarativeBase):
     pass
 
+
 def get_db():
+    """
+    DB session dependency.
+
+    IMPORTANT:
+    If any exception occurs during request handling, the current transaction must be rolled back.
+    Otherwise the session becomes "poisoned" (InFailedSqlTransaction) and *all subsequent queries*
+    in the same request will fail.
+    """
     db = SessionLocal()
     try:
         yield db
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        raise
     finally:
         db.close()
