@@ -3,11 +3,9 @@ from sqlalchemy.orm import sessionmaker, DeclarativeBase
 
 from app.config import settings
 
-
 connect_args = {}
 if settings.DATABASE_URL.startswith("sqlite"):
     connect_args = {"check_same_thread": False}
-
 
 engine = create_engine(settings.DATABASE_URL, pool_pre_ping=True, connect_args=connect_args)
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
@@ -18,27 +16,14 @@ class Base(DeclarativeBase):
 
 
 def get_db():
-<<<<<<< HEAD
     """
     DB session dependency.
 
     IMPORTANT:
-    If any exception occurs during request handling, the current transaction must be rolled back.
-    Otherwise the session becomes "poisoned" (InFailedSqlTransaction) and *all subsequent queries*
-    in the same request will fail.
+    If any exception occurs during request handling, rollback the transaction.
+    Otherwise the session becomes "poisoned" (InFailedSqlTransaction) and all
+    subsequent queries in the same request will fail.
     """
-=======
-    """DB session dependency.
-
-    IMPORTANT:
-    If any exception occurs during request handling, the current transaction must be rolled back.
-    Otherwise the session becomes "poisoned" (InFailedSqlTransaction) and subsequent queries in
-    the same request will fail.
-
-    We do NOT auto-commit here because routes explicitly call commit() when needed.
-    """
-
->>>>>>> 6921369 (Admin: add reset password endpoint + temp password generator)
     db = SessionLocal()
     try:
         yield db

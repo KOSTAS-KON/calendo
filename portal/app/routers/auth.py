@@ -56,21 +56,12 @@ def _session_clear(request: Request) -> None:
         sess.clear()
 
 
-@router.get("/auth/ping")
-def ping():
-    return {"ok": True}
-
-
 def _turnstile_configured() -> bool:
     enabled = bool(getattr(settings, "TURNSTILE_ENABLED", False))
     site_key = (getattr(settings, "TURNSTILE_SITE_KEY", "") or "").strip()
     secret_key = (getattr(settings, "TURNSTILE_SECRET_KEY", "") or "").strip()
     if enabled and (not site_key or not secret_key):
-<<<<<<< HEAD
         print("[auth] WARNING: TURNSTILE_ENABLED=true but keys missing. Turnstile will be bypassed until configured.")
-=======
-        print("[auth] WARNING: TURNSTILE_ENABLED=true but keys missing. Turnstile will be bypassed.")
->>>>>>> 6921369 (Admin: add reset password endpoint + temp password generator)
         return False
     return enabled and bool(site_key) and bool(secret_key)
 
@@ -85,7 +76,7 @@ def _render_login_page(next_path: str, tenant_slug: str, error: str) -> HTMLResp
             msg = """
             <div style="margin:10px 0; padding:10px; border-radius:12px;
                         background:#1f2937; border:1px solid rgba(148,163,184,.35); color:#e5e7eb;">
-              <b>Security check failed:</b> Please retry. If this continues, contact the administrator.
+              <b>Security check failed:</b> Please retry.
             </div>
             """
         else:
@@ -100,8 +91,8 @@ def _render_login_page(next_path: str, tenant_slug: str, error: str) -> HTMLResp
     turnstile_script = ""
     if configured and site_key:
         turnstile_block = f"""
-          <div style=\"margin-top:12px;\">
-            <div class=\"cf-turnstile\" data-sitekey=\"{site_key}\"></div>
+          <div style="margin-top:12px;">
+            <div class="cf-turnstile" data-sitekey="{site_key}"></div>
           </div>
         """
         turnstile_script = """
@@ -111,7 +102,7 @@ def _render_login_page(next_path: str, tenant_slug: str, error: str) -> HTMLResp
     html = f"""
     <!doctype html>
     <html>
-      <head><meta charset=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>
+      <head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
         <title>Login</title>
         <style>
           body{{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial; background:#0b1220; color:#e5e7eb; margin:0;}}
@@ -124,17 +115,17 @@ def _render_login_page(next_path: str, tenant_slug: str, error: str) -> HTMLResp
         </style>
       </head>
       <body>
-        <div class=\"wrap\">
-          <div class=\"card\">
-            <h2 style=\"margin:0 0 6px 0;\">Sign in</h2>
-            <div class=\"hint\">Tenant: <code>{tenant_slug}</code></div>
+        <div class="wrap">
+          <div class="card">
+            <h2 style="margin:0 0 6px 0;">Sign in</h2>
+            <div class="hint">Tenant: <code>{tenant_slug}</code></div>
             {msg}
-            <form method=\"post\" action=\"/auth/login\">
-              <input type=\"hidden\" name=\"next\" value=\"{quote(next_path)}\"/>
-              <input name=\"email\" placeholder=\"Email\" autocomplete=\"username\" />
-              <input name=\"password\" placeholder=\"Password\" autocomplete=\"current-password\" type=\"password\" />
+            <form method="post" action="/auth/login">
+              <input type="hidden" name="next" value="{quote(next_path)}"/>
+              <input name="email" placeholder="Email" autocomplete="username" />
+              <input name="password" placeholder="Password" autocomplete="current-password" type="password" />
               {turnstile_block}
-              <button type=\"submit\">Log in</button>
+              <button type="submit">Log in</button>
             </form>
           </div>
         </div>
@@ -145,23 +136,15 @@ def _render_login_page(next_path: str, tenant_slug: str, error: str) -> HTMLResp
     return HTMLResponse(html)
 
 
-<<<<<<< HEAD
 def _verify_turnstile_or_raise(token: str, ip: str) -> None:
-=======
-def _verify_turnstile(token: str, ip: str) -> tuple[bool, str]:
-    """Verify Turnstile. Returns (ok, reason)."""
->>>>>>> 6921369 (Admin: add reset password endpoint + temp password generator)
     if not _turnstile_configured():
-        return True, "bypassed"
-
+        return
     secret = (getattr(settings, "TURNSTILE_SECRET_KEY", "") or "").strip()
     token = (token or "").strip()
     if not token:
-        return False, "missing_token"
+        raise ValueError("Turnstile token missing")
 
     timeout = float(getattr(settings, "TURNSTILE_TIMEOUT_SECONDS", 5) or 5)
-<<<<<<< HEAD
-
     resp = requests.post(
         "https://challenges.cloudflare.com/turnstile/v0/siteverify",
         data={"secret": secret, "response": token, "remoteip": ip},
@@ -169,22 +152,7 @@ def _verify_turnstile(token: str, ip: str) -> tuple[bool, str]:
     )
     data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
     if not data.get("success"):
-        # include error codes (helps debugging without breaking UX)
         raise ValueError(f"Turnstile verification failed: {data.get('error-codes')}")
-=======
-    try:
-        resp = requests.post(
-            "https://challenges.cloudflare.com/turnstile/v0/siteverify",
-            data={"secret": secret, "response": token, "remoteip": ip},
-            timeout=timeout,
-        )
-        data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
-        if data.get("success"):
-            return True, "ok"
-        return False, f"failed:{data.get('error-codes')}"
-    except Exception as e:
-        return False, f"exception:{e}"
->>>>>>> 6921369 (Admin: add reset password endpoint + temp password generator)
 
 
 def _get_client_ip(request: Request) -> str:
@@ -204,6 +172,7 @@ def _rate_limit_login(db, ip: str) -> tuple[bool, int]:
     block_seconds = int((getattr(settings, "LOGIN_RATE_LIMIT_BLOCK_SECONDS", None) or 900))
 
     now = datetime.utcnow()
+
     row = db.query(AuthRateLimit).filter(AuthRateLimit.ip == ip).first()
     if not row:
         row = AuthRateLimit(ip=ip, window_start=now, count=0, blocked_until=None)
@@ -249,14 +218,10 @@ def _record_login_failure(db, ip: str) -> None:
 
 
 def _get_tenant_id_by_slug(db, tenant_slug: str) -> str | None:
-<<<<<<< HEAD
     row = db.execute(
         sa.text("SELECT id FROM tenants WHERE slug = :slug LIMIT 1"),
         {"slug": tenant_slug},
     ).fetchone()
-=======
-    row = db.execute(sa.text("SELECT id FROM tenants WHERE slug = :slug LIMIT 1"), {"slug": tenant_slug}).fetchone()
->>>>>>> 6921369 (Admin: add reset password endpoint + temp password generator)
     return row[0] if row else None
 
 
@@ -291,30 +256,20 @@ def auth_login_post(
         return RedirectResponse(url=f"/auth/login?next={quote(next_path)}&error=1", status_code=303)
 
     ip = _get_client_ip(request)
+
     db = SessionLocal()
     try:
         allowed, _ = _rate_limit_login(db, ip)
         if not allowed:
             return RedirectResponse(url=f"/auth/login?next={quote(next_path)}&error=1", status_code=303)
 
-<<<<<<< HEAD
-        # ✅ TURNSTILE SOFT-FAIL:
-        # If Turnstile is enabled but token delivery is flaky (common on some deployments),
-        # do NOT block a correct login. Log the failure and proceed to password verification.
+        # ✅ Turnstile soft-fail: do not block valid credentials
         if _turnstile_configured():
             try:
                 _verify_turnstile_or_raise(cf_turnstile_response, ip)
             except Exception as e:
-                # Still count towards rate limiting, but don't show bot error.
                 _record_login_failure(db, ip)
-                print(f"[auth] WARNING: Turnstile verification failed; allowing credential check. reason={e}")
-=======
-        # Turnstile soft-fail: don't block valid users due to flaky token delivery
-        ok, reason = _verify_turnstile(cf_turnstile_response, ip)
-        if not ok:
-            _record_login_failure(db, ip)
-            print(f"[auth] WARNING: turnstile not verified ({reason}); continuing with credential check")
->>>>>>> 6921369 (Admin: add reset password endpoint + temp password generator)
+                print(f"[auth] WARNING: Turnstile failed; proceeding. reason={e}")
 
         from app.models.user import User
 
@@ -325,14 +280,7 @@ def auth_login_post(
 
         u = (
             db.query(User)
-<<<<<<< HEAD
-            .filter(
-                User.tenant_id == tenant_id,
-                sa.func.lower(User.email) == email,
-            )
-=======
             .filter(User.tenant_id == tenant_id, sa.func.lower(User.email) == email)
->>>>>>> 6921369 (Admin: add reset password endpoint + temp password generator)
             .first()
         )
         if not u or not getattr(u, "is_active", True):
@@ -343,23 +291,13 @@ def auth_login_post(
             _record_login_failure(db, ip)
             return RedirectResponse(url=f"/auth/login?next={quote(next_path)}&error=1", status_code=303)
 
-        # normalize stored email (optional but helps long-term)
-        if getattr(u, "email", "").lower() != email:
-            try:
-                u.email = email
-                db.add(u)
-                db.commit()
-            except Exception:
-                db.rollback()
-
         _session_set(request, "user_id", u.id)
         _session_set(request, "tenant_id", u.tenant_id)
         _session_set(request, "tenant_slug", tenant_slug)
         _session_set(request, "role", u.role)
-        _session_set(request, "email", (u.email or "").lower())
+        _session_set(request, "email", u.email)
         _session_set(request, "logged_in_at", datetime.utcnow().isoformat())
 
-<<<<<<< HEAD
         if hasattr(u, "last_login_at"):
             try:
                 u.last_login_at = datetime.utcnow()
@@ -368,8 +306,6 @@ def auth_login_post(
             except Exception:
                 db.rollback()
 
-=======
->>>>>>> 6921369 (Admin: add reset password endpoint + temp password generator)
         return RedirectResponse(url=next_path, status_code=303)
     finally:
         db.close()
@@ -383,7 +319,6 @@ def login_post(
     cf_turnstile_response: str = Form("", alias="cf-turnstile-response"),
     next: str = Form("/t/default/suite"),
 ):
-<<<<<<< HEAD
     return auth_login_post(
         request=request,
         email=email,
@@ -391,9 +326,6 @@ def login_post(
         cf_turnstile_response=cf_turnstile_response,
         next=next,
     )
-=======
-    return auth_login_post(request, email, password, cf_turnstile_response, next)
->>>>>>> 6921369 (Admin: add reset password endpoint + temp password generator)
 
 
 @router.get("/auth/logout")
