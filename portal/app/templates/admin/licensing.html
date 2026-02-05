@@ -2,7 +2,7 @@
 {% block content %}
 
 {% set header = "Licensing" %}
-{% set subheader = "Generate activation codes or renew a tenant subscription." %}
+{% set subheader = "Renew subscriptions or generate a **License Activation Code** (not a login password)." %}
 {% set actions = [
   {"label":"Back to tenants","href": "/admin/tenants","variant":"outline"},
   {"label":"Links","href": "/admin/links","variant":"outline"}
@@ -72,11 +72,26 @@
       </form>
     </div>
 
+        <!-- Reset login password -->
+    <div class="card">
+      <h3 style="margin-top:0;">Reset Login Password</h3>
+      <div class="muted" style="margin-bottom:10px;">
+        Resets the tenant user's <b>login password</b>. This does <b>not</b> renew the license.
+      </div>
+      <a class="btn btn-outline" href="/admin/tenants/{{selected.slug}}/reset_password">
+        🔑 Reset Login Password
+      </a>
+      <div class="muted" style="margin-top:10px; font-size:13px;">
+        After reset, log in via: <code>/auth/login?next=/t/{{selected.slug}}/suite</code>
+      </div>
+    </div>
+    
+
     <!-- Generate activation code -->
     <div class="card">
-      <h3 style="margin-top:0;">Generate activation code</h3>
+      <h3 style="margin-top:0;">Generate License Activation Code</h3>
       <div class="muted" style="margin-bottom:10px;">
-        Creates a one-time code for this tenant + plan. Codes show once.
+        Creates a one-time **License Activation Code** for this tenant + plan. This is **not** the login password. Codes show once.
       </div>
 
       <form method="post" action="/admin/licensing/generate">
@@ -89,7 +104,7 @@
             </option>
           {% endfor %}
         </select>
-        <button class="btn" type="submit" style="margin-top:10px;">Generate code</button>
+        <button class="btn" type="submit" style="margin-top:10px;">Generate License Activation Code</button>
       </form>
 
       {% if code %}
