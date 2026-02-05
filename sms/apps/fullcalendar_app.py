@@ -35,7 +35,10 @@ def _get_query_params() -> dict:
         return dict(st.query_params)
     except Exception:
         try:
-            return {k: v[0] if isinstance(v, list) and v else v for k, v in (st.experimental_get_query_params() or {}).items()}
+            return {
+                k: v[0] if isinstance(v, list) and v else v
+                for k, v in (st.experimental_get_query_params() or {}).items()
+            }
         except Exception:
             return {}
 
@@ -101,10 +104,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / "data"
 OUTPUT_DIR = DATA_DIR / "output"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
 OUTBOX_JSONL = OUTPUT_DIR / "outbox.jsonl"
 
-DEFAULT_TEMPLATES = {
+DEFAULT_TEMPLATES: Dict[str, str] = {
     "new": "New appointment for {name} on {date} at {time}.",
     "reminder_day": "Reminder: {name} has an appointment tomorrow ({date}) at {time}.",
     "reminder_2h": "Reminder: {name} has an appointment at {time} (in ~2 hours).",
@@ -200,7 +202,7 @@ def render_tpl(tpl: str, name: str, start_local: datetime) -> str:
 # Portal API helpers
 # =============================================================================
 def _portal_base_url() -> str:
-    for k in ("PORTAL_APP_URL", "PORTAL_BASE_URL", "THERAPY_PORTAL_URL"):
+    for k in ("PORTAL_APP_URL", "PORTAL_BASE_URL", "THERAPY_PORTAL_URL", "PORTAL_URL"):
         v = (os.getenv(k) or "").strip().rstrip("/")
         if v:
             return v
@@ -222,12 +224,18 @@ def _fetch_portal_json(path: str, headers: Dict[str, str] | None = None) -> Dict
 
 
 def portal_get_children(tenant_slug: str, internal_key: str) -> list[dict]:
-    data = _fetch_portal_json(f"/api/internal/children?tenant={tenant_slug}", headers={"X-Internal-Key": internal_key}) or {}
+    data = _fetch_portal_json(
+        f"/api/internal/children?tenant={tenant_slug}",
+        headers={"X-Internal-Key": internal_key},
+    ) or {}
     return list((data.get("children") or [])) if isinstance(data, dict) else []
 
 
 def portal_get_appointments(tenant_slug: str, internal_key: str, days: int = 60) -> list[dict]:
-    data = _fetch_portal_json(f"/api/internal/appointments?tenant={tenant_slug}&days={days}", headers={"X-Internal-Key": internal_key}) or {}
+    data = _fetch_portal_json(
+        f"/api/internal/appointments?tenant={tenant_slug}&days={days}",
+        headers={"X-Internal-Key": internal_key},
+    ) or {}
     return list((data.get("appointments") or [])) if isinstance(data, dict) else []
 
 
@@ -517,8 +525,45 @@ def _send_immediately() -> None:
 
 
 # =============================================================================
-# UI
+# Pages
 # =============================================================================
+def _topbar(tenant_slug: str) -> None:
+    st.markdown(
+        """
+<style>
+.main .block-container{ max-width: 1200px; }
+.topbar{
+  display:flex; justify-content:space-between; align-items:center; gap:12px;
+  padding: 10px 12px; border:1px solid rgba(0,0,0,.08); border-radius:14px;
+  background:#fff; margin-bottom:12px;
+}
+.topbar .title{ font-weight: 900; font-size: 22px; letter-spacing:-0.02em; }
+.topbar .links a{
+  text-decoration:none; border:1px solid rgba(0,0,0,.12);
+  padding:8px 12px; border-radius:999px; background:#fff; font-weight:800;
+}
+</style>
+        """,
+        unsafe_allow_html=True,
+    )
+    portal = _portal_base_url().rstrip("/")
+    if portal:
+        st.markdown(
+            f"""
+<div class="topbar">
+  <div class="title">📅 SMS Calendar (Portal-synced) — tenant: <span style="color:#0f172a">{tenant_slug}</span></div>
+  <div class="links">
+    <a href="{portal}/t/{tenant_slug}/suite">🏠 Suite</a>
+    <a href="{portal}/children?tenant={tenant_slug}">🧒 Children</a>
+  </div>
+</div>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        st.title(f"SMS Calendar (Portal-synced) — tenant: {tenant_slug}")
+
+
 def page_calendar(templates: Dict[str, str], tz: Any, tenant_slug: str, internal_key: str) -> None:
     st.subheader("Calendar")
 
@@ -564,7 +609,6 @@ def page_calendar(templates: Dict[str, str], tz: Any, tenant_slug: str, internal
                 if not appt_id:
                     st.error("Failed to create appointment in Portal.")
                 else:
-                    # Messaging: queue/send
                     to_phone = child.get("parent1_phone") or child.get("parent2_phone") or ""
                     if send_now:
                         body = render_tpl(templates["new"], child["full_name"], start_local)
@@ -595,13 +639,7 @@ def page_calendar(templates: Dict[str, str], tz: Any, tenant_slug: str, internal
         title = f"{a.get('child_name','')} • {a.get('procedure','Session')}"
         if a.get("status") == "cancelled":
             title = "❌ " + title
-        events.append({
-            "id": str(a["id"]),
-            "title": title,
-            "start": a["starts_at"],
-            "end": a["ends_at"],
-            "editable": a.get("status") != "cancelled",
-        })
+        events.append({"id": str(a["id"]), "title": title, "start": a["starts_at"], "end": a["ends_at"], "editable": a.get("status") != "cancelled"})
 
     cal = st_calendar({
         "initialView": view,
@@ -622,7 +660,6 @@ def page_calendar(templates: Dict[str, str], tz: Any, tenant_slug: str, internal
                 st.rerun()
             else:
                 st.error("Move failed.")
-
         if cal.get("eventResize"):
             ev = cal["eventResize"]["event"]
             ok = portal_move_appointment(tenant_slug, internal_key, int(ev["id"]), ev["start"], ev.get("end") or ev["start"])
@@ -638,10 +675,9 @@ def page_appointments(templates: Dict[str, str], tz: Any, tenant_slug: str, inte
 
     appts = portal_get_appointments(tenant_slug, internal_key, days=60) if internal_key else []
     if not appts:
-        st.info("No appointments found (or internal key missing).")
+        st.info("No appointments found.")
         return
 
-    # show table
     df = pd.DataFrame(appts)
     st.dataframe(df, width="stretch")
 
@@ -679,7 +715,6 @@ def page_appointments(templates: Dict[str, str], tz: Any, tenant_slug: str, inte
             st.rerun()
         else:
             st.error("Move failed.")
-
     if st.button("Cancel appointment", key="mv_cancel"):
         ok = portal_cancel_appointment(tenant_slug, internal_key, int(appt_id))
         if ok:
@@ -707,14 +742,43 @@ def page_outbox() -> None:
     queued = df[df["status"] == "queued"].copy()
     if queued.empty:
         return
-
-    st.markdown("### Delete queued message")
-    pick = st.selectbox("Queued", [f"{r['outbox_id']} | {r['message_type']} | {r['scheduled_for_iso']}" for _, r in queued.iterrows()], key="del_pick")
+    pick = st.selectbox("Delete queued", [f"{r['outbox_id']} | {r['message_type']} | {r['scheduled_for_iso']}" for _, r in queued.iterrows()], key="del_pick")
     if st.button("🗑 Delete", key="del_btn"):
         oid = pick.split("|")[0].strip()
         outbox_delete(oid)
         st.success("Deleted (marked).")
         st.rerun()
+
+
+def page_customers() -> None:
+    st.subheader("Customers")
+    st.info("Portal-synced mode uses Portal Children. This tab is optional.")
+
+
+def page_templates(templates: Dict[str, str]) -> None:
+    st.subheader("Templates")
+    tpls = dict(templates)
+    tpls["new"] = st.text_area("New template", value=tpls.get("new",""), height=80, key="tpl_new")
+    tpls["reminder_day"] = st.text_area("Reminder 24h template", value=tpls.get("reminder_day",""), height=70, key="tpl_day")
+    tpls["reminder_2h"] = st.text_area("Reminder 2h template", value=tpls.get("reminder_2h",""), height=70, key="tpl_2h")
+    tpls["moved"] = st.text_area("Moved template", value=tpls.get("moved",""), height=70, key="tpl_moved")
+    tpls["cancelled"] = st.text_area("Cancelled template", value=tpls.get("cancelled",""), height=70, key="tpl_cancelled")
+    if st.button("Save templates", key="tpl_save_btn"):
+        st.success("Saved (session only).")
+
+
+def page_diagnostics(tenant_slug: str, internal_key: str) -> None:
+    st.subheader("Diagnostics")
+    st.json({
+        "tenant": tenant_slug,
+        "portal_base": _portal_base_url(),
+        "provider": _effective_provider(),
+        "INFOBIP_BASE_URL_set": bool((os.getenv("INFOBIP_BASE_URL") or "").strip()),
+        "INFOBIP_API_KEY_set": bool((os.getenv("INFOBIP_API_KEY") or "").strip()),
+        "INFOBIP_FROM_set": bool((os.getenv("INFOBIP_FROM") or "").strip()),
+        "internal_key_set": bool(internal_key),
+        "note": "For auto-send every 5 min use Render Cron Job: python sms/tools/run_outbox_once.py",
+    })
 
 
 # =============================================================================
@@ -725,23 +789,28 @@ def main() -> None:
 
     tenant_slug = (os.getenv("TENANT_SLUG") or TENANT_SLUG or "default").strip().lower()
     internal_key = (os.getenv("INTERNAL_API_KEY") or "").strip()
-
-    templates = DEFAULT_TEMPLATES
     tz = get_app_tz()
+    templates = DEFAULT_TEMPLATES
 
-    st.title(f"SMS Calendar (Portal-synced) — tenant: {tenant_slug}")
+    _topbar(tenant_slug)
 
     if not internal_key:
         st.error("INTERNAL_API_KEY missing on SMS service. Cannot sync with Portal.")
         st.stop()
 
-    tabs = st.tabs(["📅 Calendar", "📋 Appointments", "📨 Outbox"])
+    tabs = st.tabs(["📅 Calendar", "📋 Appointments", "📨 Outbox", "🧑 Customers", "✍️ Templates", "🛠 Diagnostics"])
     with tabs[0]:
         page_calendar(templates, tz, tenant_slug, internal_key)
     with tabs[1]:
         page_appointments(templates, tz, tenant_slug, internal_key)
     with tabs[2]:
         page_outbox()
+    with tabs[3]:
+        page_customers()
+    with tabs[4]:
+        page_templates(templates)
+    with tabs[5]:
+        page_diagnostics(tenant_slug, internal_key)
 
 
 if __name__ == "__main__":
