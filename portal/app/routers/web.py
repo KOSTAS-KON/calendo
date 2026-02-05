@@ -105,6 +105,46 @@ def _require_login_for_tenant(request: Request, tenant_slug: str) -> RedirectRes
     return None
 
 
+
+def _subscription_status(db: Session, tenant_id: str) -> tuple[bool, datetime | None, str]:
+    """Return (active, until, plan_code) for the tenant subscription."""
+    try:
+        from app.models.licensing import Subscription, Plan
+        sub = (
+            db.query(Subscription)
+            .filter(Subscription.tenant_id == tenant_id)
+            .order_by(Subscription.ends_at.desc())
+            .first()
+        )
+        if not sub or not getattr(sub, "ends_at", None):
+            return False, None, ""
+        until = sub.ends_at
+        active = bool(until > datetime.utcnow() and str(getattr(sub, "status", "active")).lower() == "active")
+        plan_code = ""
+        try:
+            p = db.query(Plan).filter(Plan.id == sub.plan_id).first()
+            if p:
+                plan_code = getattr(p, "code", "") or ""
+        except Exception:
+            pass
+        return active, until, plan_code
+    except Exception:
+        return False, None, ""
+
+
+def _require_active_subscription(request: Request, db: Session, tenant_slug: str, tenant_id: str) -> RedirectResponse | None:
+    """Gate core app pages when subscription is inactive.
+
+    Users can still log in, and can access Clinic Setup -> License to renew.
+    """
+    active, _until, _plan = _subscription_status(db, tenant_id)
+    if active:
+        return None
+    rp = _rp(request)
+    # send them to License tab
+    return RedirectResponse(url=f"{rp}/settings?tenant={tenant_slug}&need=license", status_code=303)
+
+
 def _require_internal(request: Request) -> None:
     hdr_new = (request.headers.get("x-internal-key") or request.headers.get("X-Internal-Key") or "").strip()
     hdr_old = (request.headers.get("x-internal-token") or "").strip()
@@ -223,23 +263,31 @@ def _appointment_or_404(db: Session, tenant_id: str, child_id: int, appt_id: int
 # ----------------------------
 @router.get("/suite", response_class=HTMLResponse)
 def suite_default(request: Request, db: Session = Depends(get_db)):
-    redirect = _require_login_for_tenant(request, "default")
+    tenant_slug = "default"
+    redirect = _require_login_for_tenant(request, tenant_slug)
     if redirect:
         return redirect
-    return _render(request, "pages/suite.html", {}, db, tenant_slug="default")
 
+    tctx = resolve_tenant(db, request, tenant_slug=tenant_slug)
+    gate = _require_active_subscription(request, db, tenant_slug=tctx.tenant_slug, tenant_id=tctx.tenant_id)
+    if gate:
+        return gate
+
+    return _render(request, "pages/suite.html", {}, db, tenant_slug=tctx.tenant_slug)
 
 @router.get("/t/{tenant_slug}/suite", response_class=HTMLResponse)
 def suite_tenant(request: Request, tenant_slug: str, db: Session = Depends(get_db)):
     redirect = _require_login_for_tenant(request, tenant_slug)
     if redirect:
         return redirect
-    return _render(request, "pages/suite.html", {}, db, tenant_slug=tenant_slug)
 
+    tctx = resolve_tenant(db, request, tenant_slug=tenant_slug)
+    gate = _require_active_subscription(request, db, tenant_slug=tctx.tenant_slug, tenant_id=tctx.tenant_id)
+    if gate:
+        return gate
 
-# ----------------------------
-# Legacy compatibility routes
-# ----------------------------
+    return _render(request, "pages/suite.html", {}, db, tenant_slug=tctx.tenant_slug)
+
 @router.get("/billing")
 def billing_legacy(request: Request):
     tenant_slug = _session_tenant_slug(request)
@@ -278,6 +326,10 @@ def sms_outbox_view(request: Request, tenant: str = "default", db: Session = Dep
         return redirect
 
     tctx = resolve_tenant(db, request, tenant_slug=tenant)
+    gate = _require_active_subscription(request, db, tenant_slug=tctx.tenant_slug, tenant_id=tctx.tenant_id)
+    if gate:
+        return gate
+
     items = (
         db.query(SmsOutbox)
         .filter(SmsOutbox.tenant_id == tctx.tenant_id)
@@ -285,18 +337,21 @@ def sms_outbox_view(request: Request, tenant: str = "default", db: Session = Dep
         .limit(200)
         .all()
     )
-    return _render(
-        request,
+
+    rp = _rp(request)
+    toast = _toast_pop(request)
+    return templates.TemplateResponse(
         "pages/sms_outbox.html",
-        {"outbox": items},
-        db,
-        tenant_slug=tctx.tenant_slug,
+        {
+            "request": request,
+            "rp": rp,
+            "tenant_slug": tctx.tenant_slug,
+            "items": items,
+            "toast": toast,
+            "sms_app_url": _sms_link_for(request, tctx.tenant_slug),
+        },
     )
 
-
-# ----------------------------
-# Children list
-# ----------------------------
 @router.get("/children", response_class=HTMLResponse)
 def children_list(request: Request, tenant: str = "default", q: str = "", db: Session = Depends(get_db)):
     redirect = _require_login_for_tenant(request, tenant)
@@ -304,13 +359,16 @@ def children_list(request: Request, tenant: str = "default", q: str = "", db: Se
         return redirect
 
     tctx = resolve_tenant(db, request, tenant_slug=tenant)
+    gate = _require_active_subscription(request, db, tenant_slug=tctx.tenant_slug, tenant_id=tctx.tenant_id)
+    if gate:
+        return gate
 
     query = db.query(Child).filter(Child.tenant_id == tctx.tenant_id)
     if q:
         query = query.filter(Child.full_name.ilike(f"%{q}%"))
     children = query.order_by(Child.full_name.asc()).all()
 
-    # "at a glance" meta
+    # at-a-glance meta (optional)
     now = datetime.utcnow()
     next_appt: dict[int, datetime] = {}
     last_att: dict[int, str] = {}
@@ -388,7 +446,6 @@ def children_list(request: Request, tenant: str = "default", q: str = "", db: Se
         tenant_slug=tctx.tenant_slug,
     )
 
-
 @router.post("/children/create")
 def children_create(
     request: Request,
@@ -407,6 +464,9 @@ def children_create(
         return redirect
 
     tctx = resolve_tenant(db, request, tenant_slug=tenant)
+    gate = _require_active_subscription(request, db, tenant_slug=tctx.tenant_slug, tenant_id=tctx.tenant_id)
+    if gate:
+        return gate
 
     c = Child(
         tenant_id=tctx.tenant_id,
@@ -454,6 +514,9 @@ def child_update_parents(
         return redirect
 
     tctx = resolve_tenant(db, request, tenant_slug=tenant_slug)
+    gate = _require_active_subscription(request, db, tenant_slug=tctx.tenant_slug, tenant_id=tctx.tenant_id)
+    if gate:
+        return gate
     child = _child_or_404(db, tctx.tenant_id, child_id)
 
     # Only set if fields exist
@@ -485,6 +548,10 @@ def child_detail(request: Request, child_id: int, tab: str = "overview", db: Ses
         return redirect
 
     tctx = resolve_tenant(db, request, tenant_slug=tenant_slug)
+    gate = _require_active_subscription(request, db, tenant_slug=tctx.tenant_slug, tenant_id=tctx.tenant_id)
+    if gate:
+        return gate
+
     child = _child_or_404(db, tctx.tenant_id, child_id)
 
     appts = (
@@ -533,10 +600,6 @@ def child_detail(request: Request, child_id: int, tab: str = "overview", db: Ses
         },
     )
 
-
-# ----------------------------
-# POST: Create appointment
-# ----------------------------
 @router.post("/children/{child_id}/appointments/create")
 def child_create_appointment(
     request: Request,
@@ -554,6 +617,9 @@ def child_create_appointment(
         return redirect
 
     tctx = resolve_tenant(db, request, tenant_slug=tenant_slug)
+    gate = _require_active_subscription(request, db, tenant_slug=tctx.tenant_slug, tenant_id=tctx.tenant_id)
+    if gate:
+        return gate
     _child_or_404(db, tctx.tenant_id, child_id)
 
     sdt = _parse_dt(starts_at)
@@ -597,6 +663,9 @@ def appointment_set_attendance(
         return redirect
 
     tctx = resolve_tenant(db, request, tenant_slug=tenant_slug)
+    gate = _require_active_subscription(request, db, tenant_slug=tctx.tenant_slug, tenant_id=tctx.tenant_id)
+    if gate:
+        return gate
     _child_or_404(db, tctx.tenant_id, child_id)
 
     appt = _appointment_or_404(db, tctx.tenant_id, child_id, appointment_id)
@@ -634,6 +703,9 @@ def child_create_billing(
         return redirect
 
     tctx = resolve_tenant(db, request, tenant_slug=tenant_slug)
+    gate = _require_active_subscription(request, db, tenant_slug=tctx.tenant_slug, tenant_id=tctx.tenant_id)
+    if gate:
+        return gate
     _child_or_404(db, tctx.tenant_id, child_id)
 
     due = _parse_date(billing_due)
@@ -676,6 +748,9 @@ def billing_set_flag(
         return redirect
 
     tctx = resolve_tenant(db, request, tenant_slug=tenant_slug)
+    gate = _require_active_subscription(request, db, tenant_slug=tctx.tenant_slug, tenant_id=tctx.tenant_id)
+    if gate:
+        return gate
     _child_or_404(db, tctx.tenant_id, child_id)
 
     row = (
@@ -723,6 +798,9 @@ def appointment_upsert_note(
         return redirect
 
     tctx = resolve_tenant(db, request, tenant_slug=tenant_slug)
+    gate = _require_active_subscription(request, db, tenant_slug=tctx.tenant_slug, tenant_id=tctx.tenant_id)
+    if gate:
+        return gate
     _child_or_404(db, tctx.tenant_id, child_id)
     appt = _appointment_or_404(db, tctx.tenant_id, child_id, appointment_id)
 
@@ -757,6 +835,10 @@ def therapists_list(request: Request, tenant: str = "default", db: Session = Dep
         return redirect
 
     tctx = resolve_tenant(db, request, tenant_slug=tenant)
+    gate = _require_active_subscription(request, db, tenant_slug=tctx.tenant_slug, tenant_id=tctx.tenant_id)
+    if gate:
+        return gate
+
     therapists = (
         db.query(Therapist)
         .filter(Therapist.tenant_id == tctx.tenant_id)
@@ -764,7 +846,6 @@ def therapists_list(request: Request, tenant: str = "default", db: Session = Dep
         .all()
     )
     return _render(request, "pages/therapists.html", {"therapists": therapists}, db, tenant_slug=tctx.tenant_slug)
-
 
 @router.post("/therapists/create")
 def therapists_create(
@@ -781,6 +862,9 @@ def therapists_create(
         return redirect
 
     tctx = resolve_tenant(db, request, tenant_slug=tenant)
+    gate = _require_active_subscription(request, db, tenant_slug=tctx.tenant_slug, tenant_id=tctx.tenant_id)
+    if gate:
+        return gate
     t = Therapist(
         tenant_id=tctx.tenant_id,
         name=name.strip(),
@@ -879,6 +963,9 @@ def settings_update_clinic(
         return redirect
 
     tctx = resolve_tenant(db, request, tenant_slug=tenant)
+    gate = _require_active_subscription(request, db, tenant_slug=tctx.tenant_slug, tenant_id=tctx.tenant_id)
+    if gate:
+        return gate
     cs = _get_settings(db, tctx.tenant_id)
     cs.clinic_name = (clinic_name or "").strip()
     cs.address = (address or "").strip()
@@ -905,6 +992,9 @@ def settings_update_infobip(
         return redirect
 
     tctx = resolve_tenant(db, request, tenant_slug=tenant)
+    gate = _require_active_subscription(request, db, tenant_slug=tctx.tenant_slug, tenant_id=tctx.tenant_id)
+    if gate:
+        return gate
     cs = _get_settings(db, tctx.tenant_id)
     cs.sms_provider = "infobip"
     cs.infobip_base_url = (infobip_base_url or "").strip() or "https://api.infobip.com"
