@@ -1177,8 +1177,8 @@ def main() -> None:
         override_prefixes=["SMS_PROVIDER", "INFOBIP_", "APP_TIMEZONE", "CLINIC_"],
     )
 
-    st.set-ish_wide = True
     st.set_page_config(page_title="sms3 – Clinic Automation", layout="wide")
+
     inject_style()
 
     portal_applied = _apply_portal_settings_to_env()
