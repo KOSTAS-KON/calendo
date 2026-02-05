@@ -131,3 +131,11 @@
   .attach-upload{ border-radius: 16px; }
   .attach-row{ border-radius: 16px; }
 }
+
+/* =========================================================
+   Hide legacy plain-text menu (prevents duplicate nav)
+========================================================= */
+.legacy-menu, .menu-plain, #legacy-menu, .plain-menu, .top-plain-menu {
+  display: none !important;
+}
+

@@ -579,3 +579,37 @@ def attachment_delete(
 
     _toast_set(request, "success", "Attachment deleted")
     return RedirectResponse(url=f"/children/{child_id}?tab=attachments", status_code=303)
+
+# ----------------------------
+# Legacy compatibility routes (avoid 404s from old buttons)
+# ----------------------------
+
+@router.get("/sms-outbox")
+def legacy_sms_outbox(request: Request, tenant: str = "default"):
+    # old links: /sms-outbox?tenant=...
+    rp = _rp(request)
+    t = (tenant or "default").strip().lower()
+    return RedirectResponse(url=f"{rp}/t/{t}/suite#sms-outbox", status_code=303)
+
+
+@router.get("/billing")
+def legacy_billing(request: Request):
+    # old links: /billing (no tenant). Use session tenant.
+    rp = _rp(request)
+    t = _session_tenant_slug(request)
+    return RedirectResponse(url=f"{rp}/t/{t}/suite#billing", status_code=303)
+
+
+@router.get("/appointments")
+def legacy_appointments(request: Request):
+    rp = _rp(request)
+    t = _session_tenant_slug(request)
+    return RedirectResponse(url=f"{rp}/t/{t}/suite#appointments", status_code=303)
+
+
+@router.get("/timeline")
+def legacy_timeline(request: Request):
+    rp = _rp(request)
+    t = _session_tenant_slug(request)
+    return RedirectResponse(url=f"{rp}/children?tenant={t}", status_code=303)
+
