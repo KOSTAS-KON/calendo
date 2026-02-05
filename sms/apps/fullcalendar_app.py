@@ -1,14 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-Calendo SMS Calendar (Streamlit) — Restored + Move/Cancel SMS + One-click Send Now (Immediate)
-
-Added:
-- ✅ One-click buttons immediately SEND (enqueue + process_due_outbox)
-- ✅ Outbox can delete queued messages
-- ✅ Outbox shows reminder types (24h / 2h) naturally
-- ✅ Fix: outbox_state_df always has columns to avoid KeyError
-"""
-
 from __future__ import annotations
 
 import json
@@ -16,7 +6,6 @@ import os
 import re
 import uuid
 import urllib.request
-import urllib.error
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -70,31 +59,31 @@ def _require_sso() -> tuple[str, bool]:
 
     secret = (os.getenv("SSO_SHARED_SECRET") or os.getenv("SESSION_SECRET") or os.getenv("SECRET_KEY") or "").strip()
     if not secret:
-        st.error("Security is not configured: missing SSO_SHARED_SECRET. Please set it in the environment.")
+        st.error("Security is not configured: missing SSO_SHARED_SECRET.")
         st.stop()
 
     max_age = int(os.getenv("SSO_MAX_AGE_SECONDS") or "900")
     ser = URLSafeTimedSerializer(secret_key=secret, salt="calendo-sms-sso-v1")
 
     if not sso:
-        st.warning("Please open the SMS Calendar from the Therapy Portal (missing access token).")
+        st.warning("Open SMS Calendar from Therapy Portal (missing access token).")
         st.stop()
 
     try:
         payload = ser.loads(sso, max_age=max_age)
     except SignatureExpired:
-        st.warning("Your access link has expired. Please open the SMS Calendar again from the Therapy Portal.")
+        st.warning("Access link expired. Open again from Therapy Portal.")
         st.stop()
     except BadSignature:
-        st.error("Invalid access token. Please open the SMS Calendar again from the Therapy Portal.")
+        st.error("Invalid access token. Open again from Therapy Portal.")
         st.stop()
     except Exception:
-        st.error("Access token validation failed. Please try again from the Therapy Portal.")
+        st.error("Access token validation failed.")
         st.stop()
 
     token_tenant = str((payload or {}).get("tenant") or "").strip().lower()
     if token_tenant and token_tenant != tenant:
-        st.error("Tenant mismatch. Please open the SMS Calendar again from the Therapy Portal.")
+        st.error("Tenant mismatch. Open again from Therapy Portal.")
         st.stop()
 
     st.session_state["_sso_ok"] = True
@@ -106,47 +95,14 @@ TENANT_SLUG, _ = _require_sso()
 
 
 # =============================================================================
-# PATHS / SCHEMAS
+# PATHS (Outbox is local; appointments are in Portal)
 # =============================================================================
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / "data"
-CALENDAR_DIR = DATA_DIR / "calendar"
 OUTPUT_DIR = DATA_DIR / "output"
-
-APPOINTMENTS_CSV = CALENDAR_DIR / "appointments.csv"
-CUSTOMERS_CSV = CALENDAR_DIR / "customers.csv"
-TEMPLATES_JSON = CALENDAR_DIR / "templates.json"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 OUTBOX_JSONL = OUTPUT_DIR / "outbox.jsonl"
-
-APPT_HEADER = [
-    "appointment_id",
-    "customer_id",
-    "customer_name",
-    "customer_phone",
-    "start_iso",
-    "end_iso",
-    "status",
-    "service",
-    "notes",
-    "created_at_iso",
-    "updated_at_iso",
-    "pref_send_new_now",
-    "pref_reminder_day",
-    "pref_reminder_2h",
-    "pref_send_moved_now",
-    "pref_send_cancel_now",
-]
-
-CUSTOMER_HEADER = [
-    "customer_id",
-    "name",
-    "phone",
-    "notes",
-    "consent",
-    "created_at_iso",
-    "updated_at_iso",
-]
 
 DEFAULT_TEMPLATES = {
     "new": "New appointment for {name} on {date} at {time}.",
@@ -158,7 +114,7 @@ DEFAULT_TEMPLATES = {
 
 
 # =============================================================================
-# HELPERS
+# Helpers
 # =============================================================================
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
@@ -170,16 +126,16 @@ def iso_utc(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).isoformat()
 
 
-def parse_iso_any(dt_s: Any) -> Optional[datetime]:
-    if not dt_s:
-        return None
-    s = str(dt_s).strip()
+def parse_iso_any(s: Any) -> Optional[datetime]:
     if not s:
         return None
+    t = str(s).strip()
+    if not t:
+        return None
     try:
-        if s.endswith("Z"):
-            s = s[:-1] + "+00:00"
-        dt = datetime.fromisoformat(s)
+        if t.endswith("Z"):
+            t = t[:-1] + "+00:00"
+        dt = datetime.fromisoformat(t)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt
@@ -212,8 +168,7 @@ def to_utc(dt: datetime, tz: Any) -> datetime:
 def normalize_phone(phone: str) -> str:
     if not phone:
         return ""
-    p = str(phone).strip()
-    return re.sub(r"[^\d+]", "", p)
+    return re.sub(r"[^\d+]", "", str(phone).strip())
 
 
 def to_e164_heuristic(phone: str, default_cc: str = "30") -> str:
@@ -232,72 +187,116 @@ def to_e164_heuristic(phone: str, default_cc: str = "30") -> str:
     return p
 
 
-def ensure_dirs() -> None:
-    CALENDAR_DIR.mkdir(parents=True, exist_ok=True)
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def ensure_csv(path: Path, header: List[str]) -> None:
-    if path.exists():
-        return
-    pd.DataFrame(columns=header).to_csv(path, index=False, encoding="utf-8")
-
-
-def read_csv_df(path: Path, header: List[str]) -> pd.DataFrame:
-    ensure_csv(path, header)
-    df = pd.read_csv(path, dtype=str, keep_default_na=False)
-    for c in header:
-        if c not in df.columns:
-            df[c] = ""
-    return df[header]
-
-
-def write_csv_df(path: Path, df: pd.DataFrame, header: List[str]) -> None:
-    for c in header:
-        if c not in df.columns:
-            df[c] = ""
-    df[header].to_csv(path, index=False, encoding="utf-8")
-
-
-def load_templates() -> Dict[str, str]:
-    if not TEMPLATES_JSON.exists():
-        TEMPLATES_JSON.write_text(json.dumps(DEFAULT_TEMPLATES, ensure_ascii=False, indent=2), encoding="utf-8")
-        return dict(DEFAULT_TEMPLATES)
-    try:
-        data = json.loads(TEMPLATES_JSON.read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            return dict(DEFAULT_TEMPLATES)
-        for k, v in DEFAULT_TEMPLATES.items():
-            data.setdefault(k, v)
-        return {str(k): str(v) for k, v in data.items()}
-    except Exception:
-        return dict(DEFAULT_TEMPLATES)
-
-
-def save_templates(tpls: Dict[str, str]) -> None:
-    TEMPLATES_JSON.write_text(json.dumps(tpls, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
 def render_tpl(tpl: str, name: str, start_local: datetime) -> str:
     return (
-        tpl.replace("{name}", name or "")
+        (tpl or "")
+        .replace("{name}", name or "")
         .replace("{date}", start_local.strftime("%Y-%m-%d"))
         .replace("{time}", start_local.strftime("%H:%M"))
     )
 
 
-def _i01(v: Any, default: int = 0) -> int:
-    if v is None or str(v).strip() == "":
-        return default
+# =============================================================================
+# Portal API helpers
+# =============================================================================
+def _portal_base_url() -> str:
+    for k in ("PORTAL_APP_URL", "PORTAL_BASE_URL", "THERAPY_PORTAL_URL"):
+        v = (os.getenv(k) or "").strip().rstrip("/")
+        if v:
+            return v
+    return ""
+
+
+def _fetch_portal_json(path: str, headers: Dict[str, str] | None = None) -> Dict[str, Any] | None:
+    base = _portal_base_url()
+    if not base:
+        return None
+    url = base + path
     try:
-        return 1 if int(v) == 1 else 0
+        req = urllib.request.Request(url, headers=headers or {})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            raw = resp.read().decode("utf-8")
+            return json.loads(raw)
     except Exception:
-        s = str(v).strip().lower()
-        return 1 if s in ("true", "yes", "on") else 0
+        return None
+
+
+def portal_get_children(tenant_slug: str, internal_key: str) -> list[dict]:
+    data = _fetch_portal_json(f"/api/internal/children?tenant={tenant_slug}", headers={"X-Internal-Key": internal_key}) or {}
+    return list((data.get("children") or [])) if isinstance(data, dict) else []
+
+
+def portal_get_appointments(tenant_slug: str, internal_key: str, days: int = 60) -> list[dict]:
+    data = _fetch_portal_json(f"/api/internal/appointments?tenant={tenant_slug}&days={days}", headers={"X-Internal-Key": internal_key}) or {}
+    return list((data.get("appointments") or [])) if isinstance(data, dict) else []
+
+
+def portal_create_appointment(
+    tenant_slug: str,
+    internal_key: str,
+    child_id: int,
+    starts_at_iso: str,
+    ends_at_iso: str,
+    therapist_name: str,
+    procedure: str,
+) -> Optional[int]:
+    base = _portal_base_url()
+    if not base:
+        return None
+    url = base + "/api/internal/appointments/create"
+    try:
+        r = requests.post(
+            url,
+            headers={"X-Internal-Key": internal_key},
+            data={
+                "tenant": tenant_slug,
+                "child_id": str(child_id),
+                "starts_at_iso": starts_at_iso,
+                "ends_at_iso": ends_at_iso,
+                "therapist_name": therapist_name,
+                "procedure": procedure,
+            },
+            timeout=10,
+        )
+        if r.status_code != 200:
+            return None
+        j = r.json()
+        return int(j.get("appointment_id"))
+    except Exception:
+        return None
+
+
+def portal_move_appointment(tenant_slug: str, internal_key: str, appointment_id: int, starts_at_iso: str, ends_at_iso: str) -> bool:
+    base = _portal_base_url()
+    if not base:
+        return False
+    url = base + f"/api/internal/appointments/{appointment_id}/move"
+    try:
+        r = requests.post(
+            url,
+            headers={"X-Internal-Key": internal_key},
+            data={"tenant": tenant_slug, "starts_at_iso": starts_at_iso, "ends_at_iso": ends_at_iso},
+            timeout=10,
+        )
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
+def portal_cancel_appointment(tenant_slug: str, internal_key: str, appointment_id: int) -> bool:
+    base = _portal_base_url()
+    if not base:
+        return False
+    url = base + f"/api/internal/appointments/{appointment_id}/cancel"
+    try:
+        r = requests.post(url, headers={"X-Internal-Key": internal_key}, data={"tenant": tenant_slug}, timeout=10)
+        return r.status_code == 200
+    except Exception:
+        return False
 
 
 # =============================================================================
-# OUTBOX
+# Outbox (local)
 # =============================================================================
 OUTBOX_COLUMNS = [
     "outbox_id",
@@ -316,7 +315,6 @@ OUTBOX_COLUMNS = [
 
 
 def outbox_jsonl_ensure() -> None:
-    ensure_dirs()
     if not OUTBOX_JSONL.exists():
         OUTBOX_JSONL.write_text("", encoding="utf-8")
 
@@ -330,45 +328,39 @@ def outbox_jsonl_append(obj: Dict[str, Any]) -> None:
 def outbox_state_df() -> pd.DataFrame:
     outbox_jsonl_ensure()
     latest: Dict[str, Dict[str, Any]] = {}
-    with OUTBOX_JSONL.open("r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                ev = json.loads(line)
-            except Exception:
-                continue
-            oid = str(ev.get("outbox_id") or "").strip()
-            if not oid:
-                continue
-            prev = latest.get(oid, {})
-            merged = dict(prev)
-            merged.update(ev)
-            latest[oid] = merged
+    for line in OUTBOX_JSONL.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            ev = json.loads(line)
+        except Exception:
+            continue
+        oid = str(ev.get("outbox_id") or "").strip()
+        if not oid:
+            continue
+        merged = dict(latest.get(oid, {}))
+        merged.update(ev)
+        latest[oid] = merged
+
+    if not latest:
+        return pd.DataFrame(columns=OUTBOX_COLUMNS)
 
     rows = []
     for oid, r in latest.items():
-        rows.append(
-            {
-                "outbox_id": oid,
-                "scheduled_for_iso": r.get("scheduled_for_iso", ""),
-                "appointment_id": r.get("appointment_id", ""),
-                "to": r.get("to", ""),
-                "message_type": r.get("message_type", ""),
-                "body": r.get("body", ""),
-                "status": r.get("status", ""),
-                "provider": r.get("provider", ""),
-                "provider_msgid": r.get("provider_msgid", ""),
-                "provider_status": r.get("provider_status", ""),
-                "error": r.get("error", ""),
-                "dedupe_key": r.get("dedupe_key", ""),
-            }
-        )
-
-    if not rows:
-        return pd.DataFrame(columns=OUTBOX_COLUMNS)
-
+        rows.append({
+            "outbox_id": oid,
+            "scheduled_for_iso": r.get("scheduled_for_iso",""),
+            "appointment_id": r.get("appointment_id",""),
+            "to": r.get("to",""),
+            "message_type": r.get("message_type",""),
+            "body": r.get("body",""),
+            "status": r.get("status",""),
+            "provider": r.get("provider",""),
+            "provider_msgid": r.get("provider_msgid",""),
+            "provider_status": r.get("provider_status",""),
+            "error": r.get("error",""),
+            "dedupe_key": r.get("dedupe_key",""),
+        })
     df = pd.DataFrame(rows)
     for c in OUTBOX_COLUMNS:
         if c not in df.columns:
@@ -382,73 +374,46 @@ def _dedupe_key(appt_id: str, message_type: str, when_iso: str) -> str:
 
 def outbox_enqueue(appointment_id: str, to_phone: str, body: str, message_type: str, when_utc: datetime) -> bool:
     when_iso = iso_utc(when_utc)
-    dk = _dedupe_key(appointment_id, message_type, when_iso)
+    dk = _dedupe_key(str(appointment_id), message_type, when_iso)
     df = outbox_state_df()
     if not df.empty and (df["dedupe_key"] == dk).any():
         return False
-
-    outbox_jsonl_append(
-        {
-            "outbox_id": str(uuid.uuid4()),
-            "ts_iso": iso_utc(now_utc()),
-            "scheduled_for_iso": when_iso,
-            "appointment_id": appointment_id,
-            "to": to_e164_heuristic(to_phone),
-            "message_type": message_type,
-            "body": body,
-            "status": "queued",
-            "provider": "",
-            "provider_msgid": "",
-            "provider_status": "",
-            "error": "",
-            "dedupe_key": dk,
-        }
-    )
+    outbox_jsonl_append({
+        "outbox_id": str(uuid.uuid4()),
+        "ts_iso": iso_utc(now_utc()),
+        "scheduled_for_iso": when_iso,
+        "appointment_id": str(appointment_id),
+        "to": to_e164_heuristic(to_phone),
+        "message_type": message_type,
+        "body": body,
+        "status": "queued",
+        "provider": "",
+        "provider_msgid": "",
+        "provider_status": "",
+        "error": "",
+        "dedupe_key": dk,
+    })
     return True
 
 
 def outbox_mark(outbox_id: str, *, status: str, provider: str, provider_msgid: str = "", provider_status: str = "", error: str = "") -> None:
-    outbox_jsonl_append(
-        {
-            "outbox_id": outbox_id,
-            "ts_iso": iso_utc(now_utc()),
-            "status": status,
-            "provider": provider,
-            "provider_msgid": provider_msgid,
-            "provider_status": provider_status,
-            "error": error,
-        }
-    )
+    outbox_jsonl_append({
+        "outbox_id": outbox_id,
+        "ts_iso": iso_utc(now_utc()),
+        "status": status,
+        "provider": provider,
+        "provider_msgid": provider_msgid,
+        "provider_status": provider_status,
+        "error": error,
+    })
 
 
 def outbox_delete(outbox_id: str) -> None:
     outbox_mark(outbox_id, status="deleted", provider="user", error="deleted_by_user")
 
 
-def outbox_delete_future_for_appt(appointment_id: str, message_types: Optional[List[str]] = None) -> int:
-    df = outbox_state_df()
-    if df.empty:
-        return 0
-    now = now_utc()
-    q = df[df["status"] == "queued"].copy()
-    q = q[q["appointment_id"].astype(str) == str(appointment_id)]
-    if message_types:
-        q = q[q["message_type"].isin(message_types)]
-
-    def _is_future(s: str) -> bool:
-        dt = parse_iso_any(s)
-        return bool(dt and dt.astimezone(timezone.utc) > now)
-
-    q = q[q["scheduled_for_iso"].apply(_is_future)]
-    count = 0
-    for oid in q["outbox_id"].tolist():
-        outbox_mark(str(oid), status="deleted", provider="system", error="superseded")
-        count += 1
-    return count
-
-
 # =============================================================================
-# Provider
+# Sending (Infobip/mock)
 # =============================================================================
 def _normalize_infobip_base_url(raw: str) -> str:
     s = (raw or "").strip()
@@ -463,7 +428,6 @@ def _effective_provider() -> str:
     prov = (os.getenv("SMS_PROVIDER") or "").strip().lower()
     if prov in ("mock", "infobip"):
         return prov
-
     base = _normalize_infobip_base_url(os.getenv("INFOBIP_BASE_URL") or "")
     key = (os.getenv("INFOBIP_API_KEY") or "").strip()
     frm = (os.getenv("INFOBIP_FROM") or "").strip()
@@ -477,8 +441,7 @@ def _send_sms_infobip(to_e164: str, body: str) -> Tuple[str, str]:
     key = (os.getenv("INFOBIP_API_KEY") or "").strip()
     frm = (os.getenv("INFOBIP_FROM") or "").strip()
     if not (base and key and frm):
-        raise RuntimeError("Infobip not configured (INFOBIP_BASE_URL/API_KEY/FROM missing)")
-
+        raise RuntimeError("Infobip not configured")
     url = f"{base}/sms/2/text/advanced"
     headers = {"Authorization": f"App {key}", "Content-Type": "application/json", "Accept": "application/json"}
     payload = {"messages": [{"from": frm, "destinations": [{"to": to_e164}], "text": body}]}
@@ -500,8 +463,7 @@ def _send_sms_infobip(to_e164: str, body: str) -> Tuple[str, str]:
 
 
 def _send_sms_mock(to_e164: str, body: str) -> Tuple[str, str]:
-    msgid = "mock_" + uuid.uuid4().hex[:12]
-    return msgid, "MOCK"
+    return "mock_" + uuid.uuid4().hex[:12], "MOCK"
 
 
 def _send_via_provider(to_e164: str, body: str) -> Tuple[str, str, str]:
@@ -517,7 +479,6 @@ def process_due_outbox(limit: int = 200) -> Tuple[int, int, int]:
     df = outbox_state_df()
     if df.empty:
         return (0, 0, 0)
-
     now = now_utc()
     due = df[df["status"] == "queued"].copy()
 
@@ -545,150 +506,187 @@ def process_due_outbox(limit: int = 200) -> Tuple[int, int, int]:
     return (sent, failed, len(due))
 
 
-# =============================================================================
-# Appointment ops
-# =============================================================================
-def _queue_reminders_for_appt(appt_row: Dict[str, str], templates: Dict[str, str], tz: Any) -> None:
-    appt_id = appt_row["appointment_id"]
-    start_utc = parse_iso_any(appt_row["start_iso"]) or now_utc()
-    start_local = to_local(start_utc, tz)
-
-    if _i01(appt_row.get("pref_reminder_day"), 0) == 1:
-        when = start_utc - timedelta(hours=24)
-        if when > now_utc():
-            body = render_tpl(templates["reminder_day"], appt_row["customer_name"], start_local)
-            outbox_enqueue(appt_id, appt_row["customer_phone"], body, "reminder_day", when)
-
-    if _i01(appt_row.get("pref_reminder_2h"), 0) == 1:
-        when = start_utc - timedelta(hours=2)
-        if when > now_utc():
-            body = render_tpl(templates["reminder_2h"], appt_row["customer_name"], start_local)
-            outbox_enqueue(appt_id, appt_row["customer_phone"], body, "reminder_2h", when)
-
-
-def _immediate_send_feedback() -> None:
+def _send_immediately() -> None:
     sent, failed, due = process_due_outbox(limit=50)
     if due == 0:
         st.info("Nothing due to send.")
     elif failed == 0:
-        st.success(f"Sent {sent} SMS (provider={_effective_provider()}).")
+        st.success(f"Sent {sent} SMS.")
     else:
-        st.warning(f"Processed due={due}: sent={sent}, failed={failed}. Check Outbox for errors.")
+        st.warning(f"Processed due={due}: sent={sent}, failed={failed}. Check Outbox error.")
 
 
-def _send_now_buttons_for_appt(appt_row: Dict[str, str], templates: Dict[str, str], tz: Any) -> None:
-    appt_id = appt_row["appointment_id"]
-    start_utc = parse_iso_any(appt_row["start_iso"]) or now_utc()
+# =============================================================================
+# UI
+# =============================================================================
+def page_calendar(templates: Dict[str, str], tz: Any, tenant_slug: str, internal_key: str) -> None:
+    st.subheader("Calendar")
+
+    view = st.selectbox(
+        "View",
+        options=[("Month", "dayGridMonth"), ("Week", "timeGridWeek"), ("Day", "timeGridDay")],
+        format_func=lambda x: x[0],
+        key="cal_view",
+    )[1]
+
+    children = portal_get_children(tenant_slug, internal_key) if internal_key else []
+    appts = portal_get_appointments(tenant_slug, internal_key, days=60) if internal_key else []
+
+    with st.expander("➕ New appointment (creates in Portal)", expanded=False):
+        if not children:
+            st.warning("No children found in Portal for this tenant.")
+        else:
+            child_map = {f"{c['full_name']} (#{c['id']})": c for c in children}
+            child_label = st.selectbox("Child", list(child_map.keys()), key="new_child")
+            procedure = st.text_input("Procedure", value="Session", key="new_proc")
+            therapist = st.text_input("Therapist", value="", key="new_ther")
+            start_local = st.datetime_input("Start (local)", value=datetime.now(tz).replace(second=0, microsecond=0) + timedelta(hours=1), key="new_start")
+            duration = st.number_input("Duration (min)", min_value=15, max_value=240, value=45, step=15, key="new_dur")
+
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                send_now = st.checkbox("Send SMS now", value=True, key="new_send_now")
+            with c2:
+                rem_day = st.checkbox("Reminder 24h before", value=False, key="new_rem_day")
+            with c3:
+                rem_2h = st.checkbox("Reminder 2h before", value=False, key="new_rem_2h")
+
+            if st.button("Create in Portal", key="create_portal_btn"):
+                child = child_map[child_label]
+                start_utc = to_utc(start_local, tz)
+                end_utc = start_utc + timedelta(minutes=int(duration))
+
+                appt_id = portal_create_appointment(
+                    tenant_slug, internal_key, int(child["id"]),
+                    iso_utc(start_utc), iso_utc(end_utc),
+                    therapist, procedure
+                )
+                if not appt_id:
+                    st.error("Failed to create appointment in Portal.")
+                else:
+                    # Messaging: queue/send
+                    to_phone = child.get("parent1_phone") or child.get("parent2_phone") or ""
+                    if send_now:
+                        body = render_tpl(templates["new"], child["full_name"], start_local)
+                        outbox_enqueue(str(appt_id), to_phone, body, "new", now_utc())
+                        _send_immediately()
+
+                    if rem_day:
+                        when = start_utc - timedelta(hours=24)
+                        if when > now_utc():
+                            body = render_tpl(templates["reminder_day"], child["full_name"], start_local)
+                            outbox_enqueue(str(appt_id), to_phone, body, "reminder_day", when)
+
+                    if rem_2h:
+                        when = start_utc - timedelta(hours=2)
+                        if when > now_utc():
+                            body = render_tpl(templates["reminder_2h"], child["full_name"], start_local)
+                            outbox_enqueue(str(appt_id), to_phone, body, "reminder_2h", when)
+
+                    st.success("Created in Portal. Calendar will refresh.")
+                    st.rerun()
+
+    if st_calendar is None:
+        st.info("streamlit_calendar not installed; use Appointments tab.")
+        return
+
+    events = []
+    for a in appts:
+        title = f"{a.get('child_name','')} • {a.get('procedure','Session')}"
+        if a.get("status") == "cancelled":
+            title = "❌ " + title
+        events.append({
+            "id": str(a["id"]),
+            "title": title,
+            "start": a["starts_at"],
+            "end": a["ends_at"],
+            "editable": a.get("status") != "cancelled",
+        })
+
+    cal = st_calendar({
+        "initialView": view,
+        "height": 720,
+        "headerToolbar": {"left": "prev,next today", "center": "title", "right": "dayGridMonth,timeGridWeek,timeGridDay"},
+        "editable": True,
+        "eventDurationEditable": True,
+        "eventStartEditable": True,
+        "events": events,
+    })
+
+    if cal and isinstance(cal, dict):
+        if cal.get("eventDrop"):
+            ev = cal["eventDrop"]["event"]
+            ok = portal_move_appointment(tenant_slug, internal_key, int(ev["id"]), ev["start"], ev.get("end") or ev["start"])
+            if ok:
+                st.success("Moved in Portal.")
+                st.rerun()
+            else:
+                st.error("Move failed.")
+
+        if cal.get("eventResize"):
+            ev = cal["eventResize"]["event"]
+            ok = portal_move_appointment(tenant_slug, internal_key, int(ev["id"]), ev["start"], ev.get("end") or ev["start"])
+            if ok:
+                st.success("Resized in Portal.")
+                st.rerun()
+            else:
+                st.error("Resize failed.")
+
+
+def page_appointments(templates: Dict[str, str], tz: Any, tenant_slug: str, internal_key: str) -> None:
+    st.subheader("Appointments (Portal)")
+
+    appts = portal_get_appointments(tenant_slug, internal_key, days=60) if internal_key else []
+    if not appts:
+        st.info("No appointments found (or internal key missing).")
+        return
+
+    # show table
+    df = pd.DataFrame(appts)
+    st.dataframe(df, width="stretch")
+
+    appt_ids = [str(a["id"]) for a in appts]
+    appt_id = st.selectbox("Appointment", appt_ids, key="appt_pick")
+    a = next(x for x in appts if str(x["id"]) == appt_id)
+
+    start_utc = parse_iso_any(a["starts_at"]) or now_utc()
     start_local = to_local(start_utc, tz)
 
+    st.markdown("### One-click send now (immediate)")
     c1, c2, c3 = st.columns(3)
     with c1:
-        if st.button("📨 Send NEW now", key=f"send_new_{appt_id}"):
-            body = render_tpl(templates["new"], appt_row["customer_name"], start_local)
-            outbox_enqueue(appt_id, appt_row["customer_phone"], body, "new", now_utc())
-            _immediate_send_feedback()
+        if st.button("📨 NEW now", key="btn_new_now"):
+            body = render_tpl(templates["new"], a["child_name"], start_local)
+            outbox_enqueue(appt_id, a.get("to_phone",""), body, "new", now_utc()); _send_immediately()
     with c2:
-        if st.button("🔁 Send MOVED now", key=f"send_moved_{appt_id}"):
-            body = render_tpl(templates["moved"], appt_row["customer_name"], start_local)
-            outbox_enqueue(appt_id, appt_row["customer_phone"], body, "moved", now_utc())
-            _immediate_send_feedback()
+        if st.button("🔁 MOVED now", key="btn_moved_now"):
+            body = render_tpl(templates["moved"], a["child_name"], start_local)
+            outbox_enqueue(appt_id, a.get("to_phone",""), body, "moved", now_utc()); _send_immediately()
     with c3:
-        if st.button("❌ Send CANCELLED now", key=f"send_cancel_{appt_id}"):
-            body = render_tpl(templates["cancelled"], appt_row["customer_name"], start_local)
-            outbox_enqueue(appt_id, appt_row["customer_phone"], body, "cancelled", now_utc())
-            _immediate_send_feedback()
+        if st.button("❌ CANCELLED now", key="btn_cancel_now"):
+            body = render_tpl(templates["cancelled"], a["child_name"], start_local)
+            outbox_enqueue(appt_id, a.get("to_phone",""), body, "cancelled", now_utc()); _send_immediately()
 
+    st.markdown("### Move / cancel in Portal")
+    new_start_local = st.datetime_input("New start (local)", value=start_local, key="mv_start")
+    dur = st.number_input("Duration (min)", min_value=15, max_value=240, value=45, step=15, key="mv_dur")
+    if st.button("Apply move", key="mv_apply"):
+        ns = to_utc(new_start_local, tz)
+        ne = ns + timedelta(minutes=int(dur))
+        ok = portal_move_appointment(tenant_slug, internal_key, int(appt_id), iso_utc(ns), iso_utc(ne))
+        if ok:
+            st.success("Moved in Portal.")
+            st.rerun()
+        else:
+            st.error("Move failed.")
 
-def _move_appt(appt_id: str, new_start_iso: str, new_end_iso: str, templates: Dict[str, str], tz: Any) -> None:
-    adf = read_csv_df(APPOINTMENTS_CSV, APPT_HEADER)
-    rows = adf.index[adf["appointment_id"] == appt_id].tolist()
-    if not rows:
-        return
-    i = rows[0]
-    if adf.at[i, "status"] == "cancelled":
-        return
-
-    outbox_delete_future_for_appt(appt_id, message_types=["reminder_day", "reminder_2h"])
-
-    adf.at[i, "start_iso"] = new_start_iso
-    adf.at[i, "end_iso"] = new_end_iso
-    adf.at[i, "updated_at_iso"] = iso_utc(now_utc())
-    write_csv_df(APPOINTMENTS_CSV, adf, APPT_HEADER)
-
-    appt_row = adf.loc[i].to_dict()
-    start_utc = parse_iso_any(appt_row["start_iso"]) or now_utc()
-    start_local = to_local(start_utc, tz)
-
-    if _i01(appt_row.get("pref_send_moved_now"), 1) == 1:
-        body = render_tpl(templates["moved"], appt_row["customer_name"], start_local)
-        outbox_enqueue(appt_id, appt_row["customer_phone"], body, "moved", now_utc())
-
-    _queue_reminders_for_appt(appt_row, templates, tz)
-
-
-def _cancel_appt(appt_id: str, templates: Dict[str, str], tz: Any) -> None:
-    adf = read_csv_df(APPOINTMENTS_CSV, APPT_HEADER)
-    rows = adf.index[adf["appointment_id"] == appt_id].tolist()
-    if not rows:
-        return
-    i = rows[0]
-    if adf.at[i, "status"] == "cancelled":
-        return
-
-    adf.at[i, "status"] = "cancelled"
-    adf.at[i, "updated_at_iso"] = iso_utc(now_utc())
-    write_csv_df(APPOINTMENTS_CSV, adf, APPT_HEADER)
-
-    outbox_delete_future_for_appt(appt_id, message_types=["reminder_day", "reminder_2h", "new", "moved"])
-
-    appt_row = adf.loc[i].to_dict()
-    start_utc = parse_iso_any(appt_row["start_iso"]) or now_utc()
-    start_local = to_local(start_utc, tz)
-
-    if _i01(appt_row.get("pref_send_cancel_now"), 1) == 1:
-        body = render_tpl(templates["cancelled"], appt_row["customer_name"], start_local)
-        outbox_enqueue(appt_id, appt_row["customer_phone"], body, "cancelled", now_utc())
-
-
-# =============================================================================
-# Pages
-# =============================================================================
-def page_appointments(templates: Dict[str, str], tz: Any) -> None:
-    st.subheader("Appointments")
-    adf = read_csv_df(APPOINTMENTS_CSV, APPT_HEADER)
-    if adf.empty:
-        st.info("No appointments.")
-        return
-
-    adf["_start_dt"] = adf["start_iso"].apply(parse_iso_any)
-    adf = adf.sort_values(by="_start_dt", ascending=False).drop(columns=["_start_dt"], errors="ignore")
-
-    st.dataframe(adf[["appointment_id", "customer_name", "customer_phone", "start_iso", "end_iso", "status", "service"]], width="stretch")
-
-    appt_ids = adf["appointment_id"].tolist()
-    appt_id = st.selectbox("Appointment", appt_ids, key="appt_select_main")
-    row = adf[adf["appointment_id"] == appt_id].iloc[0].to_dict()
-
-    st.markdown("### One-click live SMS (sends immediately)")
-    _send_now_buttons_for_appt(row, templates, tz)
-
-    st.markdown("### Manual move")
-    new_start_local = st.datetime_input("New start (local)", value=datetime.now(tz).replace(second=0, microsecond=0) + timedelta(hours=2), key="move_new_start")
-    new_duration = st.number_input("New duration (min)", min_value=15, max_value=240, value=45, step=15, key="move_new_dur")
-    if st.button("Apply move", key="apply_move_btn"):
-        new_start_utc = to_utc(new_start_local, tz)
-        new_end_utc = new_start_utc + timedelta(minutes=int(new_duration))
-        _move_appt(appt_id, iso_utc(new_start_utc), iso_utc(new_end_utc), templates, tz)
-        st.success("Moved; SMS/reminders updated.")
-        _immediate_send_feedback()
-        st.rerun()
-
-    st.markdown("### Cancel")
-    if st.button("Cancel appointment", key="cancel_btn"):
-        _cancel_appt(appt_id, templates, tz)
-        st.success("Cancelled; SMS updated.")
-        _immediate_send_feedback()
-        st.rerun()
+    if st.button("Cancel appointment", key="mv_cancel"):
+        ok = portal_cancel_appointment(tenant_slug, internal_key, int(appt_id))
+        if ok:
+            st.success("Cancelled in Portal.")
+            st.rerun()
+        else:
+            st.error("Cancel failed.")
 
 
 def page_outbox() -> None:
@@ -698,17 +696,21 @@ def page_outbox() -> None:
         st.info("Outbox is empty.")
         return
 
+    c1, c2 = st.columns([1, 2])
+    with c1:
+        if st.button("Process due now", key="proc_due"):
+            sent, failed, due = process_due_outbox()
+            st.success(f"Processed due={due}: sent={sent}, failed={failed}.")
+
     st.dataframe(df.sort_values(by="scheduled_for_iso", ascending=False), width="stretch")
 
     queued = df[df["status"] == "queued"].copy()
-    st.markdown("### Delete queued message")
     if queued.empty:
-        st.info("No queued messages to delete.")
         return
 
-    choices = [f"{r['outbox_id']} | {r['message_type']} | {r['scheduled_for_iso']} | {r['to']}" for _, r in queued.iterrows()]
-    pick = st.selectbox("Queued message", choices, key="outbox_delete_pick")
-    if st.button("🗑 Delete selected", key="outbox_delete_btn"):
+    st.markdown("### Delete queued message")
+    pick = st.selectbox("Queued", [f"{r['outbox_id']} | {r['message_type']} | {r['scheduled_for_iso']}" for _, r in queued.iterrows()], key="del_pick")
+    if st.button("🗑 Delete", key="del_btn"):
         oid = pick.split("|")[0].strip()
         outbox_delete(oid)
         st.success("Deleted (marked).")
@@ -720,18 +722,25 @@ def page_outbox() -> None:
 # =============================================================================
 def main() -> None:
     st.set_page_config(page_title="Calendo SMS", layout="wide")
+
+    tenant_slug = (os.getenv("TENANT_SLUG") or TENANT_SLUG or "default").strip().lower()
+    internal_key = (os.getenv("INTERNAL_API_KEY") or "").strip()
+
+    templates = DEFAULT_TEMPLATES
     tz = get_app_tz()
-    templates = load_templates()
 
-    ensure_dirs()
-    ensure_csv(CUSTOMERS_CSV, CUSTOMER_HEADER)
-    ensure_csv(APPOINTMENTS_CSV, APPT_HEADER)
-    outbox_jsonl_ensure()
+    st.title(f"SMS Calendar (Portal-synced) — tenant: {tenant_slug}")
 
-    tabs = st.tabs(["📋 Appointments", "📨 Outbox"])
+    if not internal_key:
+        st.error("INTERNAL_API_KEY missing on SMS service. Cannot sync with Portal.")
+        st.stop()
+
+    tabs = st.tabs(["📅 Calendar", "📋 Appointments", "📨 Outbox"])
     with tabs[0]:
-        page_appointments(templates, tz)
+        page_calendar(templates, tz, tenant_slug, internal_key)
     with tabs[1]:
+        page_appointments(templates, tz, tenant_slug, internal_key)
+    with tabs[2]:
         page_outbox()
 
 
