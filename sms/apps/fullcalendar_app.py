@@ -1,4 +1,21 @@
 # -*- coding: utf-8 -*-
+"""
+Calendo SMS Calendar (Streamlit) — RESTORED FEATURES
+
+Restored:
+- ✅ Send SMS NOW (one click) per appointment + per message type (NEW/MOVED/CANCELLED/REMINDERS)
+- ✅ Reminder scheduling: 24h before + 2h before (opt-in per appointment at creation)
+- ✅ Calendar view selector: Month / Week / Day (FullCalendar initialView)
+- ✅ Outbox queue + “Process due now” (sends queued messages using provider)
+- ✅ Tenant-aware Portal fetch: /api/internal/clinic_settings?tenant=...
+- ✅ Tenant-aware license check: /api/license?tenant=... (with X-Internal-Key)
+- ✅ SSO token required
+
+Notes:
+- Data stored in data/calendar/*.csv and data/output/outbox.jsonl
+- Provider supports: mock + infobip (if env creds exist)
+"""
+
 from __future__ import annotations
 
 import json
@@ -7,7 +24,7 @@ import re
 import uuid
 import urllib.request
 import urllib.error
-from datetime import datetime, timedelta, timezone, date
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -16,7 +33,7 @@ import requests
 import streamlit as st
 
 try:
-    from streamlit_calendar import calendar as st_calendar  # optional
+    from streamlit_calendar import calendar as st_calendar
 except Exception:
     st_calendar = None
 
@@ -29,20 +46,24 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired 
 
 
 # =============================================================================
-# SSO ACCESS CONTROL
+# SSO
 # =============================================================================
 def _get_query_params() -> dict:
     try:
         return dict(st.query_params)
     except Exception:
         try:
-            return {k: v[0] if isinstance(v, list) and v else v for k, v in (st.experimental_get_query_params() or {}).items()}
+            return {
+                k: v[0] if isinstance(v, list) and v else v
+                for k, v in (st.experimental_get_query_params() or {}).items()
+            }
         except Exception:
             return {}
 
 
 def _require_sso() -> tuple[str, bool]:
     qp = _get_query_params()
+
     tenant = qp.get("tenant") or "default"
     if isinstance(tenant, list):
         tenant = tenant[0] if tenant else "default"
@@ -97,7 +118,7 @@ TENANT_SLUG, _ = _require_sso()
 # =============================================================================
 # PATHS / SCHEMAS
 # =============================================================================
-PROJECT_ROOT = Path(__file__).resolve().parents[2] if (Path(__file__).resolve().parts[-2] == "apps") else Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]  # repo root (sms/apps/.. -> repo)
 DATA_DIR = PROJECT_ROOT / "data"
 CALENDAR_DIR = DATA_DIR / "calendar"
 OUTPUT_DIR = DATA_DIR / "output"
@@ -114,9 +135,9 @@ APPT_HEADER = [
     "customer_id",
     "customer_name",
     "customer_phone",
-    "start_iso",
-    "end_iso",
-    "status",  # active|cancelled
+    "start_iso",  # UTC ISO
+    "end_iso",    # UTC ISO
+    "status",     # active|cancelled
     "service",
     "notes",
     "created_at_iso",
@@ -133,7 +154,7 @@ CUSTOMER_HEADER = [
     "name",
     "phone",
     "notes",
-    "consent",  # 0/1
+    "consent",
     "created_at_iso",
     "updated_at_iso",
 ]
@@ -148,7 +169,7 @@ DEFAULT_TEMPLATES = {
 
 
 # =============================================================================
-# BASIC HELPERS
+# TIME / PHONE / CSV HELPERS
 # =============================================================================
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
@@ -276,8 +297,18 @@ def render_tpl(tpl: str, name: str, start_local: datetime) -> str:
     )
 
 
+def _i01(v: Any, default: int = 0) -> int:
+    if v is None or str(v).strip() == "":
+        return default
+    try:
+        return 1 if int(v) == 1 else 0
+    except Exception:
+        s = str(v).strip().lower()
+        return 1 if s in ("true", "yes", "on") else 0
+
+
 # =============================================================================
-# OUTBOX JSONL (VERY LIGHTWEIGHT)
+# OUTBOX (queue + sending)
 # =============================================================================
 def outbox_jsonl_ensure() -> None:
     ensure_dirs()
@@ -322,30 +353,173 @@ def outbox_state_df() -> pd.DataFrame:
                 "message_type": r.get("message_type", ""),
                 "body": r.get("body", ""),
                 "status": r.get("status", ""),
+                "provider": r.get("provider", ""),
+                "provider_msgid": r.get("provider_msgid", ""),
+                "provider_status": r.get("provider_status", ""),
                 "error": r.get("error", ""),
+                "dedupe_key": r.get("dedupe_key", ""),
             }
         )
     return pd.DataFrame(rows)
 
 
-def outbox_enqueue(appointment_id: str, to_phone: str, body: str, message_type: str, when_utc: datetime) -> None:
+def _dedupe_key(appt_id: str, message_type: str, when_iso: str) -> str:
+    return f"{appt_id}|{message_type}|{when_iso}"
+
+
+def outbox_enqueue(appointment_id: str, to_phone: str, body: str, message_type: str, when_utc: datetime) -> bool:
+    outbox_jsonl_ensure()
+    when_iso = iso_utc(when_utc)
+    dk = _dedupe_key(appointment_id, message_type, when_iso)
+    df = outbox_state_df()
+    if not df.empty and (df["dedupe_key"] == dk).any():
+        return False
+
     outbox_jsonl_append(
         {
             "outbox_id": str(uuid.uuid4()),
             "ts_iso": iso_utc(now_utc()),
-            "scheduled_for_iso": iso_utc(when_utc),
+            "scheduled_for_iso": when_iso,
             "appointment_id": appointment_id,
             "to": to_e164_heuristic(to_phone),
             "message_type": message_type,
             "body": body,
             "status": "queued",
+            "provider": "",
+            "provider_msgid": "",
+            "provider_status": "",
             "error": "",
+            "dedupe_key": dk,
+        }
+    )
+    return True
+
+
+def outbox_mark(outbox_id: str, *, status: str, provider: str, provider_msgid: str = "", provider_status: str = "", error: str = "") -> None:
+    outbox_jsonl_append(
+        {
+            "outbox_id": outbox_id,
+            "ts_iso": iso_utc(now_utc()),
+            "status": status,
+            "provider": provider,
+            "provider_msgid": provider_msgid,
+            "provider_status": provider_status,
+            "error": error,
         }
     )
 
 
 # =============================================================================
-# PORTAL FETCH (TENANT AWARE)
+# Provider (mock + Infobip)
+# =============================================================================
+def provider_log(payload: Dict[str, Any]) -> None:
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    with PROVIDER_DEBUG_JSONL.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+
+def _normalize_infobip_base_url(raw: str) -> str:
+    s = (raw or "").strip()
+    if not s:
+        return ""
+    if not s.startswith("http://") and not s.startswith("https://"):
+        s = "https://" + s
+    return s.rstrip("/")
+
+
+def _effective_provider() -> str:
+    prov = (os.getenv("SMS_PROVIDER") or "").strip().lower()
+    if prov in ("mock", "infobip"):
+        return prov
+
+    base = _normalize_infobip_base_url(os.getenv("INFOBIP_BASE_URL") or "")
+    key = (os.getenv("INFOBIP_API_KEY") or "").strip()
+    frm = (os.getenv("INFOBIP_FROM") or "").strip()
+    if base and key and frm:
+        return "infobip"
+    return "mock"
+
+
+def _send_sms_mock(to_e164: str, body: str) -> Tuple[str, str]:
+    msgid = "mock_" + uuid.uuid4().hex[:12]
+    provider_log({"ts": iso_utc(now_utc()), "provider": "mock", "to": to_e164, "body": body, "msgid": msgid})
+    return msgid, "MOCK"
+
+
+def _send_sms_infobip(to_e164: str, body: str) -> Tuple[str, str]:
+    base = _normalize_infobip_base_url(os.getenv("INFOBIP_BASE_URL") or "")
+    key = (os.getenv("INFOBIP_API_KEY") or "").strip()
+    frm = (os.getenv("INFOBIP_FROM") or "").strip()
+
+    if not (base and key and frm):
+        raise RuntimeError("Infobip not configured. Set INFOBIP_BASE_URL, INFOBIP_API_KEY, INFOBIP_FROM")
+
+    url = f"{base}/sms/2/text/advanced"
+    headers = {"Authorization": f"App {key}", "Content-Type": "application/json", "Accept": "application/json"}
+    payload = {"messages": [{"from": frm, "destinations": [{"to": to_e164}], "text": body}]}
+
+    r = requests.post(url, headers=headers, json=payload, timeout=30)
+    if r.status_code not in (200, 201):
+        raise RuntimeError(f"Infobip HTTP {r.status_code}: {(r.text or '')[:800]}")
+
+    msgid = ""
+    stname = ""
+    try:
+        j = r.json()
+        msg = j["messages"][0]
+        msgid = str(msg.get("messageId") or "")
+        stobj = msg.get("status") or {}
+        stname = str(stobj.get("name") or "")
+    except Exception:
+        pass
+    if not msgid:
+        msgid = "infobip_" + uuid.uuid4().hex[:12]
+    return msgid, stname
+
+
+def _send_via_provider(to_e164: str, body: str) -> Tuple[str, str, str]:
+    prov = _effective_provider()
+    if prov == "mock":
+        mid, pst = _send_sms_mock(to_e164, body)
+        return prov, mid, pst
+    mid, pst = _send_sms_infobip(to_e164, body)
+    return "infobip", mid, pst
+
+
+def process_due_outbox(limit: int = 200) -> Tuple[int, int, int]:
+    df = outbox_state_df()
+    if df.empty:
+        return (0, 0, 0)
+
+    now = now_utc()
+    due = df[df["status"] == "queued"].copy()
+
+    def _is_due(s: str) -> bool:
+        dt = parse_iso_any(s)
+        return bool(dt and dt.astimezone(timezone.utc) <= now + timedelta(seconds=2))
+
+    due = due[due["scheduled_for_iso"].apply(_is_due)]
+    if due.empty:
+        return (0, 0, 0)
+
+    due = due.head(limit)
+    sent = failed = 0
+    for _, r in due.iterrows():
+        oid = str(r["outbox_id"])
+        to_ = str(r["to"])
+        body = str(r["body"])
+        try:
+            prov, mid, pst = _send_via_provider(to_, body)
+            outbox_mark(oid, status="sent", provider=prov, provider_msgid=mid, provider_status=pst, error="")
+            sent += 1
+        except Exception as e:
+            outbox_mark(oid, status="failed", provider=_effective_provider(), error=str(e))
+            failed += 1
+    return (sent, failed, len(due))
+
+
+# =============================================================================
+# Portal fetch (tenant-aware) + license
 # =============================================================================
 def _portal_base_url() -> str:
     for k in ("PORTAL_APP_URL", "PORTAL_BASE_URL", "THERAPY_PORTAL_URL"):
@@ -362,7 +536,7 @@ def _fetch_portal_json(path: str, headers: Dict[str, str] | None = None) -> Dict
     url = base + path
     try:
         req = urllib.request.Request(url, headers=headers or {})
-        with urllib.request.urlopen(req, timeout=8) as resp:
+        with urllib.request.urlopen(req, timeout=10) as resp:
             raw = resp.read().decode("utf-8")
             return json.loads(raw)
     except Exception:
@@ -372,20 +546,25 @@ def _fetch_portal_json(path: str, headers: Dict[str, str] | None = None) -> Dict
 def _apply_portal_settings_to_env() -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     tenant_slug = (os.getenv("TENANT_SLUG") or TENANT_SLUG or "default").strip().lower()
-
     internal_key = (os.getenv("INTERNAL_API_KEY") or "").strip()
-    if internal_key:
-        data = _fetch_portal_json(
-            f"/api/internal/clinic_settings?tenant={tenant_slug}",
-            headers={"X-Internal-Key": internal_key},
-        ) or {}
-        if isinstance(data, dict) and data.get("clinic_name"):
-            out["clinic_name"] = data.get("clinic_name")
+    if not internal_key:
+        return out
+
+    data = _fetch_portal_json(f"/api/internal/clinic_settings?tenant={tenant_slug}", headers={"X-Internal-Key": internal_key}) or {}
+    if isinstance(data, dict):
+        out["clinic_name"] = data.get("clinic_name") or ""
+        # If portal returns Infobip creds, set them:
+        if data.get("infobip_base_url"):
+            os.environ["INFOBIP_BASE_URL"] = str(data.get("infobip_base_url"))
+        if data.get("infobip_api_key"):
+            os.environ["INFOBIP_API_KEY"] = str(data.get("infobip_api_key"))
+        if data.get("infobip_sender"):
+            os.environ["INFOBIP_FROM"] = str(data.get("infobip_sender"))
     return out
 
 
 # =============================================================================
-# BOOTSTRAP (DEFINED)
+# Bootstrap
 # =============================================================================
 def bootstrap() -> None:
     ensure_dirs()
@@ -394,62 +573,23 @@ def bootstrap() -> None:
     outbox_jsonl_ensure()
     load_templates()
 
-    cdf = read_csv_df(CUSTOMERS_CSV, CUSTOMER_HEADER)
-    if cdf.empty:
-        ts = iso_utc(now_utc())
-        demo = [
-            {"customer_id": str(uuid.uuid4()), "name": "Maria", "phone": "+306900000001", "notes": "", "consent": "1", "created_at_iso": ts, "updated_at_iso": ts},
-            {"customer_id": str(uuid.uuid4()), "name": "Nikos", "phone": "+306900000002", "notes": "", "consent": "1", "created_at_iso": ts, "updated_at_iso": ts},
-        ]
-        cdf = pd.DataFrame(demo, columns=CUSTOMER_HEADER)
-        write_csv_df(CUSTOMERS_CSV, cdf, CUSTOMER_HEADER)
-
-    adf = read_csv_df(APPOINTMENTS_CSV, APPT_HEADER)
-    if adf.empty:
-        tz = get_app_tz()
-        ts = iso_utc(now_utc())
-        start1 = to_utc(datetime.now(tz).replace(minute=0, second=0, microsecond=0) + timedelta(hours=2), tz)
-        end1 = start1 + timedelta(minutes=45)
-        first_customer = cdf.iloc[0].to_dict()
-        demo_appt = {
-            "appointment_id": str(uuid.uuid4()),
-            "customer_id": first_customer["customer_id"],
-            "customer_name": first_customer["name"],
-            "customer_phone": first_customer["phone"],
-            "start_iso": iso_utc(start1),
-            "end_iso": iso_utc(end1),
-            "status": "active",
-            "service": "Session",
-            "notes": "",
-            "created_at_iso": ts,
-            "updated_at_iso": ts,
-            "pref_send_new_now": "1",
-            "pref_reminder_day": "0",
-            "pref_reminder_2h": "0",
-            "pref_send_moved_now": "1",
-            "pref_send_cancel_now": "1",
-        }
-        adf = pd.DataFrame([demo_appt], columns=APPT_HEADER)
-        write_csv_df(APPOINTMENTS_CSV, adf, APPT_HEADER)
-
-
-def provider_diagnostics() -> dict:
-    return {
-        "tenant": (os.getenv("TENANT_SLUG") or TENANT_SLUG),
-        "portal_base": _portal_base_url(),
-        "provider_env": os.getenv("SMS_PROVIDER", ""),
-        "internal_key_set": bool((os.getenv("INTERNAL_API_KEY") or "").strip()),
-    }
-
 
 # =============================================================================
-# PAGES
+# Pages
 # =============================================================================
 def page_calendar(templates: Dict[str, str], tz: Any) -> None:
     st.subheader("Calendar")
 
     adf = read_csv_df(APPOINTMENTS_CSV, APPT_HEADER)
     cdf = read_csv_df(CUSTOMERS_CSV, CUSTOMER_HEADER)
+
+    # Calendar view selector
+    view = st.selectbox(
+        "View",
+        options=[("Month", "dayGridMonth"), ("Week", "timeGridWeek"), ("Day", "timeGridDay")],
+        format_func=lambda x: x[0],
+        key="cal_view",
+    )[1]
 
     with st.expander("➕ New appointment", expanded=False):
         if cdf.empty:
@@ -466,13 +606,23 @@ def page_calendar(templates: Dict[str, str], tz: Any) -> None:
             duration_min = st.number_input("Duration (min)", min_value=15, max_value=240, value=45, step=15, key="appt_duration")
             notes = st.text_area("Notes", value="", key="appt_notes")
 
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                pref_send_now = st.checkbox("Send SMS now", value=True, key="pref_send_now")
+            with c2:
+                pref_day = st.checkbox("Reminder 24h before", value=False, key="pref_day")
+            with c3:
+                pref_2h = st.checkbox("Reminder 2h before", value=False, key="pref_2h")
+
             if st.button("Create appointment", key="appt_create_btn"):
                 cust = customer_options[choice]
                 start_utc = to_utc(start_local, tz)
                 end_utc = start_utc + timedelta(minutes=int(duration_min))
                 ts = iso_utc(now_utc())
+                appt_id = str(uuid.uuid4())
+
                 row = {
-                    "appointment_id": str(uuid.uuid4()),
+                    "appointment_id": appt_id,
                     "customer_id": cust["customer_id"],
                     "customer_name": cust["name"],
                     "customer_phone": cust["phone"],
@@ -483,20 +633,38 @@ def page_calendar(templates: Dict[str, str], tz: Any) -> None:
                     "notes": notes,
                     "created_at_iso": ts,
                     "updated_at_iso": ts,
-                    "pref_send_new_now": "1",
-                    "pref_reminder_day": "0",
-                    "pref_reminder_2h": "0",
+                    "pref_send_new_now": "1" if pref_send_now else "0",
+                    "pref_reminder_day": "1" if pref_day else "0",
+                    "pref_reminder_2h": "1" if pref_2h else "0",
                     "pref_send_moved_now": "1",
                     "pref_send_cancel_now": "1",
                 }
+
                 adf = pd.concat([adf, pd.DataFrame([row])], ignore_index=True)
                 write_csv_df(APPOINTMENTS_CSV, adf, APPT_HEADER)
 
-                body = render_tpl(templates["new"], cust["name"], start_local)
-                outbox_enqueue(row["appointment_id"], cust["phone"], body, "new", now_utc())
-                st.success("Created appointment and queued SMS.")
+                # NEW now
+                if pref_send_now:
+                    body = render_tpl(templates["new"], cust["name"], start_local)
+                    outbox_enqueue(appt_id, cust["phone"], body, "new", now_utc())
+
+                # reminders
+                if pref_day:
+                    when = start_utc - timedelta(hours=24)
+                    if when > now_utc():
+                        body = render_tpl(templates["reminder_day"], cust["name"], start_local)
+                        outbox_enqueue(appt_id, cust["phone"], body, "reminder_day", when)
+
+                if pref_2h:
+                    when = start_utc - timedelta(hours=2)
+                    if when > now_utc():
+                        body = render_tpl(templates["reminder_2h"], cust["name"], start_local)
+                        outbox_enqueue(appt_id, cust["phone"], body, "reminder_2h", when)
+
+                st.success("Appointment created. SMS/reminders queued.")
                 st.rerun()
 
+    # Calendar render
     if st_calendar is not None:
         events = []
         for _, r in adf.iterrows():
@@ -509,13 +677,20 @@ def page_calendar(templates: Dict[str, str], tz: Any) -> None:
                 title = "❌ " + title
             events.append({"id": r["appointment_id"], "title": title, "start": st_dt.isoformat(), "end": en_dt.isoformat()})
 
-        st_calendar({"initialView": "timeGridWeek", "height": 700, "events": events})
+        st_calendar(
+            {
+                "initialView": view,
+                "height": 720,
+                "headerToolbar": {"left": "prev,next today", "center": "title", "right": "dayGridMonth,timeGridWeek,timeGridDay"},
+                "events": events,
+            }
+        )
     else:
         st.info("streamlit_calendar not installed; showing list instead.")
-        page_manage_list(templates, tz)
+        page_appointments(templates, tz)
 
 
-def page_manage_list(templates: Dict[str, str], tz: Any) -> None:
+def page_appointments(templates: Dict[str, str], tz: Any) -> None:
     st.subheader("Appointments")
 
     adf = read_csv_df(APPOINTMENTS_CSV, APPT_HEADER)
@@ -526,15 +701,25 @@ def page_manage_list(templates: Dict[str, str], tz: Any) -> None:
     adf["_start_dt"] = adf["start_iso"].apply(parse_iso_any)
     adf = adf.sort_values(by="_start_dt", ascending=False).drop(columns=["_start_dt"], errors="ignore")
 
-    st.dataframe(
-        adf[["appointment_id", "customer_name", "customer_phone", "start_iso", "end_iso", "status", "service"]],
-        width="stretch",
-    )
+    st.dataframe(adf[["appointment_id", "customer_name", "customer_phone", "start_iso", "status", "service"]], width="stretch")
+
+    st.markdown("### Send SMS now")
+    appt_id = st.selectbox("Appointment", adf["appointment_id"].tolist(), key="send_appt_select")
+    msg_type = st.selectbox("Message type", ["new", "moved", "cancelled", "reminder_day", "reminder_2h"], key="send_msg_type")
+
+    if st.button("Queue SMS now", key="queue_now_btn"):
+        r = adf[adf["appointment_id"] == appt_id].iloc[0].to_dict()
+        start_utc = parse_iso_any(r["start_iso"]) or now_utc()
+        start_local = to_local(start_utc, tz)
+        tpl = templates.get(msg_type) or templates["new"]
+        body = render_tpl(tpl, r["customer_name"], start_local)
+        ok = outbox_enqueue(appt_id, r["customer_phone"], body, msg_type, now_utc())
+        st.success("Queued." if ok else "Already queued (deduped).")
 
     st.markdown("### Cancel appointment")
-    appt_id = st.selectbox("Select appointment", adf["appointment_id"].tolist(), key="cancel_appt_select")
-    if st.button("Cancel selected", key="cancel_appt_btn"):
-        idx = adf.index[adf["appointment_id"] == appt_id].tolist()
+    appt_cancel = st.selectbox("Cancel appointment", adf["appointment_id"].tolist(), key="cancel_appt_select")
+    if st.button("Cancel selected", key="cancel_btn"):
+        idx = adf.index[adf["appointment_id"] == appt_cancel].tolist()
         if idx:
             i = idx[0]
             adf.at[i, "status"] = "cancelled"
@@ -550,6 +735,13 @@ def page_outbox() -> None:
     if df.empty:
         st.info("Outbox is empty.")
         return
+
+    c1, c2 = st.columns([1, 2])
+    with c1:
+        if st.button("Process due now", key="process_due_btn"):
+            sent, failed, due = process_due_outbox()
+            st.success(f"Processed due={due}: sent={sent}, failed={failed} (provider={_effective_provider()})")
+
     st.dataframe(df.sort_values(by="scheduled_for_iso", ascending=False), width="stretch")
 
 
@@ -563,6 +755,7 @@ def page_customers() -> None:
         phone = st.text_input("Phone", key="cust_phone")
         notes = st.text_area("Notes", key="cust_notes")
         consent = st.selectbox("Consent", ["1", "0"], index=0, key="cust_consent")
+
         if st.button("Create customer", key="cust_create_btn"):
             ts = iso_utc(now_utc())
             row = {
@@ -584,9 +777,9 @@ def page_templates(templates: Dict[str, str]) -> None:
     st.subheader("Templates")
     tpls = dict(templates)
 
-    tpls["new"] = st.text_area("New appointment template", value=tpls["new"], height=80, key="tpl_new")
-    tpls["reminder_day"] = st.text_area("Day-before reminder", value=tpls["reminder_day"], height=70, key="tpl_day")
-    tpls["reminder_2h"] = st.text_area("2-hour reminder", value=tpls["reminder_2h"], height=70, key="tpl_2h")
+    tpls["new"] = st.text_area("New template", value=tpls["new"], height=80, key="tpl_new")
+    tpls["reminder_day"] = st.text_area("Reminder 24h template", value=tpls["reminder_day"], height=70, key="tpl_day")
+    tpls["reminder_2h"] = st.text_area("Reminder 2h template", value=tpls["reminder_2h"], height=70, key="tpl_2h")
     tpls["moved"] = st.text_area("Moved template", value=tpls["moved"], height=70, key="tpl_moved")
     tpls["cancelled"] = st.text_area("Cancelled template", value=tpls["cancelled"], height=70, key="tpl_cancelled")
 
@@ -602,9 +795,13 @@ def page_templates(templates: Dict[str, str]) -> None:
 def main() -> None:
     st.set_page_config(page_title="Calendo SMS", layout="wide")
 
-    _apply_portal_settings_to_env()
     tenant_slug = (os.getenv("TENANT_SLUG") or TENANT_SLUG or "default").strip().lower()
+    tz = get_app_tz()
 
+    # Portal settings + creds
+    portal_applied = _apply_portal_settings_to_env()
+
+    # License check
     internal_key = (os.getenv("INTERNAL_API_KEY") or "").strip()
     lic_headers = {"X-Internal-Key": internal_key} if internal_key else {}
     lic = _fetch_portal_json(f"/api/license?tenant={tenant_slug}", headers=lic_headers) or {}
@@ -614,18 +811,26 @@ def main() -> None:
         st.stop()
 
     bootstrap()
-    tz = get_app_tz()
     templates = load_templates()
 
-    st.markdown(f"### SMS Calendar (tenant: `{tenant_slug}`)")
-    st.sidebar.header("Diagnostics")
-    st.sidebar.json(provider_diagnostics())
+    st.title(f"SMS Calendar (tenant: {tenant_slug})")
+
+    with st.sidebar:
+        st.header("Diagnostics")
+        st.json(
+            {
+                "tenant": tenant_slug,
+                "portal_base": _portal_base_url(),
+                "provider": _effective_provider(),
+                "internal_key_set": bool(internal_key),
+            }
+        )
 
     tabs = st.tabs(["📅 Calendar", "📋 Appointments", "📨 Outbox", "🧑 Customers", "✍️ Templates"])
     with tabs[0]:
         page_calendar(templates, tz)
     with tabs[1]:
-        page_manage_list(templates, tz)
+        page_appointments(templates, tz)
     with tabs[2]:
         page_outbox()
     with tabs[3]:
