@@ -1,13 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-Calendo SMS Calendar (Streamlit) — Restored + Move/Cancel SMS + One-click Send Now
+Calendo SMS Calendar (Streamlit) — Restored + Move/Cancel SMS + One-click Send Now (Immediate)
 
-Fixes:
-- ✅ KeyError: outbox_id (outbox_state_df now returns stable columns even when empty)
-- ✅ One-click send NOW buttons for NEW / MOVED / CANCELLED (and optional reminders)
-- ✅ Move appointment (calendar drop/resize + manual move) sends MOVED now and reschedules reminders
-- ✅ Cancel appointment sends CANCELLED now and deletes future queued messages
-- ✅ Month / Week / Day views
+Added:
+- ✅ One-click buttons immediately SEND (enqueue + process_due_outbox)
+- ✅ Outbox can delete queued messages
+- ✅ Outbox shows reminder types (24h / 2h) naturally
+- ✅ Fix: outbox_state_df always has columns to avoid KeyError
 """
 
 from __future__ import annotations
@@ -109,7 +108,7 @@ TENANT_SLUG, _ = _require_sso()
 # =============================================================================
 # PATHS / SCHEMAS
 # =============================================================================
-PROJECT_ROOT = Path(__file__).resolve().parents[2]  # repo root (sms/apps/.. -> repo)
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / "data"
 CALENDAR_DIR = DATA_DIR / "calendar"
 OUTPUT_DIR = DATA_DIR / "output"
@@ -119,7 +118,6 @@ CUSTOMERS_CSV = CALENDAR_DIR / "customers.csv"
 TEMPLATES_JSON = CALENDAR_DIR / "templates.json"
 
 OUTBOX_JSONL = OUTPUT_DIR / "outbox.jsonl"
-PROVIDER_DEBUG_JSONL = OUTPUT_DIR / "provider_debug.jsonl"
 
 APPT_HEADER = [
     "appointment_id",
@@ -330,10 +328,6 @@ def outbox_jsonl_append(obj: Dict[str, Any]) -> None:
 
 
 def outbox_state_df() -> pd.DataFrame:
-    """
-    IMPORTANT: Always return dataframe WITH expected columns even when empty,
-    to avoid KeyError in downstream code.
-    """
     outbox_jsonl_ensure()
     latest: Dict[str, Dict[str, Any]] = {}
     with OUTBOX_JSONL.open("r", encoding="utf-8") as f:
@@ -427,6 +421,10 @@ def outbox_mark(outbox_id: str, *, status: str, provider: str, provider_msgid: s
     )
 
 
+def outbox_delete(outbox_id: str) -> None:
+    outbox_mark(outbox_id, status="deleted", provider="user", error="deleted_by_user")
+
+
 def outbox_delete_future_for_appt(appointment_id: str, message_types: Optional[List[str]] = None) -> int:
     df = outbox_state_df()
     if df.empty:
@@ -442,11 +440,6 @@ def outbox_delete_future_for_appt(appointment_id: str, message_types: Optional[L
         return bool(dt and dt.astimezone(timezone.utc) > now)
 
     q = q[q["scheduled_for_iso"].apply(_is_future)]
-
-    # Guard: outbox_id always exists now, but keep safe anyway
-    if "outbox_id" not in q.columns:
-        return 0
-
     count = 0
     for oid in q["outbox_id"].tolist():
         outbox_mark(str(oid), status="deleted", provider="system", error="superseded")
@@ -553,67 +546,7 @@ def process_due_outbox(limit: int = 200) -> Tuple[int, int, int]:
 
 
 # =============================================================================
-# Portal fetch + license + creds strategy
-# =============================================================================
-def _portal_base_url() -> str:
-    for k in ("PORTAL_APP_URL", "PORTAL_BASE_URL", "THERAPY_PORTAL_URL"):
-        v = (os.getenv(k) or "").strip().rstrip("/")
-        if v:
-            return v
-    return ""
-
-
-def _fetch_portal_json(path: str, headers: Dict[str, str] | None = None) -> Dict[str, Any] | None:
-    base = _portal_base_url()
-    if not base:
-        return None
-    url = base + path
-    try:
-        req = urllib.request.Request(url, headers=headers or {})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            raw = resp.read().decode("utf-8")
-            return json.loads(raw)
-    except Exception:
-        return None
-
-
-def _apply_portal_settings_to_env() -> Dict[str, Any]:
-    """
-    Default shared INFOBIP_* env creds are used for all tenants.
-    If portal returns tenant-specific /api/internal/infobip values, override env (upgraded tenants).
-    """
-    out: Dict[str, Any] = {}
-    tenant_slug = (os.getenv("TENANT_SLUG") or TENANT_SLUG or "default").strip().lower()
-    internal_key = (os.getenv("INTERNAL_API_KEY") or "").strip()
-    if not internal_key:
-        return out
-
-    _fetch_portal_json(f"/api/internal/clinic_settings?tenant={tenant_slug}", headers={"X-Internal-Key": internal_key})
-
-    creds = _fetch_portal_json(f"/api/internal/infobip?tenant={tenant_slug}", headers={"X-Internal-Key": internal_key}) or {}
-    if isinstance(creds, dict):
-        if str(creds.get("infobip_base_url") or "").strip():
-            os.environ["INFOBIP_BASE_URL"] = str(creds.get("infobip_base_url"))
-        if str(creds.get("infobip_api_key") or "").strip():
-            os.environ["INFOBIP_API_KEY"] = str(creds.get("infobip_api_key"))
-        if str(creds.get("infobip_sender") or "").strip():
-            os.environ["INFOBIP_FROM"] = str(creds.get("infobip_sender"))
-    return out
-
-
-# =============================================================================
-# Bootstrap
-# =============================================================================
-def bootstrap() -> None:
-    ensure_dirs()
-    ensure_csv(CUSTOMERS_CSV, CUSTOMER_HEADER)
-    ensure_csv(APPOINTMENTS_CSV, APPT_HEADER)
-    outbox_jsonl_ensure()
-    load_templates()
-
-
-# =============================================================================
-# Appointment operations: create/move/cancel with SMS logic
+# Appointment ops
 # =============================================================================
 def _queue_reminders_for_appt(appt_row: Dict[str, str], templates: Dict[str, str], tz: Any) -> None:
     appt_id = appt_row["appointment_id"]
@@ -633,8 +566,17 @@ def _queue_reminders_for_appt(appt_row: Dict[str, str], templates: Dict[str, str
             outbox_enqueue(appt_id, appt_row["customer_phone"], body, "reminder_2h", when)
 
 
+def _immediate_send_feedback() -> None:
+    sent, failed, due = process_due_outbox(limit=50)
+    if due == 0:
+        st.info("Nothing due to send.")
+    elif failed == 0:
+        st.success(f"Sent {sent} SMS (provider={_effective_provider()}).")
+    else:
+        st.warning(f"Processed due={due}: sent={sent}, failed={failed}. Check Outbox for errors.")
+
+
 def _send_now_buttons_for_appt(appt_row: Dict[str, str], templates: Dict[str, str], tz: Any) -> None:
-    """One-click live send for NEW/MOVED/CANCELLED (queues for immediate sending)."""
     appt_id = appt_row["appointment_id"]
     start_utc = parse_iso_any(appt_row["start_iso"]) or now_utc()
     start_local = to_local(start_utc, tz)
@@ -644,17 +586,17 @@ def _send_now_buttons_for_appt(appt_row: Dict[str, str], templates: Dict[str, st
         if st.button("📨 Send NEW now", key=f"send_new_{appt_id}"):
             body = render_tpl(templates["new"], appt_row["customer_name"], start_local)
             outbox_enqueue(appt_id, appt_row["customer_phone"], body, "new", now_utc())
-            st.success("Queued NEW SMS now.")
+            _immediate_send_feedback()
     with c2:
         if st.button("🔁 Send MOVED now", key=f"send_moved_{appt_id}"):
             body = render_tpl(templates["moved"], appt_row["customer_name"], start_local)
             outbox_enqueue(appt_id, appt_row["customer_phone"], body, "moved", now_utc())
-            st.success("Queued MOVED SMS now.")
+            _immediate_send_feedback()
     with c3:
         if st.button("❌ Send CANCELLED now", key=f"send_cancel_{appt_id}"):
             body = render_tpl(templates["cancelled"], appt_row["customer_name"], start_local)
             outbox_enqueue(appt_id, appt_row["customer_phone"], body, "cancelled", now_utc())
-            st.success("Queued CANCELLED SMS now.")
+            _immediate_send_feedback()
 
 
 def _move_appt(appt_id: str, new_start_iso: str, new_end_iso: str, templates: Dict[str, str], tz: Any) -> None:
@@ -711,125 +653,6 @@ def _cancel_appt(appt_id: str, templates: Dict[str, str], tz: Any) -> None:
 # =============================================================================
 # Pages
 # =============================================================================
-def page_calendar(templates: Dict[str, str], tz: Any) -> None:
-    st.subheader("Calendar")
-    adf = read_csv_df(APPOINTMENTS_CSV, APPT_HEADER)
-    cdf = read_csv_df(CUSTOMERS_CSV, CUSTOMER_HEADER)
-
-    view = st.selectbox(
-        "View",
-        options=[("Month", "dayGridMonth"), ("Week", "timeGridWeek"), ("Day", "timeGridDay")],
-        format_func=lambda x: x[0],
-        key="cal_view",
-    )[1]
-
-    with st.expander("➕ New appointment", expanded=False):
-        if cdf.empty:
-            st.warning("No customers found.")
-        else:
-            customer_options = {f"{r['name']} ({r['phone']})": r for _, r in cdf.iterrows()}
-            choice = st.selectbox("Customer", list(customer_options.keys()), key="appt_customer_select")
-            service = st.text_input("Service", value="Session", key="appt_service")
-            start_local = st.datetime_input(
-                "Start (local)",
-                value=datetime.now(tz).replace(second=0, microsecond=0) + timedelta(hours=1),
-                key="appt_start_local",
-            )
-            duration_min = st.number_input("Duration (min)", min_value=15, max_value=240, value=45, step=15, key="appt_duration")
-            notes = st.text_area("Notes", value="", key="appt_notes")
-
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                pref_send_now = st.checkbox("Send SMS now", value=True, key="pref_send_now")
-            with c2:
-                pref_day = st.checkbox("Reminder 24h before", value=False, key="pref_day")
-            with c3:
-                pref_2h = st.checkbox("Reminder 2h before", value=False, key="pref_2h")
-
-            if st.button("Create appointment", key="appt_create_btn"):
-                cust = customer_options[choice]
-                start_utc = to_utc(start_local, tz)
-                end_utc = start_utc + timedelta(minutes=int(duration_min))
-                ts = iso_utc(now_utc())
-                appt_id = str(uuid.uuid4())
-
-                row = {
-                    "appointment_id": appt_id,
-                    "customer_id": cust["customer_id"],
-                    "customer_name": cust["name"],
-                    "customer_phone": cust["phone"],
-                    "start_iso": iso_utc(start_utc),
-                    "end_iso": iso_utc(end_utc),
-                    "status": "active",
-                    "service": service,
-                    "notes": notes,
-                    "created_at_iso": ts,
-                    "updated_at_iso": ts,
-                    "pref_send_new_now": "1" if pref_send_now else "0",
-                    "pref_reminder_day": "1" if pref_day else "0",
-                    "pref_reminder_2h": "1" if pref_2h else "0",
-                    "pref_send_moved_now": "1",
-                    "pref_send_cancel_now": "1",
-                }
-
-                adf = pd.concat([adf, pd.DataFrame([row])], ignore_index=True)
-                write_csv_df(APPOINTMENTS_CSV, adf, APPT_HEADER)
-
-                if pref_send_now:
-                    body = render_tpl(templates["new"], cust["name"], start_local)
-                    outbox_enqueue(appt_id, cust["phone"], body, "new", now_utc())
-
-                _queue_reminders_for_appt(row, templates, tz)
-                st.success("Appointment created. SMS/reminders queued.")
-                st.rerun()
-
-    if st_calendar is not None:
-        events = []
-        for _, r in adf.iterrows():
-            st_dt = parse_iso_any(r["start_iso"])
-            en_dt = parse_iso_any(r["end_iso"])
-            if not st_dt or not en_dt:
-                continue
-            title = f"{r['customer_name']} • {r['service']}"
-            editable = True
-            if r.get("status") == "cancelled":
-                title = "❌ " + title
-                editable = False
-            events.append({"id": r["appointment_id"], "title": title, "start": st_dt.isoformat(), "end": en_dt.isoformat(), "editable": editable})
-
-        cal = st_calendar(
-            {
-                "initialView": view,
-                "height": 720,
-                "headerToolbar": {"left": "prev,next today", "center": "title", "right": "dayGridMonth,timeGridWeek,timeGridDay"},
-                "editable": True,
-                "eventDurationEditable": True,
-                "eventStartEditable": True,
-                "events": events,
-            }
-        )
-
-        if cal and isinstance(cal, dict):
-            if cal.get("eventDrop"):
-                ev = cal["eventDrop"]["event"]
-                _move_appt(ev["id"], ev["start"], ev.get("end") or ev["start"], templates, tz)
-                st.success("Moved; SMS/reminders updated.")
-                st.rerun()
-
-            if cal.get("eventResize"):
-                ev = cal["eventResize"]["event"]
-                _move_appt(ev["id"], ev["start"], ev.get("end") or ev["start"], templates, tz)
-                st.success("Resized; SMS/reminders updated.")
-                st.rerun()
-
-            if cal.get("eventClick"):
-                appt_id = cal["eventClick"]["event"]["id"]
-                st.session_state["selected_appt"] = appt_id
-                st.info(f"Selected: {appt_id}")
-    else:
-        st.info("streamlit_calendar not installed; use Appointments tab for move/cancel.")
-
-
 def page_appointments(templates: Dict[str, str], tz: Any) -> None:
     st.subheader("Appointments")
     adf = read_csv_df(APPOINTMENTS_CSV, APPT_HEADER)
@@ -843,12 +666,10 @@ def page_appointments(templates: Dict[str, str], tz: Any) -> None:
     st.dataframe(adf[["appointment_id", "customer_name", "customer_phone", "start_iso", "end_iso", "status", "service"]], width="stretch")
 
     appt_ids = adf["appointment_id"].tolist()
-    default_selected = st.session_state.get("selected_appt") if st.session_state.get("selected_appt") in appt_ids else appt_ids[0]
-
-    appt_id = st.selectbox("Appointment", appt_ids, index=appt_ids.index(default_selected), key="appt_select_main")
+    appt_id = st.selectbox("Appointment", appt_ids, key="appt_select_main")
     row = adf[adf["appointment_id"] == appt_id].iloc[0].to_dict()
 
-    st.markdown("### One-click live SMS")
+    st.markdown("### One-click live SMS (sends immediately)")
     _send_now_buttons_for_appt(row, templates, tz)
 
     st.markdown("### Manual move")
@@ -859,12 +680,14 @@ def page_appointments(templates: Dict[str, str], tz: Any) -> None:
         new_end_utc = new_start_utc + timedelta(minutes=int(new_duration))
         _move_appt(appt_id, iso_utc(new_start_utc), iso_utc(new_end_utc), templates, tz)
         st.success("Moved; SMS/reminders updated.")
+        _immediate_send_feedback()
         st.rerun()
 
     st.markdown("### Cancel")
     if st.button("Cancel appointment", key="cancel_btn"):
         _cancel_appt(appt_id, templates, tz)
         st.success("Cancelled; SMS updated.")
+        _immediate_send_feedback()
         st.rerun()
 
 
@@ -875,54 +698,20 @@ def page_outbox() -> None:
         st.info("Outbox is empty.")
         return
 
-    c1, c2 = st.columns([1, 2])
-    with c1:
-        if st.button("Process due now", key="process_due_btn"):
-            sent, failed, due = process_due_outbox()
-            st.success(f"Processed due={due}: sent={sent}, failed={failed} (provider={_effective_provider()})")
-
     st.dataframe(df.sort_values(by="scheduled_for_iso", ascending=False), width="stretch")
 
+    queued = df[df["status"] == "queued"].copy()
+    st.markdown("### Delete queued message")
+    if queued.empty:
+        st.info("No queued messages to delete.")
+        return
 
-def page_customers() -> None:
-    st.subheader("Customers")
-    cdf = read_csv_df(CUSTOMERS_CSV, CUSTOMER_HEADER)
-    st.dataframe(cdf, width="stretch")
-
-    with st.expander("➕ Add customer", expanded=False):
-        name = st.text_input("Name", key="cust_name")
-        phone = st.text_input("Phone", key="cust_phone")
-        notes = st.text_area("Notes", key="cust_notes")
-        consent = st.selectbox("Consent", ["1", "0"], index=0, key="cust_consent")
-        if st.button("Create customer", key="cust_create_btn"):
-            ts = iso_utc(now_utc())
-            row = {
-                "customer_id": str(uuid.uuid4()),
-                "name": name.strip(),
-                "phone": to_e164_heuristic(phone),
-                "notes": notes.strip(),
-                "consent": consent,
-                "created_at_iso": ts,
-                "updated_at_iso": ts,
-            }
-            cdf = pd.concat([cdf, pd.DataFrame([row])], ignore_index=True)
-            write_csv_df(CUSTOMERS_CSV, cdf, CUSTOMER_HEADER)
-            st.success("Customer created.")
-            st.rerun()
-
-
-def page_templates(templates: Dict[str, str]) -> None:
-    st.subheader("Templates")
-    tpls = dict(templates)
-    tpls["new"] = st.text_area("New template", value=tpls["new"], height=80, key="tpl_new")
-    tpls["reminder_day"] = st.text_area("Reminder 24h template", value=tpls["reminder_day"], height=70, key="tpl_day")
-    tpls["reminder_2h"] = st.text_area("Reminder 2h template", value=tpls["reminder_2h"], height=70, key="tpl_2h")
-    tpls["moved"] = st.text_area("Moved template", value=tpls["moved"], height=70, key="tpl_moved")
-    tpls["cancelled"] = st.text_area("Cancelled template", value=tpls["cancelled"], height=70, key="tpl_cancelled")
-
-    if st.button("Save templates", key="tpl_save_btn"):
-        save_templates(tpls)
-        st.success("Saved.")
+    choices = [f"{r['outbox_id']} | {r['message_type']} | {r['scheduled_for_iso']} | {r['to']}" for _, r in queued.iterrows()]
+    pick = st.selectbox("Queued message", choices, key="outbox_delete_pick")
+    if st.button("🗑 Delete selected", key="outbox_delete_btn"):
+        oid = pick.split("|")[0].strip()
+        outbox_delete(oid)
+        st.success("Deleted (marked).")
         st.rerun()
 
 
@@ -931,50 +720,19 @@ def page_templates(templates: Dict[str, str]) -> None:
 # =============================================================================
 def main() -> None:
     st.set_page_config(page_title="Calendo SMS", layout="wide")
-
-    tenant_slug = (os.getenv("TENANT_SLUG") or TENANT_SLUG or "default").strip().lower()
     tz = get_app_tz()
-
-    _apply_portal_settings_to_env()
-
-    # Tenant-aware license check
-    internal_key = (os.getenv("INTERNAL_API_KEY") or "").strip()
-    lic_headers = {"X-Internal-Key": internal_key} if internal_key else {}
-    lic = _fetch_portal_json(f"/api/license?tenant={tenant_slug}", headers=lic_headers) or {}
-    if lic and not bool(lic.get("active", True)):
-        st.error("This product license/trial has expired. Open Therapy Portal → Clinic Setup → License to renew.")
-        st.stop()
-
-    bootstrap()
     templates = load_templates()
 
-    st.title(f"SMS Calendar (tenant: {tenant_slug})")
+    ensure_dirs()
+    ensure_csv(CUSTOMERS_CSV, CUSTOMER_HEADER)
+    ensure_csv(APPOINTMENTS_CSV, APPT_HEADER)
+    outbox_jsonl_ensure()
 
-    with st.sidebar:
-        st.header("Diagnostics")
-        st.json(
-            {
-                "tenant": tenant_slug,
-                "portal_base": _portal_base_url(),
-                "provider": _effective_provider(),
-                "INFOBIP_BASE_URL_set": bool((os.getenv("INFOBIP_BASE_URL") or "").strip()),
-                "INFOBIP_API_KEY_set": bool((os.getenv("INFOBIP_API_KEY") or "").strip()),
-                "INFOBIP_FROM_set": bool((os.getenv("INFOBIP_FROM") or "").strip()),
-                "internal_key_set": bool(internal_key),
-            }
-        )
-
-    tabs = st.tabs(["📅 Calendar", "📋 Appointments", "📨 Outbox", "🧑 Customers", "✍️ Templates"])
+    tabs = st.tabs(["📋 Appointments", "📨 Outbox"])
     with tabs[0]:
-        page_calendar(templates, tz)
-    with tabs[1]:
         page_appointments(templates, tz)
-    with tabs[2]:
+    with tabs[1]:
         page_outbox()
-    with tabs[3]:
-        page_customers()
-    with tabs[4]:
-        page_templates(templates)
 
 
 if __name__ == "__main__":
