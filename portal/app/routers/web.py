@@ -24,7 +24,6 @@ from app.models.session_note import SessionNote
 from app.models.clinic_settings import ClinicSettings, AppLicense
 from app.models.sms_outbox import SmsOutbox
 
-# optional attachments model (exists in tables list)
 try:
     from app.models.attachment import Attachment  # type: ignore
 except Exception:
@@ -87,7 +86,6 @@ def _sms_link_for(request: Request, tenant_slug: str) -> str:
     if sms_url.endswith("/"):
         sms_url = sms_url[:-1]
     sso = _make_sms_sso_token(request, tenant_slug)
-    # Render Streamlit is usually /sms
     if "onrender.com" in sms_url:
         return f"{sms_url}/sms?tenant={tenant_slug}&sso={sso}"
     return f"{sms_url}?tenant={tenant_slug}&sso={sso}"
@@ -111,7 +109,6 @@ def _require_login_for_tenant(request: Request, tenant_slug: str) -> RedirectRes
 
 
 def _subscription_status(db: Session, tenant_id: str) -> tuple[bool, datetime | None, str]:
-    """Return (active, until, plan_code) for the tenant subscription."""
     try:
         from app.models.licensing import Subscription, Plan
         sub = (
@@ -141,6 +138,7 @@ def _require_active_subscription(request: Request, db: Session, tenant_slug: str
     if active:
         return None
     rp = _rp(request)
+    # ✅ important: /settings exists now
     return RedirectResponse(url=f"{rp}/settings?tenant={tenant_slug}&need=license", status_code=303)
 
 
@@ -188,38 +186,11 @@ def _render(request: Request, template_name: str, ctx: dict, db: Session, tenant
         "subscription_plan": plan,
         "sms_app_url": _sms_link_for(request, tctx.tenant_slug),
         "toast": _toast_pop(request),
+        "now": datetime.utcnow(),
+        "rp": _rp(request),
     }
     base.update(ctx or {})
     return templates.TemplateResponse(template_name, base)
-
-
-def _parse_dt(val: str | None) -> datetime | None:
-    if not val:
-        return None
-    v = val.strip()
-    if not v:
-        return None
-    try:
-        return datetime.fromisoformat(v.replace("Z", "+00:00")).replace(tzinfo=None)
-    except Exception:
-        return None
-
-
-def _parse_date(val: str | None) -> date | None:
-    if not val:
-        return None
-    v = val.strip()
-    if not v:
-        return None
-    try:
-        return date.fromisoformat(v)
-    except Exception:
-        return None
-
-
-def _yn(val: str | None) -> str:
-    v = (val or "").strip().upper()
-    return "YES" if v in ("YES", "Y", "TRUE", "1", "ON") else "NO"
 
 
 def _child_or_404(db: Session, tenant_id: str, child_id: int) -> Child:
@@ -229,15 +200,34 @@ def _child_or_404(db: Session, tenant_id: str, child_id: int) -> Child:
     return child
 
 
-def _appointment_or_404(db: Session, tenant_id: str, child_id: int, appt_id: int) -> Appointment:
-    appt = (
-        db.query(Appointment)
-        .filter(Appointment.tenant_id == tenant_id, Appointment.child_id == child_id, Appointment.id == appt_id)
-        .first()
+# =============================================================================
+# Settings page (FIXES /settings 404)
+# =============================================================================
+@router.get("/settings", response_class=HTMLResponse)
+def settings_page(request: Request, tenant: str = "default", need: str = "", db: Session = Depends(get_db)):
+    # Login check
+    redirect = _require_login_for_tenant(request, tenant)
+    if redirect:
+        return redirect
+
+    tctx = resolve_tenant(db, request, tenant_slug=tenant)
+    cs = _get_settings(db, tctx.tenant_id)
+    lic = _get_license(db)
+    active, until, plan = _subscription_status(db, tctx.tenant_id)
+
+    return _render(
+        request,
+        "pages/setup.html" if (Path("app/templates/pages/setup.html")).exists() else "pages/suite.html",
+        {"need": need, "subscription_active": active, "subscription_until": until, "subscription_plan": plan, "clinic": cs, "license": lic},
+        db,
+        tenant_slug=tctx.tenant_slug,
     )
-    if not appt:
-        raise HTTPException(status_code=404, detail="Not Found")
-    return appt
+
+
+@router.get("/setup", response_class=HTMLResponse)
+def setup_alias(request: Request, tenant: str = "default", need: str = "", db: Session = Depends(get_db)):
+    # Alias so /setup works too
+    return settings_page(request=request, tenant=tenant, need=need, db=db)
 
 
 # =============================================================================
@@ -315,8 +305,7 @@ def api_internal_appointment_create(
 ):
     _require_internal(request)
     tctx = resolve_tenant(db, request, tenant_slug=tenant)
-
-    child = _child_or_404(db, tctx.tenant_id, child_id)
+    _child_or_404(db, tctx.tenant_id, child_id)
 
     sdt = datetime.fromisoformat(starts_at_iso.replace("Z", "+00:00"))
     edt = datetime.fromisoformat(ends_at_iso.replace("Z", "+00:00"))
@@ -325,7 +314,7 @@ def api_internal_appointment_create(
 
     appt = Appointment(
         tenant_id=tctx.tenant_id,
-        child_id=child.id,
+        child_id=child_id,
         starts_at=sdt.replace(tzinfo=None),
         ends_at=edt.replace(tzinfo=None),
         therapist_name=(therapist_name or "").strip(),
@@ -420,173 +409,11 @@ def children_list(request: Request, tenant: str = "default", q: str = "", db: Se
     return _render(request, "pages/children_list.html", {"children": children, "q": q}, db, tenant_slug=tctx.tenant_slug)
 
 
-@router.get("/children/{child_id}", response_class=HTMLResponse)
-def child_detail(request: Request, child_id: int, tab: str = "overview", db: Session = Depends(get_db)):
-    tenant_slug = _session_tenant_slug(request)
-    redirect = _require_login_for_tenant(request, tenant_slug)
-    if redirect:
-        return redirect
-
-    tctx = resolve_tenant(db, request, tenant_slug=tenant_slug)
-    gate = _require_active_subscription(request, db, tctx.tenant_slug, tctx.tenant_id)
-    if gate:
-        return gate
-
-    child = _child_or_404(db, tctx.tenant_id, child_id)
-
-    appts = (
-        db.query(Appointment)
-        .filter(Appointment.tenant_id == tctx.tenant_id, Appointment.child_id == child_id)
-        .order_by(Appointment.starts_at.desc())
-        .limit(300)
-        .all()
-    )
-    bills = (
-        db.query(BillingItem)
-        .filter(BillingItem.tenant_id == tctx.tenant_id, BillingItem.child_id == child_id)
-        .order_by(BillingItem.billing_due.desc())
-        .limit(300)
-        .all()
-    )
-
-    appt_ids = [a.id for a in appts]
-    notes_by_appt: dict[int, SessionNote] = {}
-    if appt_ids:
-        notes = (
-            db.query(SessionNote)
-            .filter(SessionNote.tenant_id == tctx.tenant_id, SessionNote.appointment_id.in_(appt_ids))
-            .all()
-        )
-        notes_by_appt = {n.appointment_id: n for n in notes}
-
-    attachments = []
-    if Attachment is not None:
-        try:
-            attachments = (
-                db.query(Attachment)
-                .filter(Attachment.tenant_id == tctx.tenant_id, Attachment.child_id == child_id)
-                .order_by(Attachment.created_at.desc())
-                .limit(200)
-                .all()
-            )
-        except Exception:
-            attachments = []
-
-    # Timeline journey: merge events
-    timeline = []
-    for a in appts:
-        timeline.append({"ts": a.starts_at, "type": "appointment", "title": f"Appointment: {a.procedure}", "ref": a.id})
-        if (a.attendance_status or "").upper() == "CANCELLED":
-            timeline.append({"ts": a.starts_at, "type": "cancelled", "title": "Appointment cancelled", "ref": a.id})
-    for b in bills:
-        timeline.append({"ts": datetime.combine(b.billing_due, datetime.min.time()), "type": "invoice", "title": f"Invoice due ({b.paid})", "ref": b.id})
-        if (b.paid or "").upper() == "YES":
-            timeline.append({"ts": datetime.combine(b.billing_due, datetime.min.time()), "type": "paid", "title": "Invoice marked paid", "ref": b.id})
-    for appt_id, n in notes_by_appt.items():
-        timeline.append({"ts": getattr(n, "updated_at", None) or getattr(n, "created_at", None) or datetime.utcnow(), "type": "note", "title": "Session note saved", "ref": appt_id})
-    for att in attachments or []:
-        timeline.append({"ts": getattr(att, "created_at", None) or datetime.utcnow(), "type": "attachment", "title": f"Attachment: {getattr(att,'filename','file')}", "ref": getattr(att, "id", "")})
-
-    timeline = sorted(timeline, key=lambda x: x["ts"], reverse=True)
-
-    return templates.TemplateResponse(
-        "pages/child_detail.html",
-        {
-            "request": request,
-            "tenant_slug": tctx.tenant_slug,
-            "child": child,
-            "appts": appts,
-            "bills": bills,
-            "notes_by_appt": notes_by_appt,
-            "attachments": attachments,
-            "timeline": timeline,
-            "tab": tab,
-            "sms_app_url": _sms_link_for(request, tctx.tenant_slug),
-            "toast": _toast_pop(request),
-        },
-    )
-
-
-# =============================================================================
-# Attachments: upload + delete (tenant safe)
-# =============================================================================
-@router.post("/children/{child_id}/attachments/upload")
-def attachment_upload(
-    request: Request,
-    child_id: int,
-    tenant: str = Form("default"),
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-):
-    if Attachment is None:
-        raise HTTPException(status_code=400, detail="Attachments not enabled")
-
-    redirect = _require_login_for_tenant(request, tenant)
-    if redirect:
-        return redirect
-
-    tctx = resolve_tenant(db, request, tenant_slug=tenant)
-    gate = _require_active_subscription(request, db, tctx.tenant_slug, tctx.tenant_id)
-    if gate:
-        return gate
-
-    _child_or_404(db, tctx.tenant_id, child_id)
-
-    content = file.file.read()
-    att = Attachment(
-        id=str(uuid.uuid4()),
-        tenant_id=tctx.tenant_id,
-        child_id=child_id,
-        filename=file.filename,
-        content_type=file.content_type,
-        size_bytes=len(content),
-        blob=content,  # your model may call this "data"; adjust if needed
-        created_at=datetime.utcnow(),
-    )
-    db.add(att)
-    db.commit()
-
-    _toast_set(request, "success", "Attachment uploaded")
-    return RedirectResponse(url=f"/children/{child_id}?tab=attachments", status_code=303)
-
-
-@router.post("/children/{child_id}/attachments/{attachment_id}/delete")
-def attachment_delete(
-    request: Request,
-    child_id: int,
-    attachment_id: str,
-    tenant: str = Form("default"),
-    db: Session = Depends(get_db),
-):
-    if Attachment is None:
-        raise HTTPException(status_code=400, detail="Attachments not enabled")
-
-    redirect = _require_login_for_tenant(request, tenant)
-    if redirect:
-        return redirect
-
-    tctx = resolve_tenant(db, request, tenant_slug=tenant)
-    gate = _require_active_subscription(request, db, tctx.tenant_slug, tctx.tenant_id)
-    if gate:
-        return gate
-
-    q = db.query(Attachment).filter(Attachment.tenant_id == tctx.tenant_id, Attachment.child_id == child_id, Attachment.id == attachment_id)
-    obj = q.first()
-    if not obj:
-        raise HTTPException(status_code=404, detail="Not Found")
-    q.delete()
-    db.commit()
-
-    _toast_set(request, "success", "Attachment deleted")
-    return RedirectResponse(url=f"/children/{child_id}?tab=attachments", status_code=303)
-
 # ----------------------------
 # Legacy compatibility routes (avoid 404s from old buttons)
 # ----------------------------
-
 @router.get("/sms-outbox")
 def legacy_sms_outbox(request: Request, tenant: str = "default"):
-    # old links: /sms-outbox?tenant=...
     rp = _rp(request)
     t = (tenant or "default").strip().lower()
     return RedirectResponse(url=f"{rp}/t/{t}/suite#sms-outbox", status_code=303)
@@ -594,7 +421,6 @@ def legacy_sms_outbox(request: Request, tenant: str = "default"):
 
 @router.get("/billing")
 def legacy_billing(request: Request):
-    # old links: /billing (no tenant). Use session tenant.
     rp = _rp(request)
     t = _session_tenant_slug(request)
     return RedirectResponse(url=f"{rp}/t/{t}/suite#billing", status_code=303)
@@ -612,4 +438,3 @@ def legacy_timeline(request: Request):
     rp = _rp(request)
     t = _session_tenant_slug(request)
     return RedirectResponse(url=f"{rp}/children?tenant={t}", status_code=303)
-
