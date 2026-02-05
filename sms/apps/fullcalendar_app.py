@@ -97,7 +97,7 @@ TENANT_SLUG, _ = _require_sso()
 # =============================================================================
 # PATHS / SCHEMAS
 # =============================================================================
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2] if (Path(__file__).resolve().parts[-2] == "apps") else Path(__file__).resolve().parents[1]
 DATA_DIR = PROJECT_ROOT / "data"
 CALENDAR_DIR = DATA_DIR / "calendar"
 OUTPUT_DIR = DATA_DIR / "output"
@@ -456,13 +456,17 @@ def page_calendar(templates: Dict[str, str], tz: Any) -> None:
             st.warning("No customers found.")
         else:
             customer_options = {f"{r['name']} ({r['phone']})": r for _, r in cdf.iterrows()}
-            choice = st.selectbox("Customer", list(customer_options.keys()))
-            service = st.text_input("Service", value="Session")
-            start_local = st.datetime_input("Start (local)", value=datetime.now(tz).replace(second=0, microsecond=0) + timedelta(hours=1))
-            duration_min = st.number_input("Duration (min)", min_value=15, max_value=240, value=45, step=15)
-            notes = st.text_area("Notes", value="")
+            choice = st.selectbox("Customer", list(customer_options.keys()), key="appt_customer_select")
+            service = st.text_input("Service", value="Session", key="appt_service")
+            start_local = st.datetime_input(
+                "Start (local)",
+                value=datetime.now(tz).replace(second=0, microsecond=0) + timedelta(hours=1),
+                key="appt_start_local",
+            )
+            duration_min = st.number_input("Duration (min)", min_value=15, max_value=240, value=45, step=15, key="appt_duration")
+            notes = st.text_area("Notes", value="", key="appt_notes")
 
-            if st.button("Create appointment"):
+            if st.button("Create appointment", key="appt_create_btn"):
                 cust = customer_options[choice]
                 start_utc = to_utc(start_local, tz)
                 end_utc = start_utc + timedelta(minutes=int(duration_min))
@@ -522,11 +526,14 @@ def page_manage_list(templates: Dict[str, str], tz: Any) -> None:
     adf["_start_dt"] = adf["start_iso"].apply(parse_iso_any)
     adf = adf.sort_values(by="_start_dt", ascending=False).drop(columns=["_start_dt"], errors="ignore")
 
-    st.dataframe(adf[["appointment_id", "customer_name", "customer_phone", "start_iso", "end_iso", "status", "service"]], use_container_width=True)
+    st.dataframe(
+        adf[["appointment_id", "customer_name", "customer_phone", "start_iso", "end_iso", "status", "service"]],
+        width="stretch",
+    )
 
     st.markdown("### Cancel appointment")
-    appt_id = st.selectbox("Select appointment", adf["appointment_id"].tolist())
-    if st.button("Cancel selected"):
+    appt_id = st.selectbox("Select appointment", adf["appointment_id"].tolist(), key="cancel_appt_select")
+    if st.button("Cancel selected", key="cancel_appt_btn"):
         idx = adf.index[adf["appointment_id"] == appt_id].tolist()
         if idx:
             i = idx[0]
@@ -543,22 +550,30 @@ def page_outbox() -> None:
     if df.empty:
         st.info("Outbox is empty.")
         return
-    st.dataframe(df.sort_values(by="scheduled_for_iso", ascending=False), use_container_width=True)
+    st.dataframe(df.sort_values(by="scheduled_for_iso", ascending=False), width="stretch")
 
 
 def page_customers() -> None:
     st.subheader("Customers")
     cdf = read_csv_df(CUSTOMERS_CSV, CUSTOMER_HEADER)
-    st.dataframe(cdf, use_container_width=True)
+    st.dataframe(cdf, width="stretch")
 
     with st.expander("➕ Add customer", expanded=False):
-        name = st.text_input("Name")
-        phone = st.text_input("Phone")
-        notes = st.text_area("Notes")
-        consent = st.selectbox("Consent", ["1", "0"], index=0)
-        if st.button("Create customer"):
+        name = st.text_input("Name", key="cust_name")
+        phone = st.text_input("Phone", key="cust_phone")
+        notes = st.text_area("Notes", key="cust_notes")
+        consent = st.selectbox("Consent", ["1", "0"], index=0, key="cust_consent")
+        if st.button("Create customer", key="cust_create_btn"):
             ts = iso_utc(now_utc())
-            row = {"customer_id": str(uuid.uuid4()), "name": name.strip(), "phone": to_e164_heuristic(phone), "notes": notes.strip(), "consent": consent, "created_at_iso": ts, "updated_at_iso": ts}
+            row = {
+                "customer_id": str(uuid.uuid4()),
+                "name": name.strip(),
+                "phone": to_e164_heuristic(phone),
+                "notes": notes.strip(),
+                "consent": consent,
+                "created_at_iso": ts,
+                "updated_at_iso": ts,
+            }
             cdf = pd.concat([cdf, pd.DataFrame([row])], ignore_index=True)
             write_csv_df(CUSTOMERS_CSV, cdf, CUSTOMER_HEADER)
             st.success("Customer created.")
@@ -569,13 +584,13 @@ def page_templates(templates: Dict[str, str]) -> None:
     st.subheader("Templates")
     tpls = dict(templates)
 
-    tpls["new"] = st.text_area("New appointment template", value=tpls["new"], height=80)
-    tpls["reminder_day"] = st.text_area("Day-before reminder", value=tpls["reminder_day"], height=70)
-    tpls["reminder_2h"] = st.text_area("2-hour reminder", value=tpls["reminder_2h"], height=70)
-    tpls["moved"] = st.text_area("Moved template", value=tpls["moved"], height=70)
-    tpls["cancelled"] = st.text_area("Cancelled template", value=tpls["cancelled"], height=70)
+    tpls["new"] = st.text_area("New appointment template", value=tpls["new"], height=80, key="tpl_new")
+    tpls["reminder_day"] = st.text_area("Day-before reminder", value=tpls["reminder_day"], height=70, key="tpl_day")
+    tpls["reminder_2h"] = st.text_area("2-hour reminder", value=tpls["reminder_2h"], height=70, key="tpl_2h")
+    tpls["moved"] = st.text_area("Moved template", value=tpls["moved"], height=70, key="tpl_moved")
+    tpls["cancelled"] = st.text_area("Cancelled template", value=tpls["cancelled"], height=70, key="tpl_cancelled")
 
-    if st.button("Save templates"):
+    if st.button("Save templates", key="tpl_save_btn"):
         save_templates(tpls)
         st.success("Saved.")
         st.rerun()
