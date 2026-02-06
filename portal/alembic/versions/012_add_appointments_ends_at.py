@@ -5,7 +5,7 @@ This migration adds ends_at and backfills it using starts_at + 45 minutes
 when null.
 
 Revision ID: 012_add_appointments_ends_at
-Revises: 011_add_tenant_archive_softdelete
+Revises: 013_merge_heads
 Create Date: 2026-02-06
 """
 from __future__ import annotations
@@ -15,7 +15,7 @@ import sqlalchemy as sa
 
 
 revision = "012_add_appointments_ends_at"
-down_revision = "011_add_tenant_archived_at"
+down_revision = "013_merge_heads"
 branch_labels = None
 depends_on = None
 
@@ -30,6 +30,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Keep downgrade safe: drop index then column (if exists)
     op.execute(sa.text("DROP INDEX IF EXISTS ix_appointments_ends_at"))
     op.execute(sa.text("ALTER TABLE appointments DROP COLUMN IF EXISTS ends_at"))
