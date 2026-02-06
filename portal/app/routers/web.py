@@ -57,6 +57,18 @@ def _toast_pop(request: Request):
         return s.pop("toast", None)
     return None
 
+def _parse_date(val: str | None) -> date | None:
+    if not val:
+        return None
+    v = val.strip()
+    if not v:
+        return None
+    try:
+        return date.fromisoformat(v)
+    except Exception:
+        return None
+
+
 
 def _session_tenant_slug(request: Request) -> str:
     s = _session(request)
@@ -395,6 +407,46 @@ def children_list(request: Request, tenant: str = "default", q: str = "", db: Se
     redirect = _require_login_for_tenant(request, tenant)
     if redirect:
         return redirect
+
+
+@router.post("/children/create")
+def children_create(
+    request: Request,
+    tenant: str = Form("default"),
+    full_name: str = Form(...),
+    date_of_birth: str = Form(""),
+    notes: str = Form(""),
+    parent1_name: str = Form(""),
+    parent1_phone: str = Form(""),
+    parent2_name: str = Form(""),
+    parent2_phone: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    # Create a new child record (tenant-safe)
+    redirect = _require_login_for_tenant(request, tenant)
+    if redirect:
+        return redirect
+
+    tctx = resolve_tenant(db, request, tenant_slug=tenant)
+    gate = _require_active_subscription(request, db, tctx.tenant_slug, tctx.tenant_id)
+    if gate:
+        return gate
+
+    c = Child(
+        tenant_id=tctx.tenant_id,
+        full_name=(full_name or "").strip(),
+        date_of_birth=_parse_date(date_of_birth),
+        notes=(notes or "").strip(),
+        parent1_name=(parent1_name or "").strip(),
+        parent1_phone=(parent1_phone or "").strip(),
+        parent2_name=(parent2_name or "").strip(),
+        parent2_phone=(parent2_phone or "").strip(),
+    )
+    db.add(c)
+    db.commit()
+    db.refresh(c)
+    _toast_set(request, "success", "Child created")
+    return RedirectResponse(url=f"{_rp(request)}/children/{c.id}?tab=overview", status_code=303)
 
     tctx = resolve_tenant(db, request, tenant_slug=tenant)
     gate = _require_active_subscription(request, db, tctx.tenant_slug, tctx.tenant_id)

@@ -15,7 +15,7 @@ import sqlalchemy as sa
 
 
 revision = "012_add_appointments_ends_at"
-down_revision = "011_add_tenant_archive_softdelete"
+down_revision = "011_add_tenant_archived_at"
 branch_labels = None
 depends_on = None
 
