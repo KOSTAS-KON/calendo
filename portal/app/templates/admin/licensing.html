@@ -1,132 +1,93 @@
-{% extends "layout.html" %}
-{% block content %}
-
-{% set header = "Licensing" %}
-{% set subheader = "Renew subscriptions or generate a **License Activation Code** (not a login password)." %}
-{% set actions = [
-  {"label":"Back to tenants","href": "/admin/tenants","variant":"outline"},
-  {"label":"Links","href": "/admin/links","variant":"outline"}
-] %}
-
-<div class="card">
-  <form method="get" action="/admin/licensing" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-    <div style="font-weight:900;">Select tenant</div>
-    <select class="input" name="tenant" style="min-width:280px;">
-      <option value="">-- choose --</option>
-      {% for t in tenants %}
-        <option value="{{t.slug}}" {% if selected and selected.slug==t.slug %}selected{% endif %}>
-          {{t.slug}} — {{t.name}}
-        </option>
-      {% endfor %}
-    </select>
-    <button class="btn" type="submit">Open</button>
-  </form>
-</div>
-
-{% if selected %}
-  <div class="card" style="margin-top:14px;">
-    <div style="display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap;">
-      <div>
-        <div class="muted">Tenant</div>
-        <div style="font-size:18px; font-weight:900;">{{selected.slug}} — {{selected.name}}</div>
-      </div>
-      <div style="opacity:.85; font-size:13px;">
-        Renewal rule: <b>active</b> → extend from expiry, <b>expired</b> → extend from today.
-      </div>
+{% extends "admin/_admin_base.html" %}
+{% block admin_content %}
+<div class="card-soft">
+  <div style="display:flex; justify-content:space-between; align-items:flex-end; gap:12px; flex-wrap:wrap;">
+    <div>
+      <div class="text-xs text-slate-500">Admin</div>
+      <div class="text-xl font-extrabold">Clinic Suite</div>
+      <div class="text-sm text-slate-600">Renew subscriptions or generate a <b>License Activation Code</b> (not a login password).</div>
     </div>
-
-    <hr style="border:none;border-top:1px solid rgba(255,255,255,.12); margin:14px 0;"/>
-
-    {% if current_sub %}
-      <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
-        <div class="pill {% if current_sub.status=='active' %}success{% endif %}">
-          Status: {{current_sub.status}}
-        </div>
-        <div class="muted">Ends at:</div>
-        <code>{{current_sub.ends_at}}</code>
-      </div>
-    {% else %}
-      <div class="muted">No subscription found for this tenant yet.</div>
-    {% endif %}
+    <div class="text-sm text-slate-500">
+      Renewal rule: <b>active → extend from expiry</b>, <b>expired → extend from today</b>.
+    </div>
   </div>
 
-  <div class="grid" style="display:grid; grid-template-columns: 1fr 1fr; gap:14px; margin-top:14px;">
-    <!-- ✅ NEW: Renew now -->
-    <div class="card">
-      <h3 style="margin-top:0;">Renew subscription</h3>
-      <div class="muted" style="margin-bottom:10px;">
-        Extends from expiry if active; from now if expired.
-      </div>
-
-      <form method="post" action="/admin/licensing/renew">
-        <input type="hidden" name="tenant_slug" value="{{selected.slug}}">
-        <label style="display:block; margin-top:8px; font-weight:700;">Plan</label>
-        <select class="input" name="plan_code" style="width:100%;">
-          {% for p in plans %}
-            <option value="{{p.code}}">
-              {{p.code}} ({{p.duration_days}} days)
-            </option>
-          {% endfor %}
-        </select>
-        <button class="btn btn-outline" type="submit" style="margin-top:10px;">🔁 Renew</button>
-      </form>
+  <form method="get" action="/admin/licensing" style="margin-top:14px;">
+    <label class="label">Select tenant</label>
+    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+      <select name="tenant" class="input" style="min-width:260px;">
+        <option value="">-- select --</option>
+        {% for t in tenants or [] %}
+          <option value="{{t.slug}}" {% if tenant==t.slug %}selected{% endif %}>{{t.slug}} — {{t.name}}</option>
+        {% endfor %}
+      </select>
+      <button class="btn" type="submit">Open</button>
     </div>
+  </form>
 
-        <!-- Reset login password -->
-    <div class="card">
-      <h3 style="margin-top:0;">Reset Login Password</h3>
-      <div class="muted" style="margin-bottom:10px;">
-        Resets the tenant user's <b>login password</b>. This does <b>not</b> renew the license.
-      </div>
-      <a class="btn btn-outline" href="/admin/tenants/{{selected.slug}}/reset_password">
-        🔑 Reset Login Password
-      </a>
-      <div class="muted" style="margin-top:10px; font-size:13px;">
-        After reset, log in via: <code>/auth/login?next=/t/{{selected.slug}}/suite</code>
-      </div>
-    </div>
-    
-
-    <!-- Generate activation code -->
-    <div class="card">
-      <h3 style="margin-top:0;">Generate License Activation Code</h3>
-      <div class="muted" style="margin-bottom:10px;">
-        Creates a one-time **License Activation Code** for this tenant + plan. This is **not** the login password. Codes show once.
-      </div>
-
-      <form method="post" action="/admin/licensing/generate">
-        <input type="hidden" name="tenant_slug" value="{{selected.slug}}">
-        <label style="display:block; margin-top:8px; font-weight:700;">Plan</label>
-        <select class="input" name="plan_code" style="width:100%;">
-          {% for p in plans %}
-            <option value="{{p.code}}">
-              {{p.code}} ({{p.duration_days}} days)
-            </option>
-          {% endfor %}
-        </select>
-        <button class="btn" type="submit" style="margin-top:10px;">Generate License Activation Code</button>
-      </form>
-
+  {% if selected %}
+  <div style="margin-top:18px;">
+    <div class="text-sm text-slate-500">Tenant</div>
+    <div class="text-2xl font-extrabold">{{selected.slug}} — {{selected.name}}</div>
+    <div style="margin-top:10px; display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
+      {% if current_sub and current_sub.ends_at %}
+        <span class="pill {% if current_sub.ends_at > now %}ok{% else %}warn{% endif %}">Status: {{ current_sub.status }}</span>
+        <span class="pill muted">Ends at: {{ current_sub.ends_at }}</span>
+      {% else %}
+        <span class="pill warn">No subscription yet</span>
+      {% endif %}
       {% if code %}
-        <div class="card" style="margin-top:12px;">
-          <div><strong>Activation code (show once):</strong></div>
-          <div style="font-size:20px; font-weight:800; margin-top:6px;">{{code}}</div>
-          <div style="margin-top:10px;">
-            <button class="btn btn-outline copy-btn" type="button" data-copy="{{code}}">📋 Copy</button>
-          </div>
-          <div class="muted" style="margin-top:8px; font-size:13px;">
-            Tip: Apply this code to renew the tenant if you use “activation code” flow.
-          </div>
-        </div>
+        <span class="pill info">Activation code: <code>{{ code }}</code></span>
       {% endif %}
     </div>
   </div>
 
-  <style>
-    @media (max-width: 900px){
-      .grid{ grid-template-columns: 1fr !important; }
-    }
-  </style>
-{% endif %}
+  <div class="grid" style="display:grid; grid-template-columns: 1fr 1fr; gap:14px; margin-top:16px;">
+    <div class="card">
+      <h3 style="margin-top:0;">Renew subscription</h3>
+      <div class="muted" style="margin-bottom:10px;">Extends from expiry if active; from now if expired.</div>
+      <form method="post" action="/admin/licensing/renew">
+        <input type="hidden" name="tenant_slug" value="{{ selected.slug }}">
+        <label class="label">Plan</label>
+        <select class="input" name="plan_code">
+          {% for p in plans %}
+            <option value="{{p.code}}">{{p.code}} ({{p.duration_days}} days)</option>
+          {% endfor %}
+        </select>
+        <div style="margin-top:12px;">
+          <button class="btn" type="submit">🔁 Renew</button>
+        </div>
+      </form>
+    </div>
 
+    <div class="card">
+      <h3 style="margin-top:0;">Generate License Activation Code</h3>
+      <div class="muted" style="margin-bottom:10px;">Creates a one-time <b>License Activation Code</b>. This is <b>not</b> the login password. Codes show once.</div>
+      <form method="post" action="/admin/licensing/generate">
+        <input type="hidden" name="tenant_slug" value="{{ selected.slug }}">
+        <label class="label">Plan</label>
+        <select class="input" name="plan_code">
+          {% for p in plans %}
+            <option value="{{p.code}}">{{p.code}} ({{p.duration_days}} days)</option>
+          {% endfor %}
+        </select>
+        <div style="margin-top:12px;">
+          <button class="btn" type="submit">🧾 Generate Code</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0;">Reset Login Password</h3>
+      <div class="muted" style="margin-bottom:10px;">Resets the tenant user's <b>login password</b>. This does <b>not</b> renew the license.</div>
+      <a class="btn btn-outline" href="/admin/tenants/{{selected.slug}}/reset_password">🔑 Reset Login Password</a>
+      <div class="muted" style="margin-top:10px;">Login URL: <code>/auth/login?next=/t/{{selected.slug}}/suite</code></div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+<script>
+// Provide tenants list if not present from backend: fallback using server-side list page
+</script>
 {% endblock %}
