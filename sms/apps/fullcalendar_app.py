@@ -321,9 +321,140 @@ def to_e164_heuristic(phone: str, default_cc: str = "30") -> str:
     return p
 
 
+<<<<<<< Updated upstream
 def valid_phone_e164(phone: str) -> bool:
     p = to_e164_heuristic(phone)
     if not p.startswith("+"):
+=======
+def render_tpl(tpl: str, name: str, start_local: datetime) -> str:
+    return (
+        (tpl or "")
+        .replace("{name}", name or "")
+        .replace("{date}", start_local.strftime("%Y-%m-%d"))
+        .replace("{time}", start_local.strftime("%H:%M"))
+    )
+
+
+# =============================================================================
+# Portal API helpers
+# =============================================================================
+def _portal_base_url() -> str:
+    for k in ("PORTAL_APP_URL", "PORTAL_BASE_URL", "THERAPY_PORTAL_URL", "PORTAL_URL"):
+        v = (os.getenv(k) or "").strip().rstrip("/")
+        if v:
+            return v
+    return ""
+
+
+def _fetch_portal_json(path: str, headers: Dict[str, str] | None = None) -> Dict[str, Any] | None:
+    base = _portal_base_url()
+    if not base:
+        return None
+    url = base + path
+    try:
+        req = urllib.request.Request(url, headers=headers or {})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            raw = resp.read().decode("utf-8")
+            return json.loads(raw)
+    except Exception:
+        return None
+
+
+def portal_get_children(tenant_slug: str, internal_key: str) -> list[dict]:
+    data = _fetch_portal_json(
+        f"/api/internal/children?tenant={tenant_slug}",
+        headers={"X-Internal-Key": internal_key},
+    ) or {}
+    return list((data.get("children") or [])) if isinstance(data, dict) else []
+
+
+def portal_create_child(
+    tenant_slug: str,
+    internal_key: str,
+    full_name: str,
+    date_of_birth: str = "",
+    notes: str = "",
+) -> Optional[int]:
+    """Create a child/customer in the Portal via the internal API.
+
+    Returns the new child_id on success, or None on failure.
+    """
+    base = _portal_base_url()
+    if not base:
+        return None
+    url = base + "/api/internal/children/create"
+    try:
+        r = requests.post(
+            url,
+            headers={"X-Internal-Key": internal_key},
+            data={
+                "tenant": tenant_slug,
+                "full_name": full_name,
+                "date_of_birth": date_of_birth,
+                "notes": notes,
+            },
+            timeout=15,
+        )
+        if r.status_code >= 400:
+            return None
+        payload = r.json() if r.content else {}
+        if isinstance(payload, dict) and payload.get("child_id"):
+            return int(payload["child_id"])
+        # Backwards compatibility: allow returning the full child object.
+        if isinstance(payload, dict) and isinstance(payload.get("child"), dict) and payload["child"].get("id"):
+            return int(payload["child"]["id"])
+    except Exception:
+        return None
+    return None
+
+
+def portal_get_appointments(tenant_slug: str, internal_key: str, days: int = 60) -> list[dict]:
+    data = _fetch_portal_json(
+        f"/api/internal/appointments?tenant={tenant_slug}&days={days}",
+        headers={"X-Internal-Key": internal_key},
+    ) or {}
+    return list((data.get("appointments") or [])) if isinstance(data, dict) else []
+
+
+def portal_create_appointment(
+    tenant_slug: str,
+    internal_key: str,
+    child_id: int,
+    starts_at_iso: str,
+    ends_at_iso: str,
+    therapist_name: str,
+    procedure: str,
+) -> Optional[int]:
+    base = _portal_base_url()
+    if not base:
+        return None
+    url = base + "/api/internal/appointments/create"
+    try:
+        r = requests.post(
+            url,
+            headers={"X-Internal-Key": internal_key},
+            data={
+                "tenant": tenant_slug,
+                "child_id": str(child_id),
+                "starts_at_iso": starts_at_iso,
+                "ends_at_iso": ends_at_iso,
+                "therapist_name": therapist_name,
+                "procedure": procedure,
+            },
+            timeout=10,
+        )
+        if r.status_code != 200:
+            return None
+        j = r.json()
+        return int(j.get("appointment_id"))
+    except Exception:
+        return None
+
+
+def portal_move_appointment(tenant_slug: str, internal_key: str, appointment_id: int, starts_at_iso: str, ends_at_iso: str) -> bool:
+    base = _portal_base_url()
+    if not base:
+>>>>>>> Stashed changes
         return False
     digits = re.sub(r"\D", "", p)
     return 8 <= len(digits) <= 15
@@ -1956,6 +2087,7 @@ def page_outbox() -> None:
     st.dataframe(df.sort_values("scheduled_for_iso", ascending=False), width="stretch")
 
 
+<<<<<<< Updated upstream
 def page_customers() -> None:
     # Portal-synced customers (Portal Children)
     portal_base = os.getenv("PORTAL_BASE_URL", "").rstrip("/")
@@ -2042,6 +2174,72 @@ def page_customers() -> None:
             write_csv_df(CUSTOMERS_CSV, df, CUSTOMER_HEADER)
             st.success("Customer added.")
             st.rerun()
+=======
+def page_customers(tenant_slug: str, internal_key: str) -> None:
+    st.subheader("Customers")
+    st.info(
+        "Customers are stored in the Therapy Portal (Children). You can view them here and add new ones."
+    )
+
+    if not tenant_slug:
+        st.warning("No tenant selected.")
+        return
+    if not internal_key:
+        st.error("Missing INTERNAL_API_KEY / INTERNAL_TOKEN for portal connectivity.")
+        return
+
+    left, right = st.columns([1, 2], gap="large")
+
+    with left:
+        st.markdown("#### Add customer")
+        with st.form("add_customer", clear_on_submit=True):
+            full_name = st.text_input("Full name", placeholder="e.g., Alex Smith")
+            dob_str = st.text_input("Date of birth (optional)", placeholder="YYYY-MM-DD")
+            parent_phone = st.text_input("Parent phone (optional)", placeholder="+3069...")
+            parent_email = st.text_input("Parent email (optional)", placeholder="name@example.com")
+            notes = st.text_area("Notes (optional)", height=90)
+            submitted = st.form_submit_button("Create customer")
+
+        if submitted:
+            if not full_name.strip():
+                st.error("Please enter a full name.")
+            else:
+                child_id = portal_create_child(
+                    tenant_slug=tenant_slug,
+                    internal_key=internal_key,
+                    full_name=full_name.strip(),
+                    date_of_birth=dob_str.strip(),
+                    notes=notes.strip(),
+                    parent_phone=parent_phone.strip(),
+                    parent_email=parent_email.strip(),
+                )
+                if child_id:
+                    st.success(f"Customer created (ID {child_id}).")
+                    st.rerun()
+                else:
+                    st.error("Could not create customer. Check Portal logs and INTERNAL_API_KEY.")
+
+    with right:
+        st.markdown("#### Existing customers")
+        children = portal_get_children(tenant_slug, internal_key)
+        if not children:
+            st.info("No customers found yet.")
+            return
+
+        # Small, readable table
+        rows = []
+        for c in children:
+            rows.append(
+                {
+                    "id": c.get("id"),
+                    "full_name": c.get("full_name"),
+                    "dob": c.get("date_of_birth"),
+                    "parent_phone": c.get("parent_phone"),
+                    "parent_email": c.get("parent_email"),
+                }
+            )
+        st.dataframe(rows, width="stretch", hide_index=True)
+>>>>>>> Stashed changes
 
 
 def page_templates(templates: Dict[str, str]) -> None:
@@ -2077,6 +2275,7 @@ def provider_diagnostics() -> Dict[str, Any]:
     d["INFOBIP_FROM_value"] = (os.getenv("INFOBIP_FROM") or "").strip()
     return d
 
+<<<<<<< Updated upstream
 
 def _portal_base_url() -> str:
     """Return the Portal base URL for SaaS/on-prem.
@@ -2195,6 +2394,36 @@ def _apply_portal_settings_to_env() -> Dict[str, Any]:
                 os.environ["INFOBIP_SENDER"] = sender
             if api_key:
                 os.environ["INFOBIP_API_KEY"] = api_key
+=======
+    # Lightweight theming to roughly match the Therapy Portal.
+    st.markdown(
+        """
+        <style>
+          .stApp { background: #f7f9fc; }
+          /* Hide Streamlit chrome */
+          #MainMenu { visibility: hidden; }
+          footer { visibility: hidden; }
+          header { visibility: hidden; }
+          /* Slightly round common widgets */
+          div[data-testid="stTextInput"] input,
+          div[data-testid="stTextArea"] textarea,
+          div[data-testid="stNumberInput"] input,
+          div[data-testid="stDateInput"] input {
+            border-radius: 14px !important;
+          }
+          .stButton>button, a[data-testid="stLinkButton"] {
+            border-radius: 14px !important;
+          }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    tenant_slug = (os.getenv("TENANT_SLUG") or TENANT_SLUG or "default").strip().lower()
+    internal_key = (os.getenv("INTERNAL_API_KEY") or os.getenv("INTERNAL_TOKEN") or "").strip()
+    tz = get_app_tz()
+    templates = DEFAULT_TEMPLATES
+>>>>>>> Stashed changes
 
             print(
                 "PORTAL_APPLY: clinic_settings loaded "
@@ -2352,7 +2581,7 @@ def main() -> None:
     with tabs[2]:
         page_outbox()
     with tabs[3]:
-        page_customers()
+        page_customers(tenant_slug, internal_key)
     with tabs[4]:
         page_templates(templates)
 if __name__ == "__main__":

@@ -9,6 +9,11 @@ Notes:
 
 from __future__ import annotations
 
+<<<<<<< Updated upstream
+=======
+from datetime import datetime, date, timedelta, timezone
+import hashlib
+>>>>>>> Stashed changes
 import os
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
@@ -290,6 +295,7 @@ def suite_page(
     ctx["active_tab"] = tab
     return _render(request, "pages/suite.html", ctx)
 
+<<<<<<< Updated upstream
 
 @router.get("/settings", response_class=HTMLResponse)
 def settings_page(
@@ -310,6 +316,420 @@ def settings_page(
 
 @router.get("/setup", response_class=HTMLResponse)
 def setup_alias(
+=======
+    google_maps_link = cs.map_url if cs else None
+
+    # Handy .env template for the SMS service (and local dev).
+    # NOTE: Values are intentionally minimal; copy-paste and adjust.
+    portal_base = (str(request.base_url).rstrip("/") + _rp(request)).rstrip("/")
+    env_preview = "\n".join(
+        [
+            f"DATABASE_URL={settings.DATABASE_URL or ''}",
+            f"PORTAL_BASE_URL={portal_base}",
+            f"PORTAL_APP_URL={portal_base}",
+            f"INTERNAL_TOKEN={settings.INTERNAL_API_KEY or ''}",
+            f"INTERNAL_API_KEY={settings.INTERNAL_API_KEY or ''}",
+            f"SSO_SHARED_SECRET={settings.SSO_SHARED_SECRET or ''}",
+            "",
+            "# Optional / provider settings",
+            f"SMS_PROVIDER={(cs.sms_provider if cs else '')}",
+            f"INFOBIP_BASE_URL={(cs.infobip_base_url if cs else '')}",
+            f"INFOBIP_FROM={(cs.infobip_sender if cs else '')}",
+            f"INFOBIP_API_KEY={(cs.infobip_api_key if cs else '')}",
+        ]
+    )
+
+    return _render(
+        request,
+        "pages/settings.html",
+        {
+            "need": need,
+            "subscription_active": active,
+            "subscription_until": until,
+            "subscription_plan": plan,
+            "clinic": cs,
+            "license": lic,
+            "google_maps_link": google_maps_link,
+            "env_preview": env_preview,
+        },
+        db,
+        tenant_slug=tctx.tenant_slug,
+    )
+
+
+@router.post("/settings/clinic")
+def settings_save_clinic(
+    request: Request,
+    clinic_name: str = Form(""),
+    address: str = Form(""),
+    timezone: str = Form(""),  # currently informational; kept for forward compatibility
+    lat: str = Form(""),
+    lng: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    """Save clinic identity + map info.
+
+    The Settings UI does not include the tenant as a hidden input, so we derive it from the
+    authenticated session.
+    """
+
+    tenant_slug = _session_tenant_slug(request)
+    redirect = _require_login_for_tenant(request, tenant_slug)
+    if redirect:
+        return redirect
+
+    tctx = resolve_tenant(db, request, tenant_slug=tenant_slug)
+    cs = _get_settings(db, tctx.tenant_id)
+
+    cs.clinic_name = (clinic_name or "").strip()
+    cs.address = (address or "").strip()
+
+    def _to_float(v: str) -> Optional[float]:
+        v = (v or "").strip()
+        if not v:
+            return None
+        try:
+            return float(v)
+        except Exception:
+            return None
+
+    cs.lat = _to_float(lat)
+    cs.lng = _to_float(lng)
+
+    # Store a convenient google maps link.
+    if cs.lat is not None and cs.lng is not None:
+        cs.google_maps_link = f"https://www.google.com/maps?q={cs.lat},{cs.lng}"
+    elif cs.address:
+        cs.google_maps_link = f"https://www.google.com/maps/search/?api=1&query={quote_plus(cs.address)}"
+    else:
+        cs.google_maps_link = None
+
+    cs.updated_at = datetime.utcnow()
+    db.add(cs)
+    db.commit()
+
+    _toast_set(request, "success", "Clinic settings saved")
+    return RedirectResponse(url=f"{_rp(request)}/settings?tenant={tctx.tenant_slug}", status_code=303)
+
+
+@router.post("/settings/infobip")
+def settings_save_infobip(
+    request: Request,
+    sms_provider: str = Form(""),
+    infobip_base_url: str = Form(""),
+    infobip_sender: str = Form(""),
+    infobip_api_key: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    tenant_slug = _session_tenant_slug(request)
+    redirect = _require_login_for_tenant(request, tenant_slug)
+    if redirect:
+        return redirect
+
+    tctx = resolve_tenant(db, request, tenant_slug=tenant_slug)
+    cs = _get_settings(db, tctx.tenant_id)
+
+    cs.sms_provider = (sms_provider or "").strip() or cs.sms_provider or "infobip"
+    cs.infobip_base_url = (infobip_base_url or "").strip()
+    cs.infobip_sender = (infobip_sender or "").strip()
+    cs.infobip_api_key = (infobip_api_key or "").strip()
+    cs.updated_at = datetime.utcnow()
+
+    db.add(cs)
+    db.commit()
+
+    _toast_set(request, "success", "SMS provider settings saved")
+    return RedirectResponse(url=f"{_rp(request)}/settings?tenant={tctx.tenant_slug}", status_code=303)
+
+
+@router.get("/settings/env")
+def settings_env_download(request: Request, tenant: str = "", db: Session = Depends(get_db)):
+    """Download a minimal env file for the SMS service."""
+
+    tenant_slug = (tenant or "").strip().lower() or _session_tenant_slug(request)
+    redirect = _require_login_for_tenant(request, tenant_slug)
+    if redirect:
+        return redirect
+
+    tctx = resolve_tenant(db, request, tenant_slug=tenant_slug)
+    cs = _get_settings(db, tctx.tenant_id)
+
+    portal_base = (str(request.base_url).rstrip("/") + _rp(request)).rstrip("/")
+    env_text = "\n".join(
+        [
+            f"PORTAL_BASE_URL={portal_base}",
+            f"PORTAL_APP_URL={portal_base}",
+            f"INTERNAL_API_KEY={settings.INTERNAL_API_KEY or ''}",
+            f"INTERNAL_TOKEN={settings.INTERNAL_API_KEY or ''}",
+            f"SSO_SHARED_SECRET={settings.SSO_SHARED_SECRET or ''}",
+            f"SMS_PROVIDER={(cs.sms_provider if cs else '')}",
+            f"INFOBIP_BASE_URL={(cs.infobip_base_url if cs else '')}",
+            f"INFOBIP_FROM={(cs.infobip_sender if cs else '')}",
+            f"INFOBIP_API_KEY={(cs.infobip_api_key if cs else '')}",
+            "",
+        ]
+    )
+
+    filename = f"calendo_{tctx.tenant_slug}.env"
+    return Response(
+        env_text,
+        media_type="text/plain",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@router.post("/settings/activate")
+def settings_activate_code(
+    request: Request,
+    activation_code: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    """Redeem an activation code and extend/create the tenant subscription."""
+
+    tenant_slug = _session_tenant_slug(request)
+    redirect = _require_login_for_tenant(request, tenant_slug)
+    if redirect:
+        return redirect
+
+    tctx = resolve_tenant(db, request, tenant_slug=tenant_slug)
+    code = (activation_code or "").strip()
+    if not code:
+        _toast_set(request, "error", "Please enter an activation code")
+        return RedirectResponse(url=f"{_rp(request)}/settings?tenant={tctx.tenant_slug}", status_code=303)
+
+    code_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()
+    ac = (
+        db.query(ActivationCode)
+        .filter(
+            ActivationCode.tenant_id == tctx.tenant_id,
+            ActivationCode.code_hash == code_hash,
+            ActivationCode.revoked_at.is_(None),
+        )
+        .first()
+    )
+    if not ac:
+        _toast_set(request, "error", "Invalid or revoked activation code")
+        return RedirectResponse(url=f"{_rp(request)}/settings?tenant={tctx.tenant_slug}", status_code=303)
+
+    if ac.max_redemptions is not None and ac.redeemed_count >= ac.max_redemptions:
+        _toast_set(request, "error", "This activation code has no remaining redemptions")
+        return RedirectResponse(url=f"{_rp(request)}/settings?tenant={tctx.tenant_slug}", status_code=303)
+
+    plan = db.get(Plan, ac.plan_id)
+    if not plan:
+        _toast_set(request, "error", "Activation code plan missing")
+        return RedirectResponse(url=f"{_rp(request)}/settings?tenant={tctx.tenant_slug}", status_code=303)
+
+    now = datetime.now(timezone.utc)
+    duration = int(plan.duration_days or 30)
+
+    sub = (
+        db.query(Subscription)
+        .filter(Subscription.tenant_id == tctx.tenant_id, Subscription.status == "active")
+        .order_by(Subscription.ends_at.desc().nullslast())
+        .first()
+    )
+
+    if sub and sub.ends_at and sub.ends_at > now:
+        sub.ends_at = sub.ends_at + timedelta(days=duration)
+        sub.plan_id = plan.id
+    else:
+        sub = Subscription(
+            tenant_id=tctx.tenant_id,
+            plan_id=plan.id,
+            status="active",
+            starts_at=now,
+            ends_at=now + timedelta(days=duration),
+        )
+        db.add(sub)
+
+    ac.redeemed_count += 1
+    db.add(ac)
+    db.commit()
+
+    _toast_set(request, "success", f"Activated: {plan.name} (+{duration} days)")
+    return RedirectResponse(url=f"{_rp(request)}/settings?tenant={tctx.tenant_slug}", status_code=303)
+
+
+@router.post("/settings/license")
+def settings_save_license(
+    request: Request,
+    product_mode: str = Form("BOTH"),
+    trial_end: str = Form(""),
+    license_end: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    """Allow editing the global license object (product mode + optional dates).
+
+    Production licensing is enforced per-tenant via Subscriptions, but this lets you set a
+    global product mode (SMS / Portal / Both) from the Settings UI.
+    """
+
+    tenant_slug = _session_tenant_slug(request)
+    redirect = _require_login_for_tenant(request, tenant_slug)
+    if redirect:
+        return redirect
+
+    tctx = resolve_tenant(db, request, tenant_slug=tenant_slug)
+    lic = _get_license(db)
+    lic.product_mode = (product_mode or "BOTH").strip().upper()
+
+    def _parse_date(d: str) -> Optional[datetime]:
+        d = (d or "").strip()
+        if not d:
+            return None
+        try:
+            # HTML date input -> YYYY-MM-DD
+            return datetime.fromisoformat(d).replace(tzinfo=timezone.utc)
+        except Exception:
+            return None
+
+    lic.trial_end = _parse_date(trial_end)
+    lic.license_end = _parse_date(license_end)
+    lic.updated_at = datetime.utcnow()
+
+    db.add(lic)
+    db.commit()
+
+    _toast_set(request, "success", "License settings saved")
+    return RedirectResponse(url=f"{_rp(request)}/settings?tenant={tctx.tenant_slug}", status_code=303)
+
+
+# =============================================================================
+# Internal calendar sync API (SMS reads/writes Portal appointments)
+# =============================================================================
+@router.get("/api/internal/children")
+def api_internal_children(request: Request, tenant: str = "default", db: Session = Depends(get_db)):
+    _require_internal(request)
+    tctx = resolve_tenant(db, request, tenant_slug=tenant)
+    rows = (
+        db.query(Child)
+        .filter(Child.tenant_id == tctx.tenant_id)
+        .order_by(Child.full_name.asc())
+        .all()
+    )
+    out = []
+    for c in rows:
+        out.append(
+            {
+                "id": c.id,
+                "full_name": c.full_name,
+                "date_of_birth": c.date_of_birth.isoformat() if getattr(c, "date_of_birth", None) else None,
+                "parent1_phone": getattr(c, "parent1_phone", None),
+                "parent1_email": getattr(c, "parent1_email", None),
+                "parent2_phone": getattr(c, "parent2_phone", None),
+                "parent2_email": getattr(c, "parent2_email", None),
+            }
+        )
+    return {"tenant": tctx.tenant_slug, "children": out}
+
+
+@router.post("/api/internal/children/create")
+def api_internal_children_create(
+    request: Request,
+    tenant: str = "default",
+    full_name: str = Form(...),
+    date_of_birth: str = Form(""),
+    notes: str = Form(""),
+    parent_phone: str = Form(""),
+    parent_email: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    """Create a Child from the SMS service (internal key protected)."""
+    _require_internal(request)
+    tctx = resolve_tenant(db, request, tenant_slug=tenant)
+
+    name = (full_name or "").strip()
+    if not name:
+        return {"ok": False, "error": "full_name is required"}
+
+    dob: Optional[date] = None
+    dob_s = (date_of_birth or "").strip()
+    if dob_s:
+        try:
+            dob = date.fromisoformat(dob_s)
+        except Exception:
+            return {"ok": False, "error": "date_of_birth must be YYYY-MM-DD"}
+
+    c = Child(
+        tenant_id=tctx.tenant_id,
+        full_name=name,
+        date_of_birth=dob,
+        notes=(notes or "").strip() or None,
+        parent1_phone=(parent_phone or "").strip() or None,
+        parent1_email=(parent_email or "").strip() or None,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    db.add(c)
+    db.commit()
+    return {"ok": True, "child_id": c.id}
+
+
+@router.get("/api/internal/clinic_settings")
+def api_internal_clinic_settings(request: Request, tenant: str = "default", db: Session = Depends(get_db)):
+    """Return clinic/SMS provider settings for a tenant (internal key protected)."""
+    _require_internal(request)
+    tctx = resolve_tenant(db, request, tenant_slug=tenant)
+    cs = _get_settings(db, tctx.tenant_id)
+    return {
+        "tenant": tctx.tenant_slug,
+        "clinic_settings": {
+            "clinic_name": cs.clinic_name,
+            "address": cs.address,
+            "google_maps_link": cs.google_maps_link,
+            "lat": cs.lat,
+            "lng": cs.lng,
+            "sms_provider": cs.sms_provider,
+            "infobip_base_url": cs.infobip_base_url,
+            "infobip_sender": cs.infobip_sender,
+            # The SMS service needs the API key to send; do not expose this endpoint publicly.
+            "infobip_api_key": cs.infobip_api_key,
+        },
+    }
+
+
+@router.get("/api/internal/appointments")
+def api_internal_appointments(request: Request, tenant: str = "default", days: int = 60, db: Session = Depends(get_db)):
+    _require_internal(request)
+    tctx = resolve_tenant(db, request, tenant_slug=tenant)
+    days = max(1, min(365, int(days or 60)))
+    now = datetime.utcnow()
+    end = now + timedelta(days=days)
+
+    q = (
+        db.query(Appointment, Child)
+        .join(Child, Child.id == Appointment.child_id)
+        .filter(
+            Appointment.tenant_id == tctx.tenant_id,
+            Appointment.starts_at >= now - timedelta(days=3),
+            Appointment.starts_at <= end,
+        )
+        .order_by(Appointment.starts_at.asc())
+    )
+
+    out = []
+    for appt, child in q.all():
+        att = (appt.attendance_status or "").upper()
+        status = "cancelled" if att == "CANCELLED" else "active"
+        out.append({
+            "id": appt.id,
+            "child_id": appt.child_id,
+            "child_name": child.full_name,
+            "to_phone": getattr(child, "parent1_phone", "") or getattr(child, "parent2_phone", "") or "",
+            "starts_at": appt.starts_at.replace(tzinfo=timezone.utc).isoformat(),
+            "ends_at": appt.ends_at.replace(tzinfo=timezone.utc).isoformat(),
+            "procedure": appt.procedure,
+            "therapist_name": appt.therapist_name,
+            "status": status,
+            "attendance_status": appt.attendance_status,
+        })
+    return {"tenant": tctx.tenant_slug, "appointments": out}
+
+
+@router.post("/api/internal/appointments/create")
+def api_internal_appointment_create(
+>>>>>>> Stashed changes
     request: Request,
     tenant: Optional[str] = None,
     tab: str = Query(default="overview"),
@@ -406,6 +826,7 @@ def children_list(
     if redirect:
         return redirect
 
+<<<<<<< Updated upstream
     query = db.query(Child).filter_by(tenant_id=tctx.tenant_id)
     if q:
         # Child model typically has full_name; if not, fall back.
@@ -427,6 +848,29 @@ def children_create_get(
     # Compatibility: some UIs link to /children/create (GET). Redirect to /children
     tenant_slug = _tenant_slug_param(request, tenant)
     return RedirectResponse(url=f"{_rp(request)}/children?tenant={quote_plus(tenant_slug or '')}", status_code=303)
+=======
+    tctx = resolve_tenant(db, request, tenant_slug=tenant)
+    gate = _require_active_subscription(request, db, tctx.tenant_slug, tctx.tenant_id)
+    if gate:
+        return gate
+
+    query = db.query(Child).filter(Child.tenant_id == tctx.tenant_id)
+    if q:
+        query = query.filter(Child.full_name.ilike(f"%{q}%"))
+
+    children = query.order_by(Child.full_name.asc()).all()
+    meta = {
+        "total": len(children),
+    }
+
+    return _render(
+        request,
+        "pages/children_list.html",
+        {"children": children, "q": q, "meta": meta},
+        db,
+        tenant_slug=tctx.tenant_slug,
+    )
+>>>>>>> Stashed changes
 
 
 @router.post("/children/create")
@@ -450,6 +894,7 @@ def children_create_post(
     db.commit()
     db.refresh(child)
 
+<<<<<<< Updated upstream
     return RedirectResponse(url=f"{_rp(request)}/children?tenant={tctx.tenant_slug}", status_code=303)
 
 
@@ -590,9 +1035,19 @@ def api_clinic_settings_public(
     db: Session = Depends(get_db),
 ):
     # Public read (no secrets)
+=======
+
+@router.get("/children/{child_id}", response_class=HTMLResponse)
+def child_detail(request: Request, child_id: int, tenant: str = "default", tab: str = "overview", db: Session = Depends(get_db)):
+    redirect = _require_login_for_tenant(request, tenant)
+    if redirect:
+        return redirect
+
+>>>>>>> Stashed changes
     tctx = resolve_tenant(db, request, tenant_slug=tenant)
     cs = _get_or_create_clinic_settings(db, tctx.tenant_id)
 
+<<<<<<< Updated upstream
     payload: Dict[str, Any] = {}
     for k in ["clinic_name", "timezone", "locale", "sms_sender_id", "enable_24h", "enable_2h", "reminder_hours_24", "reminder_hours_2"]:
         if hasattr(cs, k):
@@ -774,6 +1229,135 @@ async def api_internal_children_create(
     db.refresh(child)
 
     return {"ok": True, "id": getattr(child, "id", None)}
+=======
+    child = (
+        db.query(Child)
+        .filter(Child.tenant_id == tctx.tenant_id, Child.id == child_id)
+        .first()
+    )
+    if not child:
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    appointments = (
+        db.query(Appointment)
+        .filter(Appointment.tenant_id == tctx.tenant_id, Appointment.child_id == child.id)
+        .order_by(Appointment.starts_at.desc())
+        .all()
+    )
+    attachments = (
+        db.query(Attachment)
+        .filter(Attachment.tenant_id == tctx.tenant_id, Attachment.child_id == child.id)
+        .order_by(Attachment.created_at.desc())
+        .all()
+    )
+    timeline = (
+        db.query(TimelineEvent)
+        .filter(TimelineEvent.tenant_id == tctx.tenant_id, TimelineEvent.child_id == child.id)
+        .order_by(TimelineEvent.occurred_at.desc())
+        .all()
+    )
+
+    return _render(
+        request,
+        "pages/child_detail.html",
+        {
+            "child": child,
+            "appointments": appointments,
+            "attachments": attachments,
+            "timeline": timeline,
+            "tab": (tab or "overview").lower(),
+        },
+        db,
+        tenant_slug=tctx.tenant_slug,
+    )
+
+
+# ----------------------------
+# SMS Outbox (portal view)
+# ----------------------------
+@router.get("/sms-outbox", response_class=HTMLResponse)
+def sms_outbox_page(request: Request, tenant: str = "default", db: Session = Depends(get_db)):
+    redirect = _require_login_for_tenant(request, tenant)
+    if redirect:
+        return redirect
+
+    tctx = resolve_tenant(db, request, tenant_slug=tenant)
+    gate = _require_active_subscription(request, db, tctx.tenant_slug, tctx.tenant_id)
+    if gate:
+        return gate
+
+    rows = (
+        db.query(SmsOutbox)
+        .filter(SmsOutbox.tenant_id == tctx.tenant_id)
+        .order_by(SmsOutbox.created_at.desc())
+        .limit(250)
+        .all()
+    )
+
+    # Map DB rows to the field names expected by the template.
+    outbox = [
+        {
+            "scheduled_at": (r.next_attempt_at or r.created_at),
+            "to_phone": r.to_number,
+            "message": r.body,
+            "status": r.status,
+            "attempts": r.attempts,
+            "provider_message_id": r.provider_message_id,
+            "last_error": r.error,
+        }
+        for r in rows
+    ]
+
+    return _render(
+        request,
+        "pages/sms_outbox.html",
+        {"outbox": outbox},
+        db,
+        tenant_slug=tctx.tenant_slug,
+    )
+
+
+@router.post("/sms-outbox/test")
+def sms_outbox_test(
+    request: Request,
+    tenant: str = Form("default"),
+    to_phone: str = Form(""),
+    message: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    redirect = _require_login_for_tenant(request, tenant)
+    if redirect:
+        return redirect
+
+    tctx = resolve_tenant(db, request, tenant_slug=tenant)
+    gate = _require_active_subscription(request, db, tctx.tenant_slug, tctx.tenant_id)
+    if gate:
+        return gate
+
+    to_phone = (to_phone or "").strip()
+    message = (message or "").strip()
+    if not to_phone or not message:
+        _toast_set(request, "error", "Please provide a phone number and a message")
+        return RedirectResponse(url=f"{_rp(request)}/sms-outbox?tenant={tctx.tenant_slug}", status_code=303)
+
+    row = SmsOutbox(
+        tenant_id=tctx.tenant_id,
+        to_number=to_phone,
+        body=message,
+        status="queued",
+        provider="",
+        next_attempt_at=datetime.utcnow(),
+    )
+    db.add(row)
+    db.commit()
+    _toast_set(request, "success", "Message queued")
+    return RedirectResponse(url=f"{_rp(request)}/sms-outbox?tenant={tctx.tenant_slug}", status_code=303)
+
+
+# ----------------------------
+# Legacy compatibility routes (avoid 404s from old buttons)
+# ----------------------------
+>>>>>>> Stashed changes
 
 
 @router.get("/api/internal/appointments")

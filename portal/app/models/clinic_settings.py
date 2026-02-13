@@ -32,6 +32,36 @@ class ClinicSettings(Base):
 
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
+    # ---------------------------------------------------------------------
+    # Template / backwards-compat aliases
+    # ---------------------------------------------------------------------
+    @property
+    def name(self) -> str:
+        """Alias used by templates (suite, etc.)."""
+        return self.clinic_name
+
+    @property
+    def latitude(self) -> float | None:
+        """Legacy alias."""
+        return self.lat
+
+    @property
+    def longitude(self) -> float | None:
+        """Legacy alias."""
+        return self.lng
+
+    @property
+    def map_url(self) -> str:
+        """A user-friendly Google Maps URL (best-effort)."""
+        if self.google_maps_link:
+            return self.google_maps_link
+        if self.lat is not None and self.lng is not None:
+            return f"https://www.google.com/maps?q={self.lat},{self.lng}"
+        if self.address:
+            q = self.address.replace(" ", "+")
+            return f"https://www.google.com/maps/search/?api=1&query={q}"
+        return ""
+
 
 class AppLicense(Base):
     """Legacy single-row license settings (kept for backwards compatibility).
@@ -54,3 +84,23 @@ class AppLicense(Base):
     license_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    def effective_end(self) -> datetime | None:
+        """Return the end of access (license_end preferred, else trial_end)."""
+        return self.license_end or self.trial_end
+
+    def days_left(self, now: datetime | None = None) -> int | None:
+        """Return whole days remaining for trial/license (0..n), or None."""
+        end = self.effective_end()
+        if not end:
+            return None
+        now = now or datetime.utcnow()
+        delta = end - now
+        return max(0, int(delta.total_seconds() // 86400))
+
+    def is_active(self, now: datetime | None = None) -> bool:
+        end = self.effective_end()
+        if not end:
+            return False
+        now = now or datetime.utcnow()
+        return end > now

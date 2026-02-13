@@ -12,4 +12,8 @@ from .licensing import Plan, Subscription, ActivationCode, LicenseAuditLog
 from app.models.user import User
 from app.models.sms_outbox import SmsOutbox
 
+# Re-export clinic settings + app license models for backwards compatibility.
+# Some modules (and older deployments) import these from `app.models`.
+from .clinic_settings import ClinicSettings, AppLicense
+
 from app.models.auth_rate_limit import AuthRateLimit
