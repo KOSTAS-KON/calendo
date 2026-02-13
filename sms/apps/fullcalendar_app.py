@@ -1957,6 +1957,54 @@ def page_outbox() -> None:
 
 
 def page_customers() -> None:
+    # Portal-synced customers (Portal Children)
+    portal_base = os.getenv("PORTAL_BASE_URL", "").rstrip("/")
+    internal_key = os.getenv("INTERNAL_API_KEY", "").strip()
+    if portal_base and internal_key:
+        st.subheader("Customers")
+        st.info("Portal-synced mode uses Therapy Portal Children. You can create customers here.")
+
+        headers = {"X-Internal-Key": internal_key}
+        tenant_slug = TENANT_SLUG
+
+        # Create form
+        with st.expander("➕ Add new customer (Child)", expanded=True):
+            with st.form("create_child_form", clear_on_submit=True):
+                full_name = st.text_input("Child full name *")
+                dob = st.text_input("Date of birth (YYYY-MM-DD)", help="Optional")
+                parent1_name = st.text_input("Parent/Guardian name")
+                parent1_phone = st.text_input("Parent/Guardian phone")
+                notes = st.text_area("Notes", height=80)
+                submitted = st.form_submit_button("Create customer")
+            if submitted:
+                payload = {
+                    "full_name": full_name,
+                    "date_of_birth": dob,
+                    "parent1_name": parent1_name,
+                    "parent1_phone": parent1_phone,
+                    "notes": notes,
+                }
+                res = _post_portal_json(f"/api/internal/children?tenant={tenant_slug}", payload=payload, headers=headers) or {}
+                if res.get("ok"):
+                    st.success("Customer created in Portal.")
+                    st.rerun()
+                else:
+                    st.error(f"Create failed: {res}")
+
+        # List children
+        children_payload = _fetch_portal_json(f"/api/internal/children?tenant={tenant_slug}", headers=headers) or {}
+        children = children_payload.get("children") or []
+        if children:
+            st.dataframe(pd.DataFrame(children), use_container_width=True, hide_index=True)
+        else:
+            st.caption("No customers found yet.")
+
+        # Portal link
+        portal_app = os.getenv("PORTAL_APP_URL", portal_base).rstrip("/")
+        if portal_app:
+            st.markdown(f"[Open Children in Therapy Portal]({portal_app}/t/{tenant_slug}/children)")
+        return
+
     st.subheader("🪪 Πελάτες (Editable)")
     customers = normalize_customers(read_csv_df(CUSTOMERS_CSV, CUSTOMER_HEADER))
 
@@ -2073,6 +2121,42 @@ def _fetch_portal_json(path: str, headers: Dict[str, str] | None = None) -> Dict
         print(f"PORTAL_FETCH: failed url={url} err={repr(e)}", flush=True)
         return None
 
+
+
+def _post_portal_json(path: str, payload: dict, headers: dict | None = None, timeout_s: int = 10) -> dict:
+    """POST JSON to the Portal (internal API) and return parsed JSON."""
+    base = os.getenv("PORTAL_BASE_URL", "").rstrip("/")
+    if not base:
+        return {"ok": False, "error": "PORTAL_BASE_URL is not set"}
+    url = base + path
+    data = json.dumps(payload or {}).encode("utf-8")
+    req = urllib.request.Request(url, data=data, method="POST")
+    req.add_header("Content-Type", "application/json")
+    if headers:
+        for k, v in headers.items():
+            if v is not None:
+                req.add_header(k, str(v))
+
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+            if not raw:
+                return {"ok": True}
+            try:
+                return json.loads(raw)
+            except Exception:
+                return {"ok": True, "raw": raw}
+    except urllib.error.HTTPError as e:
+        body = ""
+        try:
+            body = e.read().decode("utf-8", errors="replace")
+        except Exception:
+            body = str(e)
+        return {"ok": False, "status": int(getattr(e, "code", 0) or 0), "error": body or str(e)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 def _apply_portal_settings_to_env() -> Dict[str, Any]:
     """Pull clinic + Infobip settings from the portal and apply to this app.
 
@@ -2092,7 +2176,7 @@ def _apply_portal_settings_to_env() -> Dict[str, Any]:
     # 1) Preferred: fetch everything from /api/internal/clinic_settings using INTERNAL_API_KEY
     internal_key = (os.getenv("INTERNAL_API_KEY") or "").strip()
     if internal_key:
-        data = _fetch_portal_json(f"/api/internal/clinic_settings?tenant={tenant}", headers={"X-Internal-Key": internal_key}) or {}
+        data = _fetch_portal_json(f"/api/internal/clinic_settings?tenant={tenant_slug}", headers={"X-Internal-Key": internal_key}) or {}
         # Portal may return either a flat payload or {"clinic": {...}}
         clinic_obj = {}
         if isinstance(data, dict):
@@ -2124,7 +2208,7 @@ def _apply_portal_settings_to_env() -> Dict[str, Any]:
     # 2) Fallback: /api/internal/infobip using INTERNAL_TOKEN (matches Portal SECRET_KEY)
     tok = (os.getenv("INTERNAL_TOKEN") or "").strip()
     if tok:
-        creds = _fetch_portal_json(f"/api/internal/infobip?tenant={tenant}", headers={"x-internal-token": tok}) or {}
+        creds = _fetch_portal_json(f"/api/internal/infobip?tenant={tenant_slug}", headers={"x-internal-token": tok}) or {}
         base_url = str(creds.get("infobip_base_url") or "").strip()
         sender = str(creds.get("infobip_sender") or "").strip()
         api_key = str(creds.get("infobip_api_key") or "").strip()
@@ -2156,16 +2240,20 @@ def main() -> None:
     )
 
     st.set_page_config(page_title="sms3 – Clinic Automation", layout="wide")
+
+    # Tenant resolved from SSO (validated at top-of-file)
+    tenant_slug = TENANT_SLUG
+    tenant = tenant_slug  # backwards-compatible alias
     inject_style()
 
     # Pull per-client settings from the Therapy Portal (clinic name + Infobip creds)
-    portal_applied = _apply_portal_settings_to_env()
+    portal_applied = _apply_portal_settings_to_env(tenant_slug)
 
     # License gating (lightweight offline gate)
     # Tenant-aware license check (no session cookies in Render service-to-service calls)
     internal_key = (os.getenv("INTERNAL_API_KEY") or "").strip()
     lic_headers = {"X-Internal-Key": internal_key} if internal_key else {}
-    lic = _fetch_portal_json(f"/api/license?tenant={tenant}", headers=lic_headers) or {}
+    lic = _fetch_portal_json(f"/api/license?tenant={tenant_slug}", headers=lic_headers) or {}
     if lic:
         pm = str(lic.get("product_mode", "BOTH")).upper()
         if not bool(lic.get("active", True)):
