@@ -34,6 +34,8 @@
       <tr>
         <th>child name</th>
         <th>billing due</th>
+        <th>amount</th>
+        <th>description</th>
         <th>paid</th>
         <th>invoice created</th>
         <th>parent signed off</th>
@@ -48,6 +50,15 @@
       <tr>
         <td>{{ b.child.full_name }}</td>
         <td>{{ b.billing_due.strftime("%d %b %Y") if b.billing_due else "" }}</td>
+
+        <td>
+          {% if b.amount_cents is not none %}
+            €{{ "%.2f"|format(b.amount_cents/100) }}
+          {% else %}
+            —
+          {% endif %}
+        </td>
+        <td class="text-slate-700">{{ b.description or '—' }}</td>
 
         {% if mode == 'edit' %}
           <td>
@@ -105,7 +116,7 @@
         {% endif %}
       </tr>
       {% else %}
-      <tr><td colspan="{% if mode == 'edit' %}6{% else %}5{% endif %}" class="text-sm text-slate-500">No billing rows.</td></tr>
+      <tr><td colspan="{% if mode == 'edit' %}8{% else %}7{% endif %}" class="text-sm text-slate-500">No billing rows.</td></tr>
       {% endfor %}
     </tbody>
   </table>

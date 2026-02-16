@@ -29,7 +29,7 @@
   <div class="flex items-center gap-2">
     <a class="btn btn-outline" href="{{ rp }}/children?tenant={{ tenant_slug }}">All children</a>
     {% if sms_app_url %}
-      <a class="btn btn-primary" href="{{ sms_app_url }}?tenant={{ tenant_slug }}" target="_blank" rel="noopener">
+      <a class="btn btn-primary" href="{{ sms_app_url }}" target="_blank" rel="noopener">
         Open SMS Calendar
       </a>
     {% endif %}
@@ -58,8 +58,11 @@
                     <span class="mx-2">&middot;</span>
                     <span>{{ e.occurred_at }}</span>
                   </div>
-                  {% if e.description %}
-                    <div class="mt-1 text-slate-700">{{ e.description }}</div>
+                  {% if e.title %}
+                    <div class="mt-1 text-slate-900 font-semibold">{{ e.title }}</div>
+                  {% endif %}
+                  {% if e.details %}
+                    <div class="mt-1 text-slate-700 whitespace-pre-wrap">{{ e.details }}</div>
                   {% endif %}
                 </div>
               </div>
@@ -81,7 +84,7 @@
                   <th>End</th>
                   <th>Therapist</th>
                   <th>Status</th>
-                  <th>Title</th>
+                  <th>Procedure</th>
                 </tr>
               </thead>
               <tbody>
@@ -89,9 +92,11 @@
                   <tr>
                     <td>{{ a.starts_at }}</td>
                     <td>{{ a.ends_at or '' }}</td>
-                    <td>{{ a.therapist_id or '' }}</td>
-                    <td>{{ a.status or '' }}</td>
-                    <td>{{ a.title or '' }}</td>
+                    <td>{{ a.therapist_name or '' }}</td>
+                    <td>{{ a.attendance_status or '' }}</td>
+                    <td>
+                      <a class="link" href="{{ rp }}/appointments/{{ a.id }}">{{ a.procedure or '' }}</a>
+                    </td>
                   </tr>
                 {% endfor %}
               </tbody>
@@ -104,6 +109,13 @@
 
     {% elif tab == 'attachments' %}
       <div class="mt-4">
+        <div class="mb-3">
+          <form method="post" action="{{ rp }}/children/{{ child.id }}/upload" enctype="multipart/form-data" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+            <input type="file" name="file" required>
+            <button class="btn btn-primary" type="submit">Upload</button>
+          </form>
+        </div>
+
         {% if attachments and attachments|length %}
           <div class="table-wrap">
             <table class="table">
@@ -113,15 +125,23 @@
                   <th>Uploaded</th>
                   <th>Type</th>
                   <th>Size</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
                 {% for f in attachments %}
                   <tr>
-                    <td>{{ f.filename }}</td>
+                    <td>
+                      <a class="link" href="{{ rp }}/files/{{ f.id }}" target="_blank" rel="noopener">{{ f.original_name }}</a>
+                    </td>
                     <td>{{ f.created_at }}</td>
-                    <td>{{ f.content_type or '' }}</td>
+                    <td>{{ f.mime_type or '' }}</td>
                     <td>{{ f.size_bytes or '' }}</td>
+                    <td style="text-align:right;">
+                      <form method="post" action="{{ rp }}/attachments/{{ f.id }}/delete" onsubmit="return confirm('Delete this file?');">
+                        <button class="btn btn-outline" type="submit">Delete</button>
+                      </form>
+                    </td>
                   </tr>
                 {% endfor %}
               </tbody>

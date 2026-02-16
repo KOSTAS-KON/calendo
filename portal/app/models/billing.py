@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from sqlalchemy import ForeignKey, Date, String
+from sqlalchemy import ForeignKey, Date, String, Integer, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -32,6 +32,12 @@ class BillingItem(Base):
     )
 
     billing_due: Mapped[date] = mapped_column(Date, index=True)
+
+    # Optional billing details (patched in Feb 2026)
+    # Stored in the DB so Calendar/Billing can show amounts and descriptions.
+    amount_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    currency: Mapped[str] = mapped_column(String(8), default="EUR")
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     paid: Mapped[str] = mapped_column(String(3), default="NO")
     invoice_created: Mapped[str] = mapped_column(String(3), default="NO")
