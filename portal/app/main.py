@@ -29,6 +29,7 @@ from app.routers.admin import router as admin_router
 from app.api.public_alias import router as public_alias_router
 from app.dev_seed import ensure_test_users
 from app.config import settings
+from app.utils.paths import STATIC_DIR
 
 
 app = FastAPI(title="Calendo Portal", version="1.0.0")
@@ -147,7 +148,8 @@ def root_head():
 # ----------------------------
 # Static + sessions
 # ----------------------------
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
+# Use absolute paths so Render works even if the service starts from repo root.
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 SESSION_SECRET = (os.getenv("SESSION_SECRET") or "").strip() or (settings.SSO_SHARED_SECRET or settings.SECRET_KEY)

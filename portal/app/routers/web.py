@@ -1,1408 +1,2121 @@
-"""
-Portal web routes (HTML pages + internal JSON endpoints).
-
-Notes:
-- Keep these routes tolerant to missing query params and older link formats.
-- Prefer redirecting to canonical tenant-scoped URLs under /t/{tenant_slug}/...
-- Internal endpoints are protected by INTERNAL_API_KEY / PORTAL_INTERNAL_KEY (when set).
-"""
-
 from __future__ import annotations
 
-<<<<<<< Updated upstream
-=======
-from datetime import datetime, date, timedelta, timezone
-import hashlib
->>>>>>> Stashed changes
-import os
-from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
-from urllib.parse import quote_plus
+"""Main UI + internal JSON endpoints.
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+This file intentionally keeps the "Clinic Suite" web UX routes together
+and also exposes a small internal API used by the SMS Calendar service.
+
+The upstream repo had merge-conflict markers and missing Calendar endpoints.
+This rewrite restores a clean, working router and adds:
+  - /calendar/add_appointment
+  - /calendar/add_billing
+  - /calendar/add_journey
+  - /api/calendar_events
+and patches BillingItem storage to persist amount + description.
+"""
+
+import json
+import uuid
+from dataclasses import dataclass
+from datetime import date, datetime, time, timedelta, timezone
+from decimal import Decimal, InvalidOperation
+from typing import Any, Dict, Iterable, List, Optional
+from urllib.parse import quote
+
+import sqlalchemy as sa
+from fastapi import APIRouter, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from itsdangerous import URLSafeTimedSerializer
-from jinja2 import TemplateNotFound
-from sqlalchemy import and_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
-from app.db import get_db
-from app.models import Appointment, Child, ClinicSettings, LicenseAuditLog, SmsOutbox, Subscription, Therapist
-from app.tenant import resolve_tenant
+from app.config import settings
+from app.db import SessionLocal
+from app.models import (
+    Appointment,
+    Attachment,
+    BillingItem,
+    BillingPlan,
+    Child,
+    ClinicSettings,
+    SessionNote,
+    SmsOutbox,
+    Therapist,
+    TimelineEvent,
+)
+from app.models.clinic_settings import AppLicense
+from app.models.licensing import Subscription
+from app.models.tenant import Tenant
+from app.services.license_tokens import verify_activation_code
+from app.services.storage import delete_file, save_upload
+from app.utils.paths import TEMPLATES_DIR
+
 
 router = APIRouter()
-templates = Jinja2Templates(directory="app/templates")
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
 # -----------------------------
-# Helpers
+# Template helpers / globals
 # -----------------------------
+
+
+def _pill(label: str, color: str) -> str:
+    return (
+        f"<span class='pill' style='background:{color};color:white;"
+        f"padding:6px 10px;border-radius:999px;font-weight:900;font-size:12px;'>{label}</span>"
+    )
+
+
+def status_badge(status: str | None) -> str:
+    s = (status or "UNCONFIRMED").upper()
+    if s == "ATTENDED":
+        return _pill("✅", "#16a34a")
+    if s == "MISSED":
+        return _pill("⚠", "#dc2626")
+    if s == "CONFIRMED":
+        return _pill("✓", "#2563eb")
+    if s == "CANCELLED_PROVIDER":
+        return _pill("✕", "#f59e0b")
+    if s == "CANCELLED_ME":
+        return _pill("✕", "#f97316")
+    return _pill("…", "#6b7280")
+
+
+def status_chip(status: str | None) -> str:
+    s = (status or "UNCONFIRMED").upper()
+    if s == "ATTENDED":
+        return _pill("ATTENDED", "#16a34a")
+    if s == "MISSED":
+        return _pill("MISSED", "#dc2626")
+    if s == "CONFIRMED":
+        return _pill("CONFIRMED", "#2563eb")
+    if s == "CANCELLED_PROVIDER":
+        return _pill("CANCELLED (PROVIDER)", "#f59e0b")
+    if s == "CANCELLED_ME":
+        return _pill("CANCELLED (ME)", "#f97316")
+    return _pill("UNCONFIRMED", "#6b7280")
+
+
+templates.env.globals["status_badge"] = status_badge
+templates.env.globals["status_chip"] = status_chip
+
+
+# -----------------------------
+# DB dependency
+# -----------------------------
+
+
+def _db() -> Session:
+    return SessionLocal()
+
+
+# -----------------------------
+# Common helpers
+# -----------------------------
+
 
 def _rp(request: Request) -> str:
-    rp = request.scope.get("root_path") or ""
-    return rp.rstrip("/")
+    return str(request.scope.get("root_path") or "")
 
 
-def _bool_from_form(v: Optional[str]) -> bool:
-    # HTML checkbox returns "on" or value; missing -> None
-    if v is None:
-        return False
-    return str(v).strip().lower() in {"1", "true", "on", "yes"}
-
-
-def _internal_key_expected() -> str:
-    return (
-        os.getenv("INTERNAL_API_KEY")
-        or os.getenv("PORTAL_INTERNAL_KEY")
-        or os.getenv("INTERNAL_KEY")
-        or ""
-    ).strip()
-
-
-def _require_internal_key(request: Request) -> None:
-    expected = _internal_key_expected()
-    if not expected:
-        return
-
-    got = (
-        request.headers.get("x-internal-key")
-        or request.headers.get("X-Internal-Key")
-        or request.query_params.get("internal_key")
-        or request.query_params.get("key")
-        or ""
-    ).strip()
-
-    if got != expected:
-        raise HTTPException(status_code=403, detail="Forbidden")
-
-
-def _infobip_token_expected() -> str:
-    # Optional extra guard for endpoints that expose Infobip credentials.
-    return (os.getenv("INTERNAL_TOKEN") or "").strip()
-
-
-def _require_infobip_token(request: Request) -> None:
-    expected = _infobip_token_expected()
-    if not expected:
-        # If not configured, fall back to internal key
-        _require_internal_key(request)
-        return
-
-    got = (
-        request.headers.get("x-internal-token")
-        or request.headers.get("X-Internal-Token")
-        or request.query_params.get("internal_token")
-        or ""
-    ).strip()
-
-    if got != expected:
-        raise HTTPException(status_code=403, detail="Forbidden")
-
-
-def _sms_base_url() -> str:
-    # Render service for SMS calendar (separate service)
-    url = (os.getenv("SMS_APP_URL") or os.getenv("CALENDO_SMS_URL") or "").strip()
-    return url.rstrip("/")
-
-
-def _sms_sso_secret() -> str:
-    return (os.getenv("SMS_SSO_SECRET") or os.getenv("CALENDO_SMS_SSO_SECRET") or "").strip()
-
-
-def _make_sms_sso(tenant_slug: str) -> str:
-    secret = _sms_sso_secret()
-    if not secret:
-        return ""
-    s = URLSafeTimedSerializer(secret_key=secret, salt="calendo-sms-sso-v1")
-    return s.dumps({"tenant": tenant_slug})
-
-
-def _sms_calendar_url(tenant_slug: str) -> str:
-    base = _sms_base_url()
-    if not base:
-        return ""
-    sso = _make_sms_sso(tenant_slug)
-    # Keep the path flexible (SMS app may run at / or /sms)
-    return f"{base}?tenant={quote_plus(tenant_slug)}&sso={quote_plus(sso)}"
-
-
-def _tenant_slug_param(request: Request, explicit: Optional[str]) -> Optional[str]:
-    if explicit:
-        return explicit
-    return request.query_params.get("tenant") or request.query_params.get("t")
-
-
-def _login_redirect(request: Request) -> RedirectResponse:
-    rp = _rp(request)
-    nxt = request.url.path
+def _full_path(request: Request) -> str:
+    # Include query string for next=... redirects
+    path = request.url.path
     if request.url.query:
-        nxt = f"{nxt}?{request.url.query}"
-    return RedirectResponse(url=f"{rp}/auth/login?next={quote_plus(nxt)}", status_code=303)
+        path += "?" + request.url.query
+    return path
 
 
-def _require_login(db: Session, request: Request, tenant_slug: Optional[str]) -> Any:
-    tctx = resolve_tenant(db, request, tenant_slug=tenant_slug)
-    if not getattr(tctx, "user", None):
-        raise HTTPException(status_code=401, detail="Login required")
-    return tctx
+def _toast(request: Request, text: str, kind: str = "success") -> None:
+    request.session["toast"] = {"text": text, "kind": kind}
 
 
-def _require_login_or_redirect(db: Session, request: Request, tenant_slug: Optional[str]):
-    tctx = resolve_tenant(db, request, tenant_slug=tenant_slug)
-    if not getattr(tctx, "user", None):
-        return tctx, _login_redirect(request)
-    return tctx, None
+def _require_login(request: Request) -> Optional[RedirectResponse]:
+    s = request.session or {}
+    if not s.get("user_id"):
+        next_path = _full_path(request)
+        return RedirectResponse(url=f"{_rp(request)}/login?next={quote(next_path)}", status_code=303)
+    return None
 
 
-def _get_or_create_clinic_settings(db: Session, tenant_id: int) -> ClinicSettings:
-    cs = db.query(ClinicSettings).filter_by(tenant_id=tenant_id).one_or_none()
-    if cs is None:
-        cs = ClinicSettings(tenant_id=tenant_id)
-        db.add(cs)
+def _session_tenant_slug(request: Request) -> str:
+    s = request.session or {}
+    return str(s.get("tenant_slug") or "default").strip().lower() or "default"
+
+
+def _session_tenant_id(request: Request) -> str | None:
+    s = request.session or {}
+    v = s.get("tenant_id")
+    return str(v) if v else None
+
+
+def _resolve_tenant_or_404(db: Session, request: Request, requested_slug: str | None = None) -> tuple[str, str]:
+    """Return (tenant_slug, tenant_id) for UI routes.
+
+    For logged-in UI pages we do not allow switching tenant via query params.
+    The session tenant wins.
+    """
+    tenant_slug = _session_tenant_slug(request)
+    if requested_slug and requested_slug.strip().lower() != tenant_slug:
+        # Normalize navigation: keep session tenant.
+        tenant_slug = tenant_slug
+
+    t = db.query(Tenant).filter(Tenant.slug == tenant_slug).first()
+    if not t:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    if (t.status or "active") != "active":
+        raise HTTPException(status_code=403, detail="Tenant suspended")
+
+    # Keep session consistent.
+    request.session["tenant_slug"] = tenant_slug
+    request.session["tenant_id"] = t.id
+    return tenant_slug, t.id
+
+
+def _ensure_billing_item_columns(db: Session) -> None:
+    """Runtime safety-net for older DBs.
+
+    If migrations were not run, BillingItem ORM queries would crash because
+    the model now includes amount_cents/currency/description.
+
+    We preflight and apply ALTER TABLE statements in a safe best-effort way.
+    """
+    try:
+        insp = sa.inspect(db.get_bind())
+        cols = {c.get("name") for c in insp.get_columns("billing_items")}
+    except Exception:
+        return
+
+    stmts: list[str] = []
+    if "amount_cents" not in cols:
+        stmts.append("ALTER TABLE billing_items ADD COLUMN amount_cents INTEGER")
+    if "currency" not in cols:
+        stmts.append("ALTER TABLE billing_items ADD COLUMN currency VARCHAR(8) DEFAULT 'EUR'")
+    if "description" not in cols:
+        stmts.append("ALTER TABLE billing_items ADD COLUMN description TEXT")
+
+    if not stmts:
+        return
+
+    for sql in stmts:
+        try:
+            db.execute(sa.text(sql))
+        except Exception:
+            # Don't kill the request; migration should be the primary path.
+            pass
+    try:
+        # backfill default currency
+        if "currency" not in cols:
+            db.execute(sa.text("UPDATE billing_items SET currency='EUR' WHERE currency IS NULL"))
+    except Exception:
+        pass
+    try:
         db.commit()
-        db.refresh(cs)
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+
+def _parse_yes_no(v: str | None, default: str = "NO") -> str:
+    s = (v or "").strip().upper()
+    return "YES" if s == "YES" else ("NO" if default.upper() != "YES" else "YES")
+
+
+def _parse_date(v: str) -> date:
+    try:
+        return date.fromisoformat((v or "").strip())
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid date")
+
+
+def _parse_dt_local(v: str) -> datetime:
+    try:
+        return datetime.fromisoformat((v or "").strip())
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid datetime")
+
+
+def _parse_money_eur_to_cents(v: str | None) -> int | None:
+    s = (v or "").strip()
+    if not s:
+        return None
+    try:
+        amt = Decimal(s)
+    except InvalidOperation:
+        raise HTTPException(status_code=400, detail="Invalid amount")
+    return int((amt * 100).quantize(Decimal("1")))
+
+
+def _fmt_money(cents: int | None, currency: str | None = "EUR") -> str:
+    if cents is None:
+        return ""
+    cur = (currency or "EUR").upper()
+    value = Decimal(cents) / Decimal(100)
+    if cur == "EUR":
+        return f"€{value:.2f}"
+    return f"{cur} {value:.2f}"
+
+
+def _sms_sso_url(tenant_slug: str) -> str:
+    """Return SMS app URL with tenant + SSO token."""
+    base = (settings.SMS_APP_URL or "").strip().rstrip("/")
+    if not base:
+        base = "/sms"  # docker gateway (nginx maps /sms/)
+
+    secret = (settings.SSO_SHARED_SECRET or "").strip() or settings.SECRET_KEY
+    ser = URLSafeTimedSerializer(secret_key=secret, salt="calendo-sms-sso-v1")
+    token = ser.dumps({"tenant": tenant_slug})
+
+    join = "&" if "?" in base else "?"
+    return f"{base}{join}tenant={tenant_slug}&sso={quote(token)}"
+
+
+def _get_or_create_clinic_settings(db: Session, tenant_id: str) -> ClinicSettings:
+    cs = db.query(ClinicSettings).filter(ClinicSettings.tenant_id == tenant_id).first()
+    if cs:
+        return cs
+    cs = ClinicSettings(tenant_id=tenant_id)
+    db.add(cs)
+    db.commit()
+    db.refresh(cs)
     return cs
 
 
-def _license_status(db: Session, tenant_id: int) -> Dict[str, Any]:
-    """
-    Best-effort license/trial status used by Suite/Settings.
-    Keep tolerant if Subscription model differs.
-    """
-    sub = None
-    try:
-        sub = (
-            db.query(Subscription)
-            .filter_by(tenant_id=tenant_id)
-            .order_by(Subscription.created_at.desc())
-            .first()
-        )
-    except Exception:
-        sub = None
-
-    now = datetime.utcnow()
-    # If we have a subscription with an ends_at, consider it active if ends_at in future.
-    if sub is not None and hasattr(sub, "ends_at") and getattr(sub, "ends_at"):
-        ends_at = getattr(sub, "ends_at")
-        return {
-            "mode": "LICENSE",
-            "active": bool(ends_at and ends_at > now),
-            "ends_at": ends_at,
-        }
-
-    # Otherwise, fall back to last audit log event for visibility.
-    last = None
-    try:
-        last = (
-            db.query(LicenseAuditLog)
-            .filter_by(tenant_id=tenant_id)
-            .order_by(LicenseAuditLog.created_at.desc())
-            .first()
-        )
-    except Exception:
-        last = None
-
-    return {
-        "mode": "TRIAL" if last is None else "UNKNOWN",
-        "active": True if last is None else True,
-        "ends_at": None,
-        "last_event": getattr(last, "event", None) if last else None,
-        "last_at": getattr(last, "created_at", None) if last else None,
-    }
-
-
-def _base_context(db: Session, request: Request, tenant_slug: Optional[str]) -> Dict[str, Any]:
-    rp = _rp(request)
-    tctx = resolve_tenant(db, request, tenant_slug=tenant_slug)
-    cs = _get_or_create_clinic_settings(db, tctx.tenant_id)
-    lic = _license_status(db, tctx.tenant_id)
-    return {
-        "request": request,
-        "rp": rp,
-        "tenant_slug": tctx.tenant_slug,
-        "tenant_id": tctx.tenant_id,
-        "user": getattr(tctx, "user", None),
-        "user_email": getattr(tctx, "user_email", None),
-        "clinic": cs,
-        "license": lic,
-        "sms_app_url": _sms_calendar_url(tctx.tenant_slug),
-        "sms_sso": _make_sms_sso(tctx.tenant_slug),
-        "now": datetime.utcnow(),
-    }
-
-
-def _render(request: Request, template_name: str, ctx: Dict[str, Any]) -> HTMLResponse:
-    try:
-        return templates.TemplateResponse(template_name, ctx)
-    except TemplateNotFound:
-        # Minimal fallback for safety; avoids hard 500 on missing templates.
-        body = f"<h1>Template not found</h1><p>{template_name}</p>"
-        return HTMLResponse(content=body, status_code=200)
-
-
-# -----------------------------
-# Public HTML pages
-# -----------------------------
-
-@router.get("/suite", response_class=HTMLResponse)
-def suite_alias(request: Request, tenant: Optional[str] = None, db: Session = Depends(get_db)):
-    # Compatibility alias used by older links and some SMS app builds.
-    tenant_slug = _tenant_slug_param(request, tenant)
-    if tenant_slug:
-        return RedirectResponse(url=f"{_rp(request)}/t/{tenant_slug}/suite", status_code=303)
-
-    # If logged in, try to resolve default tenant and redirect.
-    tctx = resolve_tenant(db, request, tenant_slug=None)
-    if getattr(tctx, "tenant_slug", None):
-        return RedirectResponse(url=f"{_rp(request)}/t/{tctx.tenant_slug}/suite", status_code=303)
-
-    # Not logged in: go to login.
-    return _login_redirect(request)
-
-
-
-@router.get("/therapy/", response_class=HTMLResponse)
-def therapy_root_alias(request: Request, tenant: Optional[str] = None, db: Session = Depends(get_db)):
-    # Compatibility path (older reverse-proxy deployments).
-    return suite_alias(request=request, tenant=tenant, db=db)
-
-@router.get("/therapy/suite", response_class=HTMLResponse)
-def therapy_suite_alias(request: Request, tenant: Optional[str] = None, db: Session = Depends(get_db)):
-    return suite_alias(request=request, tenant=tenant, db=db)
-
-@router.get("/outbox", response_class=HTMLResponse)
-def outbox_alias(request: Request, tenant: Optional[str] = None):
-    # Some UIs used /outbox for the SMS outbox list.
-    tenant_slug = _tenant_slug_param(request, tenant)
-    url = f"{_rp(request)}/sms-outbox"
-    if tenant_slug:
-        url += f"?tenant={quote_plus(tenant_slug)}"
-    return RedirectResponse(url=url, status_code=303)
-
-@router.get("/t/{tenant_slug}/suite", response_class=HTMLResponse)
-def suite_page(
-    request: Request,
-    tenant_slug: str,
-    tab: str = Query(default="overview"),
-    db: Session = Depends(get_db),
-):
-    tctx, redirect = _require_login_or_redirect(db, request, tenant_slug)
-    if redirect:
-        return redirect
-
-    ctx = _base_context(db, request, tenant_slug)
-    ctx["active_tab"] = tab
-    return _render(request, "pages/suite.html", ctx)
-
-<<<<<<< Updated upstream
-
-@router.get("/settings", response_class=HTMLResponse)
-def settings_page(
-    request: Request,
-    tenant: Optional[str] = None,
-    tab: str = Query(default="overview"),
-    db: Session = Depends(get_db),
-):
-    tenant_slug = _tenant_slug_param(request, tenant)
-    tctx, redirect = _require_login_or_redirect(db, request, tenant_slug)
-    if redirect:
-        return redirect
-
-    ctx = _base_context(db, request, tctx.tenant_slug)
-    ctx["active_tab"] = tab
-    return _render(request, "pages/settings.html", ctx)
-
-
-@router.get("/setup", response_class=HTMLResponse)
-def setup_alias(
-=======
-    google_maps_link = cs.map_url if cs else None
-
-    # Handy .env template for the SMS service (and local dev).
-    # NOTE: Values are intentionally minimal; copy-paste and adjust.
-    portal_base = (str(request.base_url).rstrip("/") + _rp(request)).rstrip("/")
-    env_preview = "\n".join(
-        [
-            f"DATABASE_URL={settings.DATABASE_URL or ''}",
-            f"PORTAL_BASE_URL={portal_base}",
-            f"PORTAL_APP_URL={portal_base}",
-            f"INTERNAL_TOKEN={settings.INTERNAL_API_KEY or ''}",
-            f"INTERNAL_API_KEY={settings.INTERNAL_API_KEY or ''}",
-            f"SSO_SHARED_SECRET={settings.SSO_SHARED_SECRET or ''}",
-            "",
-            "# Optional / provider settings",
-            f"SMS_PROVIDER={(cs.sms_provider if cs else '')}",
-            f"INFOBIP_BASE_URL={(cs.infobip_base_url if cs else '')}",
-            f"INFOBIP_FROM={(cs.infobip_sender if cs else '')}",
-            f"INFOBIP_API_KEY={(cs.infobip_api_key if cs else '')}",
-        ]
-    )
-
-    return _render(
-        request,
-        "pages/settings.html",
-        {
-            "need": need,
-            "subscription_active": active,
-            "subscription_until": until,
-            "subscription_plan": plan,
-            "clinic": cs,
-            "license": lic,
-            "google_maps_link": google_maps_link,
-            "env_preview": env_preview,
-        },
-        db,
-        tenant_slug=tctx.tenant_slug,
-    )
-
-
-@router.post("/settings/clinic")
-def settings_save_clinic(
-    request: Request,
-    clinic_name: str = Form(""),
-    address: str = Form(""),
-    timezone: str = Form(""),  # currently informational; kept for forward compatibility
-    lat: str = Form(""),
-    lng: str = Form(""),
-    db: Session = Depends(get_db),
-):
-    """Save clinic identity + map info.
-
-    The Settings UI does not include the tenant as a hidden input, so we derive it from the
-    authenticated session.
-    """
-
-    tenant_slug = _session_tenant_slug(request)
-    redirect = _require_login_for_tenant(request, tenant_slug)
-    if redirect:
-        return redirect
-
-    tctx = resolve_tenant(db, request, tenant_slug=tenant_slug)
-    cs = _get_settings(db, tctx.tenant_id)
-
-    cs.clinic_name = (clinic_name or "").strip()
-    cs.address = (address or "").strip()
-
-    def _to_float(v: str) -> Optional[float]:
-        v = (v or "").strip()
-        if not v:
-            return None
-        try:
-            return float(v)
-        except Exception:
-            return None
-
-    cs.lat = _to_float(lat)
-    cs.lng = _to_float(lng)
-
-    # Store a convenient google maps link.
-    if cs.lat is not None and cs.lng is not None:
-        cs.google_maps_link = f"https://www.google.com/maps?q={cs.lat},{cs.lng}"
-    elif cs.address:
-        cs.google_maps_link = f"https://www.google.com/maps/search/?api=1&query={quote_plus(cs.address)}"
-    else:
-        cs.google_maps_link = None
-
-    cs.updated_at = datetime.utcnow()
-    db.add(cs)
-    db.commit()
-
-    _toast_set(request, "success", "Clinic settings saved")
-    return RedirectResponse(url=f"{_rp(request)}/settings?tenant={tctx.tenant_slug}", status_code=303)
-
-
-@router.post("/settings/infobip")
-def settings_save_infobip(
-    request: Request,
-    sms_provider: str = Form(""),
-    infobip_base_url: str = Form(""),
-    infobip_sender: str = Form(""),
-    infobip_api_key: str = Form(""),
-    db: Session = Depends(get_db),
-):
-    tenant_slug = _session_tenant_slug(request)
-    redirect = _require_login_for_tenant(request, tenant_slug)
-    if redirect:
-        return redirect
-
-    tctx = resolve_tenant(db, request, tenant_slug=tenant_slug)
-    cs = _get_settings(db, tctx.tenant_id)
-
-    cs.sms_provider = (sms_provider or "").strip() or cs.sms_provider or "infobip"
-    cs.infobip_base_url = (infobip_base_url or "").strip()
-    cs.infobip_sender = (infobip_sender or "").strip()
-    cs.infobip_api_key = (infobip_api_key or "").strip()
-    cs.updated_at = datetime.utcnow()
-
-    db.add(cs)
-    db.commit()
-
-    _toast_set(request, "success", "SMS provider settings saved")
-    return RedirectResponse(url=f"{_rp(request)}/settings?tenant={tctx.tenant_slug}", status_code=303)
-
-
-@router.get("/settings/env")
-def settings_env_download(request: Request, tenant: str = "", db: Session = Depends(get_db)):
-    """Download a minimal env file for the SMS service."""
-
-    tenant_slug = (tenant or "").strip().lower() or _session_tenant_slug(request)
-    redirect = _require_login_for_tenant(request, tenant_slug)
-    if redirect:
-        return redirect
-
-    tctx = resolve_tenant(db, request, tenant_slug=tenant_slug)
-    cs = _get_settings(db, tctx.tenant_id)
-
-    portal_base = (str(request.base_url).rstrip("/") + _rp(request)).rstrip("/")
-    env_text = "\n".join(
-        [
-            f"PORTAL_BASE_URL={portal_base}",
-            f"PORTAL_APP_URL={portal_base}",
-            f"INTERNAL_API_KEY={settings.INTERNAL_API_KEY or ''}",
-            f"INTERNAL_TOKEN={settings.INTERNAL_API_KEY or ''}",
-            f"SSO_SHARED_SECRET={settings.SSO_SHARED_SECRET or ''}",
-            f"SMS_PROVIDER={(cs.sms_provider if cs else '')}",
-            f"INFOBIP_BASE_URL={(cs.infobip_base_url if cs else '')}",
-            f"INFOBIP_FROM={(cs.infobip_sender if cs else '')}",
-            f"INFOBIP_API_KEY={(cs.infobip_api_key if cs else '')}",
-            "",
-        ]
-    )
-
-    filename = f"calendo_{tctx.tenant_slug}.env"
-    return Response(
-        env_text,
-        media_type="text/plain",
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
-    )
-
-
-@router.post("/settings/activate")
-def settings_activate_code(
-    request: Request,
-    activation_code: str = Form(""),
-    db: Session = Depends(get_db),
-):
-    """Redeem an activation code and extend/create the tenant subscription."""
-
-    tenant_slug = _session_tenant_slug(request)
-    redirect = _require_login_for_tenant(request, tenant_slug)
-    if redirect:
-        return redirect
-
-    tctx = resolve_tenant(db, request, tenant_slug=tenant_slug)
-    code = (activation_code or "").strip()
-    if not code:
-        _toast_set(request, "error", "Please enter an activation code")
-        return RedirectResponse(url=f"{_rp(request)}/settings?tenant={tctx.tenant_slug}", status_code=303)
-
-    code_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()
-    ac = (
-        db.query(ActivationCode)
-        .filter(
-            ActivationCode.tenant_id == tctx.tenant_id,
-            ActivationCode.code_hash == code_hash,
-            ActivationCode.revoked_at.is_(None),
-        )
-        .first()
-    )
-    if not ac:
-        _toast_set(request, "error", "Invalid or revoked activation code")
-        return RedirectResponse(url=f"{_rp(request)}/settings?tenant={tctx.tenant_slug}", status_code=303)
-
-    if ac.max_redemptions is not None and ac.redeemed_count >= ac.max_redemptions:
-        _toast_set(request, "error", "This activation code has no remaining redemptions")
-        return RedirectResponse(url=f"{_rp(request)}/settings?tenant={tctx.tenant_slug}", status_code=303)
-
-    plan = db.get(Plan, ac.plan_id)
-    if not plan:
-        _toast_set(request, "error", "Activation code plan missing")
-        return RedirectResponse(url=f"{_rp(request)}/settings?tenant={tctx.tenant_slug}", status_code=303)
-
-    now = datetime.now(timezone.utc)
-    duration = int(plan.duration_days or 30)
-
-    sub = (
-        db.query(Subscription)
-        .filter(Subscription.tenant_id == tctx.tenant_id, Subscription.status == "active")
-        .order_by(Subscription.ends_at.desc().nullslast())
-        .first()
-    )
-
-    if sub and sub.ends_at and sub.ends_at > now:
-        sub.ends_at = sub.ends_at + timedelta(days=duration)
-        sub.plan_id = plan.id
-    else:
-        sub = Subscription(
-            tenant_id=tctx.tenant_id,
-            plan_id=plan.id,
-            status="active",
-            starts_at=now,
-            ends_at=now + timedelta(days=duration),
-        )
-        db.add(sub)
-
-    ac.redeemed_count += 1
-    db.add(ac)
-    db.commit()
-
-    _toast_set(request, "success", f"Activated: {plan.name} (+{duration} days)")
-    return RedirectResponse(url=f"{_rp(request)}/settings?tenant={tctx.tenant_slug}", status_code=303)
-
-
-@router.post("/settings/license")
-def settings_save_license(
-    request: Request,
-    product_mode: str = Form("BOTH"),
-    trial_end: str = Form(""),
-    license_end: str = Form(""),
-    db: Session = Depends(get_db),
-):
-    """Allow editing the global license object (product mode + optional dates).
-
-    Production licensing is enforced per-tenant via Subscriptions, but this lets you set a
-    global product mode (SMS / Portal / Both) from the Settings UI.
-    """
-
-    tenant_slug = _session_tenant_slug(request)
-    redirect = _require_login_for_tenant(request, tenant_slug)
-    if redirect:
-        return redirect
-
-    tctx = resolve_tenant(db, request, tenant_slug=tenant_slug)
-    lic = _get_license(db)
-    lic.product_mode = (product_mode or "BOTH").strip().upper()
-
-    def _parse_date(d: str) -> Optional[datetime]:
-        d = (d or "").strip()
-        if not d:
-            return None
-        try:
-            # HTML date input -> YYYY-MM-DD
-            return datetime.fromisoformat(d).replace(tzinfo=timezone.utc)
-        except Exception:
-            return None
-
-    lic.trial_end = _parse_date(trial_end)
-    lic.license_end = _parse_date(license_end)
-    lic.updated_at = datetime.utcnow()
-
+def _get_or_create_app_license(db: Session) -> AppLicense:
+    lic = db.query(AppLicense).order_by(AppLicense.id.asc()).first()
+    if lic:
+        return lic
+    lic = AppLicense(id=1)
     db.add(lic)
     db.commit()
+    db.refresh(lic)
+    return lic
 
-    _toast_set(request, "success", "License settings saved")
-    return RedirectResponse(url=f"{_rp(request)}/settings?tenant={tctx.tenant_slug}", status_code=303)
 
-
-# =============================================================================
-# Internal calendar sync API (SMS reads/writes Portal appointments)
-# =============================================================================
-@router.get("/api/internal/children")
-def api_internal_children(request: Request, tenant: str = "default", db: Session = Depends(get_db)):
-    _require_internal(request)
-    tctx = resolve_tenant(db, request, tenant_slug=tenant)
-    rows = (
-        db.query(Child)
-        .filter(Child.tenant_id == tctx.tenant_id)
-        .order_by(Child.full_name.asc())
-        .all()
+def _subscription_until(db: Session, tenant_id: str) -> datetime | None:
+    sub = (
+        db.query(Subscription)
+        .filter(Subscription.tenant_id == tenant_id)
+        .order_by(Subscription.ends_at.desc())
+        .first()
     )
-    out = []
-    for c in rows:
-        out.append(
-            {
-                "id": c.id,
-                "full_name": c.full_name,
-                "date_of_birth": c.date_of_birth.isoformat() if getattr(c, "date_of_birth", None) else None,
-                "parent1_phone": getattr(c, "parent1_phone", None),
-                "parent1_email": getattr(c, "parent1_email", None),
-                "parent2_phone": getattr(c, "parent2_phone", None),
-                "parent2_email": getattr(c, "parent2_email", None),
-            }
-        )
-    return {"tenant": tctx.tenant_slug, "children": out}
+    if not sub:
+        return None
+    return getattr(sub, "ends_at", None)
 
 
-@router.post("/api/internal/children/create")
-def api_internal_children_create(
-    request: Request,
-    tenant: str = "default",
-    full_name: str = Form(...),
-    date_of_birth: str = Form(""),
-    notes: str = Form(""),
-    parent_phone: str = Form(""),
-    parent_email: str = Form(""),
-    db: Session = Depends(get_db),
-):
-    """Create a Child from the SMS service (internal key protected)."""
-    _require_internal(request)
-    tctx = resolve_tenant(db, request, tenant_slug=tenant)
+def _base_context(db: Session, request: Request, tenant_slug: str, tenant_id: str) -> dict:
+    clinic = _get_or_create_clinic_settings(db, tenant_id)
+    license_obj = _get_or_create_app_license(db)
+    until = _subscription_until(db, tenant_id)
+    if until:
+        request.session["subscription_until"] = until.replace(microsecond=0).isoformat()
 
-    name = (full_name or "").strip()
-    if not name:
-        return {"ok": False, "error": "full_name is required"}
-
-    dob: Optional[date] = None
-    dob_s = (date_of_birth or "").strip()
-    if dob_s:
-        try:
-            dob = date.fromisoformat(dob_s)
-        except Exception:
-            return {"ok": False, "error": "date_of_birth must be YYYY-MM-DD"}
-
-    c = Child(
-        tenant_id=tctx.tenant_id,
-        full_name=name,
-        date_of_birth=dob,
-        notes=(notes or "").strip() or None,
-        parent1_phone=(parent_phone or "").strip() or None,
-        parent1_email=(parent_email or "").strip() or None,
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow(),
-    )
-    db.add(c)
-    db.commit()
-    return {"ok": True, "child_id": c.id}
-
-
-@router.get("/api/internal/clinic_settings")
-def api_internal_clinic_settings(request: Request, tenant: str = "default", db: Session = Depends(get_db)):
-    """Return clinic/SMS provider settings for a tenant (internal key protected)."""
-    _require_internal(request)
-    tctx = resolve_tenant(db, request, tenant_slug=tenant)
-    cs = _get_settings(db, tctx.tenant_id)
     return {
-        "tenant": tctx.tenant_slug,
-        "clinic_settings": {
-            "clinic_name": cs.clinic_name,
-            "address": cs.address,
-            "google_maps_link": cs.google_maps_link,
-            "lat": cs.lat,
-            "lng": cs.lng,
-            "sms_provider": cs.sms_provider,
-            "infobip_base_url": cs.infobip_base_url,
-            "infobip_sender": cs.infobip_sender,
-            # The SMS service needs the API key to send; do not expose this endpoint publicly.
-            "infobip_api_key": cs.infobip_api_key,
-        },
+        "tenant_slug": tenant_slug,
+        "clinic": clinic,
+        "license": license_obj,
+        "sms_app_url": _sms_sso_url(tenant_slug),
     }
 
 
-@router.get("/api/internal/appointments")
-def api_internal_appointments(request: Request, tenant: str = "default", days: int = 60, db: Session = Depends(get_db)):
-    _require_internal(request)
-    tctx = resolve_tenant(db, request, tenant_slug=tenant)
-    days = max(1, min(365, int(days or 60)))
-    now = datetime.utcnow()
-    end = now + timedelta(days=days)
+# -----------------------------
+# UI: Suite & Dashboard
+# -----------------------------
 
-    q = (
-        db.query(Appointment, Child)
-        .join(Child, Child.id == Appointment.child_id)
-        .filter(
-            Appointment.tenant_id == tctx.tenant_id,
-            Appointment.starts_at >= now - timedelta(days=3),
-            Appointment.starts_at <= end,
+
+@router.get("/t/{tenant_slug}", include_in_schema=False)
+def t_root(request: Request, tenant_slug: str):
+    # Keep legacy /t/<slug> paths working.
+    return RedirectResponse(url=f"{_rp(request)}/t/{tenant_slug}/suite", status_code=303)
+
+
+@router.get("/t/{tenant_slug}/suite", response_class=HTMLResponse)
+def suite(request: Request, tenant_slug: str):
+    if (resp := _require_login(request)):
+        return resp
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request, requested_slug=tenant_slug)
+        ctx = _base_context(db, request, ts, tid)
+        return templates.TemplateResponse("pages/suite.html", {"request": request, **ctx})
+    finally:
+        db.close()
+
+
+@router.get("/t/{tenant_slug}/dashboard", response_class=HTMLResponse)
+@router.get("/dashboard", response_class=HTMLResponse)
+def dashboard(request: Request, tenant_slug: str | None = None):
+    if (resp := _require_login(request)):
+        return resp
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request, requested_slug=tenant_slug)
+
+        # preflight billing schema (needed for count in older DBs)
+        _ensure_billing_item_columns(db)
+
+        children_count = db.query(Child).filter(Child.tenant_id == tid).count()
+        appt_count = db.query(Appointment).filter(Appointment.tenant_id == tid).count()
+        uploads_count = (
+            db.query(Attachment)
+            .join(Child, Child.id == Attachment.child_id)
+            .filter(Child.tenant_id == tid)
+            .count()
         )
-        .order_by(Appointment.starts_at.asc())
-    )
+        billing_count = db.query(BillingItem).filter(BillingItem.tenant_id == tid).count()
 
-    out = []
-    for appt, child in q.all():
-        att = (appt.attendance_status or "").upper()
-        status = "cancelled" if att == "CANCELLED" else "active"
-        out.append({
-            "id": appt.id,
-            "child_id": appt.child_id,
-            "child_name": child.full_name,
-            "to_phone": getattr(child, "parent1_phone", "") or getattr(child, "parent2_phone", "") or "",
-            "starts_at": appt.starts_at.replace(tzinfo=timezone.utc).isoformat(),
-            "ends_at": appt.ends_at.replace(tzinfo=timezone.utc).isoformat(),
-            "procedure": appt.procedure,
-            "therapist_name": appt.therapist_name,
-            "status": status,
-            "attendance_status": appt.attendance_status,
-        })
-    return {"tenant": tctx.tenant_slug, "appointments": out}
-
-
-@router.post("/api/internal/appointments/create")
-def api_internal_appointment_create(
->>>>>>> Stashed changes
-    request: Request,
-    tenant: Optional[str] = None,
-    tab: str = Query(default="overview"),
-    db: Session = Depends(get_db),
-):
-    # Older links used /setup
-    return settings_page(request=request, tenant=tenant, tab=tab, db=db)
+        rows = (
+            db.query(Appointment)
+            .options(joinedload(Appointment.child))
+            .filter(Appointment.tenant_id == tid)
+            .order_by(Appointment.starts_at.desc())
+            .limit(12)
+            .all()
+        )
+        ctx = _base_context(db, request, ts, tid)
+        return templates.TemplateResponse(
+            "pages/dashboard.html",
+            {
+                "request": request,
+                **ctx,
+                "children_count": children_count,
+                "appt_count": appt_count,
+                "uploads_count": uploads_count,
+                "billing_count": billing_count,
+                "rows": rows,
+            },
+        )
+    finally:
+        db.close()
 
 
-@router.post("/settings/clinic")
-def update_clinic_settings(
-    request: Request,
-    tenant: Optional[str] = None,
-    clinic_name: str = Form(default=""),
-    timezone: str = Form(default="UTC"),
-    locale: str = Form(default="en"),
-    sms_sender_id: str = Form(default=""),
-    enable_24h: Optional[str] = Form(default=None),
-    enable_2h: Optional[str] = Form(default=None),
-    reminder_hours_24: int = Form(default=24),
-    reminder_hours_2: int = Form(default=2),
-    db: Session = Depends(get_db),
-):
-    tenant_slug = _tenant_slug_param(request, tenant)
-    tctx, redirect = _require_login_or_redirect(db, request, tenant_slug)
-    if redirect:
-        return redirect
-
-    cs = _get_or_create_clinic_settings(db, tctx.tenant_id)
-
-    # Assign only if the model actually has those attributes.
-    if hasattr(cs, "clinic_name"):
-        cs.clinic_name = clinic_name.strip()
-    if hasattr(cs, "timezone"):
-        cs.timezone = timezone.strip() or "UTC"
-    if hasattr(cs, "locale"):
-        cs.locale = locale.strip() or "en"
-    if hasattr(cs, "sms_sender_id"):
-        cs.sms_sender_id = sms_sender_id.strip()
-    if hasattr(cs, "enable_24h"):
-        cs.enable_24h = _bool_from_form(enable_24h)
-    if hasattr(cs, "enable_2h"):
-        cs.enable_2h = _bool_from_form(enable_2h)
-    if hasattr(cs, "reminder_hours_24"):
-        cs.reminder_hours_24 = int(reminder_hours_24)
-    if hasattr(cs, "reminder_hours_2"):
-        cs.reminder_hours_2 = int(reminder_hours_2)
-
-    db.add(cs)
-    db.commit()
-
-    return RedirectResponse(url=f"{_rp(request)}/settings?tenant={tctx.tenant_slug}&tab=clinic", status_code=303)
-
-
-@router.post("/settings/infobib")  # common typo alias
-@router.post("/settings/infobip")
-def update_infobip_settings(
-    request: Request,
-    tenant: Optional[str] = None,
-    infobip_base_url: str = Form(default=""),
-    infobip_api_key: str = Form(default=""),
-    infobip_sender: str = Form(default=""),
-    db: Session = Depends(get_db),
-):
-    tenant_slug = _tenant_slug_param(request, tenant)
-    tctx, redirect = _require_login_or_redirect(db, request, tenant_slug)
-    if redirect:
-        return redirect
-
-    cs = _get_or_create_clinic_settings(db, tctx.tenant_id)
-
-    if hasattr(cs, "infobip_base_url"):
-        cs.infobip_base_url = infobip_base_url.strip()
-    if hasattr(cs, "infobip_api_key"):
-        cs.infobip_api_key = infobip_api_key.strip()
-    if hasattr(cs, "infobip_sender"):
-        cs.infobip_sender = infobip_sender.strip()
-
-    db.add(cs)
-    db.commit()
-
-    return RedirectResponse(url=f"{_rp(request)}/settings?tenant={tctx.tenant_slug}&tab=infobip", status_code=303)
+# -----------------------------
+# UI: Children
+# -----------------------------
 
 
 @router.get("/children", response_class=HTMLResponse)
-def children_list(
-    request: Request,
-    tenant: Optional[str] = None,
-    q: str = Query(default=""),
-    db: Session = Depends(get_db),
-):
-    tenant_slug = _tenant_slug_param(request, tenant)
-    tctx, redirect = _require_login_or_redirect(db, request, tenant_slug)
-    if redirect:
-        return redirect
+def children_list(request: Request):
+    if (resp := _require_login(request)):
+        return resp
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        _ensure_billing_item_columns(db)
 
-<<<<<<< Updated upstream
-    query = db.query(Child).filter_by(tenant_id=tctx.tenant_id)
-    if q:
-        # Child model typically has full_name; if not, fall back.
-        if hasattr(Child, "full_name"):
-            query = query.filter(Child.full_name.ilike(f"%{q}%"))
-    children = query.order_by(getattr(Child, "full_name", Child.id)).all()
+        children = db.query(Child).filter(Child.tenant_id == tid).order_by(Child.full_name.asc()).all()
 
-    ctx = _base_context(db, request, tctx.tenant_slug)
-    ctx.update({"children": children, "q": q})
-    return _render(request, "pages/children_list.html", ctx)
+        now = datetime.utcnow()
+        meta: dict[int, dict[str, Any]] = {}
+        for c in children:
+            next_appt = (
+                db.query(Appointment)
+                .filter(Appointment.tenant_id == tid, Appointment.child_id == c.id, Appointment.starts_at >= now)
+                .order_by(Appointment.starts_at.asc())
+                .first()
+            )
+            last_appt = (
+                db.query(Appointment)
+                .filter(Appointment.tenant_id == tid, Appointment.child_id == c.id)
+                .order_by(Appointment.starts_at.desc())
+                .first()
+            )
+            unpaid_count = (
+                db.query(BillingItem)
+                .filter(BillingItem.tenant_id == tid, BillingItem.child_id == c.id)
+                .filter(sa.func.upper(BillingItem.paid) != "YES")
+                .count()
+            )
+            meta[c.id] = {
+                "next_appt": getattr(next_appt, "starts_at", None) if next_appt else None,
+                "last_attendance": getattr(last_appt, "attendance_status", None) if last_appt else None,
+                "unpaid_count": unpaid_count,
+                "p1_phone": getattr(c, "parent1_phone", None),
+            }
 
-
-@router.get("/children/create", response_class=HTMLResponse)
-def children_create_get(
-    request: Request,
-    tenant: Optional[str] = None,
-    db: Session = Depends(get_db),
-):
-    # Compatibility: some UIs link to /children/create (GET). Redirect to /children
-    tenant_slug = _tenant_slug_param(request, tenant)
-    return RedirectResponse(url=f"{_rp(request)}/children?tenant={quote_plus(tenant_slug or '')}", status_code=303)
-=======
-    tctx = resolve_tenant(db, request, tenant_slug=tenant)
-    gate = _require_active_subscription(request, db, tctx.tenant_slug, tctx.tenant_id)
-    if gate:
-        return gate
-
-    query = db.query(Child).filter(Child.tenant_id == tctx.tenant_id)
-    if q:
-        query = query.filter(Child.full_name.ilike(f"%{q}%"))
-
-    children = query.order_by(Child.full_name.asc()).all()
-    meta = {
-        "total": len(children),
-    }
-
-    return _render(
-        request,
-        "pages/children_list.html",
-        {"children": children, "q": q, "meta": meta},
-        db,
-        tenant_slug=tctx.tenant_slug,
-    )
->>>>>>> Stashed changes
+        ctx = _base_context(db, request, ts, tid)
+        return templates.TemplateResponse(
+            "pages/children_list.html",
+            {
+                "request": request,
+                **ctx,
+                "children": children,
+                "meta": meta,
+            },
+        )
+    finally:
+        db.close()
 
 
 @router.post("/children/create")
-def children_create_post(
-    request: Request,
-    tenant: Optional[str] = None,
-    full_name: str = Form(...),
-    db: Session = Depends(get_db),
-):
-    tenant_slug = _tenant_slug_param(request, tenant)
-    tctx, redirect = _require_login_or_redirect(db, request, tenant_slug)
-    if redirect:
-        return redirect
+async def children_create(request: Request):
+    if (resp := _require_login(request)):
+        return resp
 
-    name = full_name.strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="full_name required")
+    form = await request.form()
+    full_name = str(form.get("full_name") or "").strip()
+    if not full_name:
+        _toast(request, "Child name is required", "danger")
+        return RedirectResponse(url=f"{_rp(request)}/children", status_code=303)
 
-    child = Child(tenant_id=tctx.tenant_id, full_name=name)
-    db.add(child)
-    db.commit()
-    db.refresh(child)
+    dob_raw = str(form.get("date_of_birth") or "").strip()
+    dob: date | None = None
+    if dob_raw:
+        try:
+            dob = date.fromisoformat(dob_raw)
+        except Exception:
+            _toast(request, "Invalid date of birth", "danger")
+            return RedirectResponse(url=f"{_rp(request)}/children", status_code=303)
 
-<<<<<<< Updated upstream
-    return RedirectResponse(url=f"{_rp(request)}/children?tenant={tctx.tenant_slug}", status_code=303)
+    notes = str(form.get("notes") or "").strip() or None
+
+    parent1_name = str(form.get("parent1_name") or "").strip() or None
+    parent1_phone = str(form.get("parent1_phone") or "").strip() or None
+    parent2_name = str(form.get("parent2_name") or "").strip() or None
+    parent2_phone = str(form.get("parent2_phone") or "").strip() or None
+
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        c = Child(
+            tenant_id=tid,
+            full_name=full_name,
+            date_of_birth=dob,
+            notes=notes,
+            parent1_name=parent1_name,
+            parent1_phone=parent1_phone,
+            parent2_name=parent2_name,
+            parent2_phone=parent2_phone,
+        )
+        db.add(c)
+        db.commit()
+        db.refresh(c)
+        _toast(request, "Child created")
+        return RedirectResponse(url=f"{_rp(request)}/children/{c.id}", status_code=303)
+    finally:
+        db.close()
 
 
 @router.get("/children/{child_id}", response_class=HTMLResponse)
-def child_detail(
-    request: Request,
-    child_id: int,
-    tenant: Optional[str] = None,
-    db: Session = Depends(get_db),
-):
-    tenant_slug = _tenant_slug_param(request, tenant)
-    tctx, redirect = _require_login_or_redirect(db, request, tenant_slug)
-    if redirect:
-        return redirect
+def child_detail(request: Request, child_id: int):
+    if (resp := _require_login(request)):
+        return resp
+    tab = (request.query_params.get("tab") or "overview").strip().lower()
 
-    child = db.query(Child).filter_by(id=child_id, tenant_id=tctx.tenant_id).one_or_none()
-    if child is None:
-        raise HTTPException(status_code=404, detail="Child not found")
+    # Convenience: links in UI may use ?tab=billing
+    if tab == "billing":
+        return RedirectResponse(url=f"{_rp(request)}/billing?child_id={child_id}", status_code=303)
 
-    # Keep details minimal; templates may enrich via other routers.
-    ctx = _base_context(db, request, tctx.tenant_slug)
-    ctx.update({"child": child})
-    return _render(request, "pages/child_detail.html", ctx)
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        child = db.query(Child).filter(Child.tenant_id == tid, Child.id == child_id).first()
+        if not child:
+            raise HTTPException(status_code=404, detail="Child not found")
+
+        appointments = (
+            db.query(Appointment)
+            .filter(Appointment.tenant_id == tid, Appointment.child_id == child_id)
+            .order_by(Appointment.starts_at.desc())
+            .limit(50)
+            .all()
+        )
+        timeline = (
+            db.query(TimelineEvent)
+            .filter(TimelineEvent.tenant_id == tid, TimelineEvent.child_id == child_id)
+            .order_by(TimelineEvent.occurred_at.desc())
+            .limit(80)
+            .all()
+        )
+        attachments = (
+            db.query(Attachment)
+            .filter(Attachment.child_id == child_id)
+            .order_by(Attachment.created_at.desc())
+            .all()
+        )
+        ctx = _base_context(db, request, ts, tid)
+        return templates.TemplateResponse(
+            "pages/child_detail.html",
+            {
+                "request": request,
+                **ctx,
+                "child": child,
+                "appointments": appointments,
+                "timeline": timeline,
+                "attachments": attachments,
+                "tab": tab,
+            },
+        )
+    finally:
+        db.close()
+
+
+# -----------------------------
+# UI: Therapists
+# -----------------------------
+
+
+WEEKDAYS: list[tuple[str, str]] = [
+    ("mon", "Monday"),
+    ("tue", "Tuesday"),
+    ("wed", "Wednesday"),
+    ("thu", "Thursday"),
+    ("fri", "Friday"),
+    ("sat", "Saturday"),
+    ("sun", "Sunday"),
+]
+
+
+def _time_to_minutes(s: str) -> int | None:
+    s = (s or "").strip()
+    if not s:
+        return None
+    try:
+        hh, mm = s.split(":")
+        return int(hh) * 60 + int(mm)
+    except Exception:
+        return None
+
+
+def _blocks_hours(blocks: list[dict[str, str]]) -> float:
+    total = 0
+    for b in blocks:
+        a = _time_to_minutes(b.get("start", ""))
+        z = _time_to_minutes(b.get("end", ""))
+        if a is None or z is None or z <= a:
+            continue
+        total += z - a
+    return round(total / 60.0, 2)
 
 
 @router.get("/therapists", response_class=HTMLResponse)
-def therapists_list(
-    request: Request,
-    tenant: Optional[str] = None,
-    q: str = Query(default=""),
-    db: Session = Depends(get_db),
-):
-    tenant_slug = _tenant_slug_param(request, tenant)
-    tctx, redirect = _require_login_or_redirect(db, request, tenant_slug)
-    if redirect:
-        return redirect
-
-    query = db.query(Therapist).filter_by(tenant_id=tctx.tenant_id)
-    if q and hasattr(Therapist, "full_name"):
-        query = query.filter(Therapist.full_name.ilike(f"%{q}%"))
-    therapists = query.order_by(getattr(Therapist, "full_name", Therapist.id)).all()
-
-    ctx = _base_context(db, request, tctx.tenant_slug)
-    ctx.update({"therapists": therapists, "q": q})
-    return _render(request, "pages/therapists_list.html", ctx)
+def therapists_list(request: Request):
+    if (resp := _require_login(request)):
+        return resp
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        therapists = db.query(Therapist).filter(Therapist.tenant_id == tid).order_by(Therapist.name.asc()).all()
+        ctx = _base_context(db, request, ts, tid)
+        return templates.TemplateResponse(
+            "pages/therapists.html",
+            {"request": request, **ctx, "therapists": therapists},
+        )
+    finally:
+        db.close()
 
 
 @router.post("/therapists/create")
-def therapists_create(
-    request: Request,
-    tenant: Optional[str] = None,
-    full_name: str = Form(...),
-    db: Session = Depends(get_db),
-):
-    tenant_slug = _tenant_slug_param(request, tenant)
-    tctx, redirect = _require_login_or_redirect(db, request, tenant_slug)
-    if redirect:
-        return redirect
-
-    name = full_name.strip()
+async def therapist_create(request: Request):
+    if (resp := _require_login(request)):
+        return resp
+    form = await request.form()
+    name = str(form.get("name") or "").strip()
     if not name:
-        raise HTTPException(status_code=400, detail="full_name required")
+        _toast(request, "Therapist name is required", "danger")
+        return RedirectResponse(url=f"{_rp(request)}/therapists", status_code=303)
+    role = str(form.get("role") or "").strip() or None
+    phone = str(form.get("phone") or "").strip() or None
+    email = str(form.get("email") or "").strip() or None
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        t = Therapist(tenant_id=tid, name=name, role=role, phone=phone, email=email)
+        db.add(t)
+        db.commit()
+        db.refresh(t)
+        _toast(request, "Therapist created")
+        return RedirectResponse(url=f"{_rp(request)}/therapists/{t.id}", status_code=303)
+    finally:
+        db.close()
 
-    th = Therapist(tenant_id=tctx.tenant_id, full_name=name)
-    db.add(th)
-    db.commit()
-    return RedirectResponse(url=f"{_rp(request)}/therapists?tenant={tctx.tenant_slug}", status_code=303)
+
+@router.get("/therapists/{therapist_id}", response_class=HTMLResponse)
+def therapist_detail(request: Request, therapist_id: int):
+    if (resp := _require_login(request)):
+        return resp
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        t = db.query(Therapist).filter(Therapist.tenant_id == tid, Therapist.id == therapist_id).first()
+        if not t:
+            raise HTTPException(status_code=404, detail="Therapist not found")
+
+        # availability
+        avail: dict[str, list[dict[str, str]]] = {}
+        try:
+            avail = json.loads(getattr(t, "availability_json", "") or "{}") or {}
+        except Exception:
+            avail = {}
+        # annual leave
+        leaves: list[dict[str, str]] = []
+        try:
+            leaves = json.loads(getattr(t, "annual_leave_json", "") or "[]") or []
+        except Exception:
+            leaves = []
+
+        weekly_hours = 0.0
+        for day, blocks in avail.items():
+            if isinstance(blocks, list):
+                weekly_hours += _blocks_hours([b for b in blocks if isinstance(b, dict)])
+        weekly_hours = round(weekly_hours, 2)
+
+        # Month hours: simple estimate (weekly_hours * 4.33)
+        month_hours = round(weekly_hours * 4.33, 2)
+        month_label = datetime.utcnow().strftime("%b %Y")
+
+        ctx = _base_context(db, request, ts, tid)
+        return templates.TemplateResponse(
+            "pages/therapist_detail.html",
+            {
+                "request": request,
+                **ctx,
+                "t": t,
+                "avail": avail,
+                "leaves": leaves,
+                "weekdays": WEEKDAYS,
+                "weekly_hours": weekly_hours,
+                "month_hours": month_hours,
+                "month_label": month_label,
+            },
+        )
+    finally:
+        db.close()
+
+
+@router.post("/therapists/{therapist_id}/update")
+async def therapist_update(request: Request, therapist_id: int):
+    if (resp := _require_login(request)):
+        return resp
+    form = await request.form()
+    name = str(form.get("name") or "").strip()
+    if not name:
+        _toast(request, "Therapist name is required", "danger")
+        return RedirectResponse(url=f"{_rp(request)}/therapists/{therapist_id}", status_code=303)
+
+    role = str(form.get("role") or "").strip() or None
+    phone = str(form.get("phone") or "").strip() or None
+    email = str(form.get("email") or "").strip() or None
+
+    avail: dict[str, list[dict[str, str]]] = {}
+    for key, _label in WEEKDAYS:
+        blocks: list[dict[str, str]] = []
+        s1, e1 = str(form.get(f"{key}_start1") or "").strip(), str(form.get(f"{key}_end1") or "").strip()
+        s2, e2 = str(form.get(f"{key}_start2") or "").strip(), str(form.get(f"{key}_end2") or "").strip()
+        if s1 and e1:
+            blocks.append({"start": s1, "end": e1})
+        if s2 and e2:
+            blocks.append({"start": s2, "end": e2})
+        if blocks:
+            avail[key] = blocks
+
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        t = db.query(Therapist).filter(Therapist.tenant_id == tid, Therapist.id == therapist_id).first()
+        if not t:
+            raise HTTPException(status_code=404, detail="Therapist not found")
+        t.name = name
+        t.role = role
+        t.phone = phone
+        t.email = email
+        t.availability_json = json.dumps(avail, ensure_ascii=False)
+        db.add(t)
+        db.commit()
+        _toast(request, "Therapist saved")
+        return RedirectResponse(url=f"{_rp(request)}/therapists/{therapist_id}", status_code=303)
+    finally:
+        db.close()
+
+
+@router.post("/therapists/{therapist_id}/leave/add")
+async def therapist_leave_add(request: Request, therapist_id: int):
+    if (resp := _require_login(request)):
+        return resp
+    form = await request.form()
+    start = str(form.get("start") or "").strip()
+    end = str(form.get("end") or "").strip()
+    reason = str(form.get("reason") or "").strip() or None
+    if not start or not end:
+        _toast(request, "Start/end required", "danger")
+        return RedirectResponse(url=f"{_rp(request)}/therapists/{therapist_id}", status_code=303)
+
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        t = db.query(Therapist).filter(Therapist.tenant_id == tid, Therapist.id == therapist_id).first()
+        if not t:
+            raise HTTPException(status_code=404, detail="Therapist not found")
+        leaves: list[dict[str, str]] = []
+        try:
+            leaves = json.loads(getattr(t, "annual_leave_json", "") or "[]") or []
+        except Exception:
+            leaves = []
+        leaves.append({"start": start, "end": end, "reason": reason or ""})
+        t.annual_leave_json = json.dumps(leaves, ensure_ascii=False)
+        db.add(t)
+        db.commit()
+        _toast(request, "Leave added")
+        return RedirectResponse(url=f"{_rp(request)}/therapists/{therapist_id}", status_code=303)
+    finally:
+        db.close()
+
+
+@router.post("/therapists/{therapist_id}/leave/remove")
+async def therapist_leave_remove(request: Request, therapist_id: int):
+    if (resp := _require_login(request)):
+        return resp
+    form = await request.form()
+    idx_raw = str(form.get("idx") or "").strip()
+    try:
+        idx = int(idx_raw)
+    except Exception:
+        idx = -1
+
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        t = db.query(Therapist).filter(Therapist.tenant_id == tid, Therapist.id == therapist_id).first()
+        if not t:
+            raise HTTPException(status_code=404, detail="Therapist not found")
+        leaves: list[dict[str, str]] = []
+        try:
+            leaves = json.loads(getattr(t, "annual_leave_json", "") or "[]") or []
+        except Exception:
+            leaves = []
+        if 0 <= idx < len(leaves):
+            leaves.pop(idx)
+            t.annual_leave_json = json.dumps(leaves, ensure_ascii=False)
+            db.add(t)
+            db.commit()
+            _toast(request, "Leave removed")
+        return RedirectResponse(url=f"{_rp(request)}/therapists/{therapist_id}", status_code=303)
+    finally:
+        db.close()
+
+
+# -----------------------------
+# UI: Calendar
+# -----------------------------
+
+
+@router.get("/calendar", response_class=HTMLResponse)
+def calendar_page(request: Request):
+    if (resp := _require_login(request)):
+        return resp
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        children = db.query(Child).filter(Child.tenant_id == tid).order_by(Child.full_name.asc()).all()
+        therapists = db.query(Therapist).filter(Therapist.tenant_id == tid).order_by(Therapist.name.asc()).all()
+        selected_child_id: int | None = None
+        raw = (request.query_params.get("child_id") or "").strip()
+        if raw:
+            try:
+                selected_child_id = int(raw)
+            except Exception:
+                selected_child_id = None
+        ctx = _base_context(db, request, ts, tid)
+        return templates.TemplateResponse(
+            "pages/calendar.html",
+            {
+                "request": request,
+                **ctx,
+                "children": children,
+                "therapists": therapists,
+                "selected_child_id": selected_child_id,
+            },
+        )
+    finally:
+        db.close()
+
+
+def _parse_calendar_range_dt(v: str | None) -> datetime | None:
+    if not v:
+        return None
+    s = v.strip()
+    if not s:
+        return None
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(s)
+    except Exception:
+        # Try date-only
+        try:
+            d = date.fromisoformat(s[:10])
+            dt = datetime.combine(d, time.min)
+        except Exception:
+            return None
+    # Appointments are stored as naive datetimes (from <input type="datetime-local">).
+    # Treat calendar ranges as local-naive by dropping tzinfo (do *not* convert),
+    # otherwise we can clip events near the end boundary for positive offsets.
+    if dt.tzinfo:
+        dt = dt.replace(tzinfo=None)
+    return dt
+
+
+@router.get("/api/calendar_events")
+def api_calendar_events(request: Request):
+    if (resp := _require_login(request)):
+        return resp
+
+    start_dt = _parse_calendar_range_dt(request.query_params.get("start"))
+    end_dt = _parse_calendar_range_dt(request.query_params.get("end"))
+    if not start_dt or not end_dt:
+        raise HTTPException(status_code=400, detail="start/end required")
+
+    child_id: int | None = None
+    raw = (request.query_params.get("child_id") or "").strip()
+    if raw:
+        try:
+            child_id = int(raw)
+        except Exception:
+            child_id = None
+
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        _ensure_billing_item_columns(db)
+
+        # Appointments
+        appt_q = (
+            db.query(Appointment)
+            .options(joinedload(Appointment.child))
+            .filter(Appointment.tenant_id == tid)
+            .filter(Appointment.starts_at >= start_dt, Appointment.starts_at < end_dt)
+        )
+        if child_id:
+            appt_q = appt_q.filter(Appointment.child_id == child_id)
+        appts = appt_q.all()
+
+        # Billing (by date)
+        start_d = start_dt.date()
+        end_d = end_dt.date()
+        bill_q = (
+            db.query(BillingItem)
+            .options(joinedload(BillingItem.child))
+            .filter(BillingItem.tenant_id == tid)
+            .filter(BillingItem.billing_due >= start_d, BillingItem.billing_due < end_d)
+        )
+        if child_id:
+            bill_q = bill_q.filter(BillingItem.child_id == child_id)
+        bills = bill_q.all()
+
+        # Journey / Timeline
+        # Only include journey types shown in the Calendar legend.
+        # (Visits are appointments; billing is shown via BillingItem events.)
+        journey_types = ["PARENT_FEEDBACK", "COMMUNICATION", "EXERCISE", "NOTE", "APPT_CANCELLED"]
+        tl_q = (
+            db.query(TimelineEvent)
+            .options(joinedload(TimelineEvent.child))
+            .filter(TimelineEvent.tenant_id == tid)
+            .filter(TimelineEvent.occurred_at >= start_dt, TimelineEvent.occurred_at < end_dt)
+            .filter(TimelineEvent.event_type.in_(journey_types))
+        )
+        if child_id:
+            tl_q = tl_q.filter(TimelineEvent.child_id == child_id)
+        journey = tl_q.all()
+
+        events: list[dict[str, Any]] = []
+        rp = _rp(request)
+
+        def appt_color(a: Appointment) -> str:
+            s = (getattr(a, "attendance_status", None) or "UNCONFIRMED").upper()
+            return {
+                "ATTENDED": "#16a34a",
+                "MISSED": "#dc2626",
+                "CONFIRMED": "#2563eb",
+                "UNCONFIRMED": "#6b7280",
+                "CANCELLED_PROVIDER": "#f59e0b",
+                "CANCELLED_ME": "#f97316",
+            }.get(s, "#6b7280")
+
+        for a in appts:
+            start = a.starts_at
+            end = a.ends_at or (a.starts_at + timedelta(minutes=60))
+            child_name = getattr(getattr(a, "child", None), "full_name", "") or ""
+            title = f"{child_name} — {a.procedure}".strip(" —")
+            events.append(
+                {
+                    "id": f"appt-{a.id}",
+                    "title": title,
+                    "start": start.isoformat(),
+                    "end": end.isoformat(),
+                    "color": appt_color(a),
+                    "url": f"{rp}/appointments/{a.id}",
+                }
+            )
+
+        for b in bills:
+            paid = (getattr(b, "paid", "NO") or "NO").upper() == "YES"
+            inv = (getattr(b, "invoice_created", "NO") or "NO").upper() == "YES"
+            color = "#a855f7"
+            state = "No invoice"
+            if paid:
+                color = "#22c55e"
+                state = "Paid"
+            elif inv:
+                color = "#eab308"
+                state = "Invoice created"
+
+            amt = _fmt_money(getattr(b, "amount_cents", None), getattr(b, "currency", "EUR"))
+            desc = (getattr(b, "description", "") or "").strip()
+            child_name = getattr(getattr(b, "child", None), "full_name", "") or ""
+            pieces = ["💳", child_name]
+            if amt:
+                pieces.append(amt)
+            if desc:
+                pieces.append(desc)
+            pieces.append(f"({state})")
+            title = " ".join([p for p in pieces if p])
+
+            events.append(
+                {
+                    "id": f"bill-{b.id}",
+                    "title": title,
+                    "start": b.billing_due.isoformat(),
+                    "allDay": True,
+                    "color": color,
+                    "url": f"{rp}/billing?child_id={b.child_id}",
+                }
+            )
+
+        def journey_color(tl: TimelineEvent) -> str:
+            et = (tl.event_type or "OTHER").upper()
+            return {
+                "PARENT_FEEDBACK": "#06b6d4",
+                "COMMUNICATION": "#64748b",
+                "EXERCISE": "#a855f7",
+                "NOTE": "#475569",
+                "APPT_CANCELLED": "#f97316",
+            }.get(et, "#475569")
+
+        def journey_icon(et: str) -> str:
+            etu = (et or "OTHER").upper()
+            return {
+                "PARENT_FEEDBACK": "💬",
+                "COMMUNICATION": "📞",
+                "EXERCISE": "🏋️",
+                "NOTE": "📝",
+                "APPT_CANCELLED": "✕",
+            }.get(etu, "🧭")
+
+        for tl in journey:
+            child_name = getattr(getattr(tl, "child", None), "full_name", "") or ""
+            icon = journey_icon(tl.event_type)
+            title = f"{icon} {child_name} — {tl.title}".strip()
+            events.append(
+                {
+                    "id": f"journey-{tl.id}",
+                    "title": title,
+                    "start": tl.occurred_at.isoformat(),
+                    "color": journey_color(tl),
+                    "url": f"{rp}/timeline?child_id={tl.child_id}",
+                }
+            )
+
+        return JSONResponse(events)
+    finally:
+        db.close()
+
+
+@router.post("/calendar/add_appointment")
+async def calendar_add_appointment(request: Request):
+    if (resp := _require_login(request)):
+        return resp
+    form = await request.form()
+
+    child_id_raw = str(form.get("child_id") or "").strip()
+    starts_at_raw = str(form.get("starts_at") or "").strip()
+    therapist_name = str(form.get("therapist_name") or "").strip()
+    procedure = str(form.get("procedure") or "").strip() or "Session"
+    also_add_tl = _parse_yes_no(str(form.get("also_add_timeline") or "YES"), default="YES")
+
+    try:
+        child_id = int(child_id_raw)
+    except Exception:
+        raise HTTPException(status_code=400, detail="child_id required")
+    starts_at = _parse_dt_local(starts_at_raw)
+    ends_at = starts_at + timedelta(minutes=60)
+
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        child = db.query(Child).filter(Child.tenant_id == tid, Child.id == child_id).first()
+        if not child:
+            raise HTTPException(status_code=404, detail="Child not found")
+
+        appt = Appointment(
+            tenant_id=tid,
+            child_id=child_id,
+            therapist_name=therapist_name,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            procedure=procedure,
+            attendance_status="UNCONFIRMED",
+        )
+        db.add(appt)
+        db.commit()
+        db.refresh(appt)
+
+        if also_add_tl == "YES":
+            tl = TimelineEvent(
+                tenant_id=tid,
+                child_id=child_id,
+                event_type="VISIT",
+                occurred_at=starts_at,
+                title=procedure,
+                details=f"Therapist: {therapist_name}" if therapist_name else None,
+            )
+            db.add(tl)
+            db.commit()
+
+        _toast(request, "Appointment added")
+        return RedirectResponse(url=f"{_rp(request)}/calendar?child_id={child_id}", status_code=303)
+    finally:
+        db.close()
+
+
+@router.post("/calendar/add_billing")
+async def calendar_add_billing(request: Request):
+    if (resp := _require_login(request)):
+        return resp
+    form = await request.form()
+
+    child_id_raw = str(form.get("child_id") or "").strip()
+    due_raw = str(form.get("billing_due") or "").strip()
+    invoice_created = _parse_yes_no(str(form.get("invoice_created") or "NO"))
+    paid = _parse_yes_no(str(form.get("paid") or "NO"))
+    parent_signed_off = _parse_yes_no(str(form.get("parent_signed_off") or "NO"))
+    amount_cents = _parse_money_eur_to_cents(str(form.get("amount_eur") or "").strip() or None)
+    description = str(form.get("description") or "").strip() or None
+
+    try:
+        child_id = int(child_id_raw)
+    except Exception:
+        raise HTTPException(status_code=400, detail="child_id required")
+    due = _parse_date(due_raw)
+
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        _ensure_billing_item_columns(db)
+
+        child = db.query(Child).filter(Child.tenant_id == tid, Child.id == child_id).first()
+        if not child:
+            raise HTTPException(status_code=404, detail="Child not found")
+
+        b = BillingItem(
+            tenant_id=tid,
+            child_id=child_id,
+            billing_due=due,
+            invoice_created=invoice_created,
+            paid=paid,
+            parent_signed_off=parent_signed_off,
+            amount_cents=amount_cents,
+            currency="EUR",
+            description=description,
+        )
+        db.add(b)
+        db.commit()
+        db.refresh(b)
+
+        # Add a journey event reflecting the billing state
+        if paid == "YES":
+            et = "PAYMENT"
+            state = "Payment received"
+        elif invoice_created == "YES":
+            et = "INVOICE_ISSUED"
+            state = "Invoice issued"
+        else:
+            et = "OTHER"
+            state = "Billing due"
+
+        amt = _fmt_money(amount_cents, "EUR")
+        title_bits = [state]
+        if amt:
+            title_bits.append(amt)
+        if description:
+            title_bits.append(description)
+        tl_title = " — ".join(title_bits)
+
+        tl = TimelineEvent(
+            tenant_id=tid,
+            child_id=child_id,
+            event_type=et,
+            occurred_at=datetime.combine(due, time(12, 0)),
+            title=tl_title,
+            details=None,
+        )
+        db.add(tl)
+        db.commit()
+
+        _toast(request, "Billing item added")
+        return RedirectResponse(url=f"{_rp(request)}/calendar?child_id={child_id}", status_code=303)
+    finally:
+        db.close()
+
+
+@router.post("/calendar/add_journey")
+async def calendar_add_journey(request: Request):
+    if (resp := _require_login(request)):
+        return resp
+    form = await request.form()
+
+    child_id_raw = str(form.get("child_id") or "").strip()
+    occurred_at_raw = str(form.get("occurred_at") or "").strip()
+    event_type = str(form.get("event_type") or "OTHER").strip().upper() or "OTHER"
+    title = str(form.get("title") or "").strip()
+    details = str(form.get("details") or "").strip() or None
+
+    if not title:
+        raise HTTPException(status_code=400, detail="title required")
+    try:
+        child_id = int(child_id_raw)
+    except Exception:
+        raise HTTPException(status_code=400, detail="child_id required")
+
+    occurred_at = _parse_dt_local(occurred_at_raw)
+
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        child = db.query(Child).filter(Child.tenant_id == tid, Child.id == child_id).first()
+        if not child:
+            raise HTTPException(status_code=404, detail="Child not found")
+
+        tl = TimelineEvent(
+            tenant_id=tid,
+            child_id=child_id,
+            event_type=event_type,
+            occurred_at=occurred_at,
+            title=title,
+            details=details,
+        )
+        db.add(tl)
+        db.commit()
+        _toast(request, "Journey item added")
+        return RedirectResponse(url=f"{_rp(request)}/calendar?child_id={child_id}", status_code=303)
+    finally:
+        db.close()
+
+
+# -----------------------------
+# UI: Billing
+# -----------------------------
 
 
 @router.get("/billing", response_class=HTMLResponse)
-def billing_page(
-    request: Request,
-    tenant: Optional[str] = None,
-    db: Session = Depends(get_db),
-):
-    # Minimal page so old links don't 404. Real billing UI may live elsewhere.
-    tenant_slug = _tenant_slug_param(request, tenant)
-    tctx, redirect = _require_login_or_redirect(db, request, tenant_slug)
-    if redirect:
-        return redirect
+def billing_page(request: Request):
+    if (resp := _require_login(request)):
+        return resp
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        _ensure_billing_item_columns(db)
 
-    ctx = _base_context(db, request, tctx.tenant_slug)
-    return _render(request, "pages/billing.html", ctx)
+        mode = (request.query_params.get("mode") or "display").strip().lower()
+        if mode != "edit":
+            mode = "display"
+
+        children = db.query(Child).filter(Child.tenant_id == tid).order_by(Child.full_name.asc()).all()
+        selected_child_id: int | None = None
+        raw = (request.query_params.get("child_id") or "").strip()
+        if raw:
+            try:
+                selected_child_id = int(raw)
+            except Exception:
+                selected_child_id = None
+
+        q = (
+            db.query(BillingItem)
+            .options(joinedload(BillingItem.child))
+            .filter(BillingItem.tenant_id == tid)
+            .order_by(BillingItem.billing_due.desc())
+        )
+        if selected_child_id:
+            q = q.filter(BillingItem.child_id == selected_child_id)
+        items = q.limit(200).all()
+
+        ctx = _base_context(db, request, ts, tid)
+        return templates.TemplateResponse(
+            "pages/billing.html",
+            {
+                "request": request,
+                **ctx,
+                "items": items,
+                "children": children,
+                "selected_child_id": selected_child_id,
+                "mode": mode,
+            },
+        )
+    finally:
+        db.close()
 
 
-@router.get("/sms-outbox", response_class=HTMLResponse)
-def sms_outbox_page(
-    request: Request,
-    tenant: Optional[str] = None,
-    db: Session = Depends(get_db),
-):
-    tenant_slug = _tenant_slug_param(request, tenant)
-    tctx, redirect = _require_login_or_redirect(db, request, tenant_slug)
-    if redirect:
-        return redirect
+@router.post("/billing/{billing_id}/update")
+async def billing_update(request: Request, billing_id: int):
+    if (resp := _require_login(request)):
+        return resp
+    form = await request.form()
+    redirect_to = str(form.get("redirect") or "").strip()
+    paid = _parse_yes_no(str(form.get("paid") or "NO"))
+    invoice_created = _parse_yes_no(str(form.get("invoice_created") or "NO"))
+    parent_signed_off = _parse_yes_no(str(form.get("parent_signed_off") or "NO"))
 
-    msgs = (
-        db.query(SmsOutbox)
-        .filter_by(tenant_id=tctx.tenant_id)
-        .order_by(getattr(SmsOutbox, "created_at", SmsOutbox.id).desc())
-        .limit(200)
-        .all()
-    )
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        _ensure_billing_item_columns(db)
+        b = db.query(BillingItem).filter(BillingItem.tenant_id == tid, BillingItem.id == billing_id).first()
+        if not b:
+            raise HTTPException(status_code=404, detail="Billing item not found")
+        b.paid = paid
+        b.invoice_created = invoice_created
+        b.parent_signed_off = parent_signed_off
+        db.add(b)
+        db.commit()
+        _toast(request, "Billing updated")
+        if redirect_to.startswith("/") and "//" not in redirect_to:
+            return RedirectResponse(url=f"{_rp(request)}{redirect_to}", status_code=303)
+        return RedirectResponse(url=f"{_rp(request)}/billing?child_id={b.child_id}&mode=edit", status_code=303)
+    finally:
+        db.close()
 
-    ctx = _base_context(db, request, tctx.tenant_slug)
-    ctx.update({"messages": msgs})
-    return _render(request, "pages/sms_outbox.html", ctx)
+
+@router.get("/billing/inputs", response_class=HTMLResponse)
+def billing_inputs(request: Request):
+    if (resp := _require_login(request)):
+        return resp
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        children = db.query(Child).filter(Child.tenant_id == tid).order_by(Child.full_name.asc()).all()
+        plans = (
+            db.query(BillingPlan)
+            .join(Child, Child.id == BillingPlan.child_id)
+            .filter(Child.tenant_id == tid)
+            .order_by(BillingPlan.start_date.desc())
+            .all()
+        )
+        ctx = _base_context(db, request, ts, tid)
+        return templates.TemplateResponse(
+            "pages/billing_inputs.html",
+            {"request": request, **ctx, "children": children, "plans": plans},
+        )
+    finally:
+        db.close()
 
 
-@router.post("/sms-outbox/delete")
-def sms_outbox_delete(
-    request: Request,
-    tenant: Optional[str] = None,
-    msg_id: int = Form(...),
-    db: Session = Depends(get_db),
-):
-    tenant_slug = _tenant_slug_param(request, tenant)
-    tctx, redirect = _require_login_or_redirect(db, request, tenant_slug)
-    if redirect:
-        return redirect
+def _generate_due_dates(plan: BillingPlan, horizon_days: int = 365) -> list[date]:
+    """Generate due dates for a plan (best-effort)."""
+    out: list[date] = []
+    start = plan.start_date
+    until = plan.until_date
+    if plan.indefinitely or not until:
+        until = start + timedelta(days=horizon_days)
 
-    msg = db.query(SmsOutbox).filter_by(id=msg_id, tenant_id=tctx.tenant_id).one_or_none()
-    if msg is not None:
-        db.delete(msg)
+    if plan.frequency == "weekly":
+        step_weeks = int(plan.every_n_weeks or 1)
+        d = start
+        while d <= until:
+            out.append(d)
+            d = d + timedelta(days=7 * step_weeks)
+        return out
+
+    # monthly
+    dom = int(plan.day_of_month or max(1, min(28, start.day)))
+    y, m = start.year, start.month
+
+    def add_month(y: int, m: int) -> tuple[int, int]:
+        m += 1
+        if m > 12:
+            return y + 1, 1
+        return y, m
+
+    d = date(y, m, min(dom, 28))
+    if d < start:
+        y, m = add_month(y, m)
+        d = date(y, m, min(dom, 28))
+
+    while d <= until:
+        out.append(d)
+        y, m = add_month(y, m)
+        d = date(y, m, min(dom, 28))
+    return out
+
+
+@router.post("/billing/inputs/create")
+async def billing_inputs_create(request: Request):
+    if (resp := _require_login(request)):
+        return resp
+    form = await request.form()
+
+    child_id_raw = str(form.get("child_id") or "").strip()
+    freq = str(form.get("frequency") or "monthly").strip().lower()
+    start_date_raw = str(form.get("start_date") or "").strip()
+    until_date_raw = str(form.get("until_date") or "").strip()
+    indefinitely = str(form.get("indefinitely") or "0").strip() in ("1", "true", "yes", "on")
+    description = str(form.get("description") or "").strip() or None
+
+    try:
+        child_id = int(child_id_raw)
+    except Exception:
+        raise HTTPException(status_code=400, detail="child_id required")
+
+    try:
+        start_d = date.fromisoformat(start_date_raw)
+    except Exception:
+        raise HTTPException(status_code=400, detail="start_date required")
+
+    until_d: date | None = None
+    if until_date_raw:
+        try:
+            until_d = date.fromisoformat(until_date_raw)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid until_date")
+
+    every_n_weeks = None
+    day_of_month = None
+    if freq == "weekly":
+        every_n_weeks = int(str(form.get("every_n_weeks") or "1").strip() or 1)
+    else:
+        day_of_month = int(str(form.get("day_of_month") or "1").strip() or 1)
+
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        _ensure_billing_item_columns(db)
+        child = db.query(Child).filter(Child.tenant_id == tid, Child.id == child_id).first()
+        if not child:
+            raise HTTPException(status_code=404, detail="Child not found")
+
+        plan = BillingPlan(
+            child_id=child_id,
+            frequency="weekly" if freq == "weekly" else "monthly",
+            every_n_weeks=every_n_weeks,
+            day_of_month=day_of_month,
+            start_date=start_d,
+            until_date=until_d,
+            indefinitely=bool(indefinitely),
+            description=description,
+        )
+        db.add(plan)
+        db.commit()
+        db.refresh(plan)
+
+        # Generate billing items (avoid duplicates)
+        due_dates = _generate_due_dates(plan)
+        created = 0
+        for d in due_dates:
+            exists = (
+                db.query(BillingItem)
+                .filter(BillingItem.tenant_id == tid, BillingItem.child_id == child_id, BillingItem.billing_due == d)
+                .first()
+            )
+            if exists:
+                continue
+            bi = BillingItem(
+                tenant_id=tid,
+                child_id=child_id,
+                billing_due=d,
+                paid="NO",
+                invoice_created="NO",
+                parent_signed_off="NO",
+                description=description,
+                currency="EUR",
+            )
+            db.add(bi)
+            created += 1
         db.commit()
 
-    return RedirectResponse(url=f"{_rp(request)}/sms-outbox?tenant={tctx.tenant_slug}", status_code=303)
+        _toast(request, f"Billing plan saved · created {created} rows")
+        return RedirectResponse(url=f"{_rp(request)}/billing/inputs", status_code=303)
+    finally:
+        db.close()
 
 
 # -----------------------------
-# Public JSON (safe)
+# UI: Timeline
 # -----------------------------
 
-@router.get("/api/clinic_settings")
-def api_clinic_settings_public(
-    request: Request,
-    tenant: str = Query(...),
-    db: Session = Depends(get_db),
-):
-    # Public read (no secrets)
-=======
 
-@router.get("/children/{child_id}", response_class=HTMLResponse)
-def child_detail(request: Request, child_id: int, tenant: str = "default", tab: str = "overview", db: Session = Depends(get_db)):
-    redirect = _require_login_for_tenant(request, tenant)
-    if redirect:
-        return redirect
-
->>>>>>> Stashed changes
-    tctx = resolve_tenant(db, request, tenant_slug=tenant)
-    cs = _get_or_create_clinic_settings(db, tctx.tenant_id)
-
-<<<<<<< Updated upstream
-    payload: Dict[str, Any] = {}
-    for k in ["clinic_name", "timezone", "locale", "sms_sender_id", "enable_24h", "enable_2h", "reminder_hours_24", "reminder_hours_2"]:
-        if hasattr(cs, k):
-            payload[k] = getattr(cs, k)
-    return payload
+TIMELINE_TYPES: list[str] = [
+    "VISIT",
+    "PAYMENT",
+    "INVOICE_ISSUED",
+    "EXERCISE",
+    "PARENT_FEEDBACK",
+    "COMMUNICATION",
+    "APPT_CANCELLED",
+    "NOTE",
+    "OTHER",
+]
 
 
-# -----------------------------
-# Internal JSON endpoints
-# -----------------------------
+@router.get("/timeline", response_class=HTMLResponse)
+def timeline_page(request: Request):
+    if (resp := _require_login(request)):
+        return resp
+    child_id: int | None = None
+    raw_child = (request.query_params.get("child_id") or "").strip()
+    if raw_child:
+        try:
+            child_id = int(raw_child)
+        except Exception:
+            child_id = None
+    event_type = (request.query_params.get("event_type") or "").strip().upper() or None
 
-@router.get("/api/internal/clinic_settings")
-@router.get("/api/internal/clinic-settings")
-def api_internal_clinic_settings_get(
-    request: Request,
-    tenant: str = Query(...),
-    db: Session = Depends(get_db),
-):
-    _require_internal_key(request)
-    tctx = resolve_tenant(db, request, tenant_slug=tenant)
-    cs = _get_or_create_clinic_settings(db, tctx.tenant_id)
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        children = db.query(Child).filter(Child.tenant_id == tid).order_by(Child.full_name.asc()).all()
 
-    payload: Dict[str, Any] = {}
-    # Include Infobip fields too in internal view (may be needed by SMS service).
-    for k in [
-        "clinic_name",
-        "timezone",
-        "locale",
-        "sms_sender_id",
-        "enable_24h",
-        "enable_2h",
-        "reminder_hours_24",
-        "reminder_hours_2",
-        "infobip_base_url",
-        "infobip_sender",
-    ]:
-        if hasattr(cs, k):
-            payload[k] = getattr(cs, k)
-    return payload
-
-
-@router.post("/api/internal/clinic_settings")
-@router.post("/api/internal/clinic-settings")
-async def api_internal_clinic_settings_set(
-    request: Request,
-    tenant: str = Query(...),
-    db: Session = Depends(get_db),
-):
-    _require_internal_key(request)
-    data = await request.json()
-    tctx = resolve_tenant(db, request, tenant_slug=tenant)
-    cs = _get_or_create_clinic_settings(db, tctx.tenant_id)
-
-    # Update allowed keys only.
-    allowed = {
-        "clinic_name",
-        "timezone",
-        "locale",
-        "sms_sender_id",
-        "enable_24h",
-        "enable_2h",
-        "reminder_hours_24",
-        "reminder_hours_2",
-    }
-    for k, v in (data or {}).items():
-        if k in allowed and hasattr(cs, k):
-            setattr(cs, k, v)
-
-    db.add(cs)
-    db.commit()
-    return {"ok": True}
-
-
-@router.get("/api/internal/infobip")
-async def api_internal_infobip_get(
-    request: Request,
-    tenant: str = Query(...),
-    db: Session = Depends(get_db),
-):
-    _require_infobip_token(request)
-    tctx = resolve_tenant(db, request, tenant_slug=tenant)
-    cs = _get_or_create_clinic_settings(db, tctx.tenant_id)
-
-    payload: Dict[str, Any] = {}
-    for k in ["infobip_base_url", "infobip_sender", "infobip_api_key"]:
-        if hasattr(cs, k):
-            payload[k] = getattr(cs, k)
-    return payload
-
-
-@router.post("/api/internal/infobip")
-async def api_internal_infobip_set(
-    request: Request,
-    tenant: str = Query(...),
-    db: Session = Depends(get_db),
-):
-    _require_infobip_token(request)
-    data = await request.json()
-    tctx = resolve_tenant(db, request, tenant_slug=tenant)
-    cs = _get_or_create_clinic_settings(db, tctx.tenant_id)
-
-    for k in ["infobip_base_url", "infobip_sender", "infobip_api_key"]:
-        if k in (data or {}) and hasattr(cs, k):
-            setattr(cs, k, (data or {}).get(k) or "")
-
-    db.add(cs)
-    db.commit()
-    return {"ok": True}
-
-
-@router.get("/api/license")
-def api_license_status(
-    request: Request,
-    tenant: str = Query(...),
-    db: Session = Depends(get_db),
-):
-    # Used by SMS app diagnostics / UI.
-    _require_internal_key(request)
-    tctx = resolve_tenant(db, request, tenant_slug=tenant)
-    return _license_status(db, tctx.tenant_id)
-
-
-@router.get("/api/internal/children")
-def api_internal_children(
-    request: Request,
-    tenant: str = Query(...),
-    q: str = Query(default=""),
-    db: Session = Depends(get_db),
-):
-    _require_internal_key(request)
-    tctx = resolve_tenant(db, request, tenant_slug=tenant)
-
-    query = db.query(Child).filter_by(tenant_id=tctx.tenant_id)
-    if q and hasattr(Child, "full_name"):
-        query = query.filter(Child.full_name.ilike(f"%{q}%"))
-    children = query.order_by(getattr(Child, "full_name", Child.id)).all()
-
-    out: List[Dict[str, Any]] = []
-    for c in children:
-        out.append(
-            {
-                "id": getattr(c, "id", None),
-                "full_name": getattr(c, "full_name", None),
-            }
+        q = (
+            db.query(TimelineEvent)
+            .options(joinedload(TimelineEvent.child))
+            .filter(TimelineEvent.tenant_id == tid)
+            .order_by(TimelineEvent.occurred_at.desc())
         )
-    return {"children": out}
+        if child_id:
+            q = q.filter(TimelineEvent.child_id == child_id)
+        if event_type:
+            q = q.filter(TimelineEvent.event_type == event_type)
+        events = q.limit(200).all()
+
+        ctx = _base_context(db, request, ts, tid)
+        return templates.TemplateResponse(
+            "pages/timeline.html",
+            {
+                "request": request,
+                **ctx,
+                "events": events,
+                "children": children,
+                "types": TIMELINE_TYPES,
+                "selected_child_id": child_id,
+                "selected_type": event_type,
+            },
+        )
+    finally:
+        db.close()
 
 
-@router.post("/api/internal/children")
-async def api_internal_children_create(
-    request: Request,
-    tenant: str = Query(...),
-    db: Session = Depends(get_db),
-):
-    _require_internal_key(request)
-    data = await request.json()
-    tctx = resolve_tenant(db, request, tenant_slug=tenant)
+@router.post("/timeline/create")
+async def timeline_create(request: Request):
+    if (resp := _require_login(request)):
+        return resp
+    form = await request.form()
+    child_id_raw = str(form.get("child_id") or "").strip()
+    event_type = str(form.get("event_type") or "OTHER").strip().upper() or "OTHER"
+    occurred_at_raw = str(form.get("occurred_at") or "").strip()
+    title = str(form.get("title") or "").strip()
+    details = str(form.get("details") or "").strip() or None
 
-    full_name = (data or {}).get("full_name") or (data or {}).get("name") or ""
-    full_name = str(full_name).strip()
-    if not full_name:
-        raise HTTPException(status_code=400, detail="full_name required")
+    if not title:
+        _toast(request, "Title required", "danger")
+        return RedirectResponse(url=f"{_rp(request)}/timeline", status_code=303)
+    try:
+        child_id = int(child_id_raw)
+    except Exception:
+        _toast(request, "Child required", "danger")
+        return RedirectResponse(url=f"{_rp(request)}/timeline", status_code=303)
 
-    child = Child(tenant_id=tctx.tenant_id, full_name=full_name)
+    occurred_at = _parse_dt_local(occurred_at_raw) if occurred_at_raw else datetime.utcnow()
 
-    # Best-effort optional fields (only if model supports them).
-    for attr, key in [
-        ("phone", "phone"),
-        ("phone_number", "phone"),
-        ("parent_phone", "phone"),
-        ("guardian_phone", "phone"),
-        ("notes", "notes"),
-    ]:
-        if key in (data or {}) and hasattr(child, attr):
-            setattr(child, attr, (data or {}).get(key))
-
-    db.add(child)
-    db.commit()
-    db.refresh(child)
-
-    return {"ok": True, "id": getattr(child, "id", None)}
-=======
-    child = (
-        db.query(Child)
-        .filter(Child.tenant_id == tctx.tenant_id, Child.id == child_id)
-        .first()
-    )
-    if not child:
-        raise HTTPException(status_code=404, detail="Not Found")
-
-    appointments = (
-        db.query(Appointment)
-        .filter(Appointment.tenant_id == tctx.tenant_id, Appointment.child_id == child.id)
-        .order_by(Appointment.starts_at.desc())
-        .all()
-    )
-    attachments = (
-        db.query(Attachment)
-        .filter(Attachment.tenant_id == tctx.tenant_id, Attachment.child_id == child.id)
-        .order_by(Attachment.created_at.desc())
-        .all()
-    )
-    timeline = (
-        db.query(TimelineEvent)
-        .filter(TimelineEvent.tenant_id == tctx.tenant_id, TimelineEvent.child_id == child.id)
-        .order_by(TimelineEvent.occurred_at.desc())
-        .all()
-    )
-
-    return _render(
-        request,
-        "pages/child_detail.html",
-        {
-            "child": child,
-            "appointments": appointments,
-            "attachments": attachments,
-            "timeline": timeline,
-            "tab": (tab or "overview").lower(),
-        },
-        db,
-        tenant_slug=tctx.tenant_slug,
-    )
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        child = db.query(Child).filter(Child.tenant_id == tid, Child.id == child_id).first()
+        if not child:
+            raise HTTPException(status_code=404, detail="Child not found")
+        tl = TimelineEvent(
+            tenant_id=tid,
+            child_id=child_id,
+            event_type=event_type,
+            occurred_at=occurred_at,
+            title=title,
+            details=details,
+        )
+        db.add(tl)
+        db.commit()
+        _toast(request, "Timeline item added")
+        return RedirectResponse(url=f"{_rp(request)}/timeline?child_id={child_id}", status_code=303)
+    finally:
+        db.close()
 
 
-# ----------------------------
-# SMS Outbox (portal view)
-# ----------------------------
+# -----------------------------
+# UI: Appointments + Notes + Files
+# -----------------------------
+
+
+@router.get("/appointments/{appointment_id}", response_class=HTMLResponse)
+def appointment_detail(request: Request, appointment_id: int):
+    if (resp := _require_login(request)):
+        return resp
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        appt = (
+            db.query(Appointment)
+            .options(joinedload(Appointment.child))
+            .filter(Appointment.tenant_id == tid, Appointment.id == appointment_id)
+            .first()
+        )
+        if not appt:
+            raise HTTPException(status_code=404, detail="Appointment not found")
+
+        note = db.query(SessionNote).filter(SessionNote.tenant_id == tid, SessionNote.appointment_id == appt.id).first()
+        if not note:
+            note = SessionNote(tenant_id=tid, appointment_id=appt.id)
+            db.add(note)
+            db.commit()
+            db.refresh(note)
+
+        uploads = db.query(Attachment).filter(Attachment.child_id == appt.child_id).order_by(Attachment.created_at.desc()).all()
+
+        ctx = _base_context(db, request, ts, tid)
+        return templates.TemplateResponse(
+            "pages/session_detail.html",
+            {"request": request, **ctx, "appt": appt, "note": note, "uploads": uploads},
+        )
+    finally:
+        db.close()
+
+
+@router.post("/appointments/{appointment_id}/attendance")
+async def appointment_attendance(request: Request, appointment_id: int):
+    if (resp := _require_login(request)):
+        return resp
+    form = await request.form()
+    status = str(form.get("attendance_status") or "UNCONFIRMED").strip().upper() or "UNCONFIRMED"
+    note = str(form.get("attendance_note") or "").strip() or None
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        appt = db.query(Appointment).filter(Appointment.tenant_id == tid, Appointment.id == appointment_id).first()
+        if not appt:
+            raise HTTPException(status_code=404, detail="Appointment not found")
+        appt.attendance_status = status
+
+        # Backwards-compatible fields (template expects them; not all DBs have them)
+        if hasattr(appt, "attendance_note"):
+            setattr(appt, "attendance_note", note)
+        if hasattr(appt, "attendance_marked_at"):
+            setattr(appt, "attendance_marked_at", datetime.utcnow())
+
+        db.add(appt)
+        db.commit()
+        _toast(request, "Attendance saved")
+        return RedirectResponse(url=f"{_rp(request)}/appointments/{appointment_id}", status_code=303)
+    finally:
+        db.close()
+
+
+@router.post("/appointments/{appointment_id}/note")
+async def appointment_note_save(request: Request, appointment_id: int):
+    if (resp := _require_login(request)):
+        return resp
+    form = await request.form()
+    summary = str(form.get("summary") or "").strip() or None
+    what_went_wrong = str(form.get("what_went_wrong") or "").strip() or None
+    improvements = str(form.get("improvements") or "").strip() or None
+    next_steps = str(form.get("next_steps") or "").strip() or None
+
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        appt = db.query(Appointment).filter(Appointment.tenant_id == tid, Appointment.id == appointment_id).first()
+        if not appt:
+            raise HTTPException(status_code=404, detail="Appointment not found")
+        note = db.query(SessionNote).filter(SessionNote.tenant_id == tid, SessionNote.appointment_id == appt.id).first()
+        if not note:
+            note = SessionNote(tenant_id=tid, appointment_id=appt.id)
+        note.summary = summary
+        note.what_went_wrong = what_went_wrong
+        note.improvements = improvements
+        note.next_steps = next_steps
+        db.add(note)
+        db.commit()
+        _toast(request, "Session note saved")
+        return RedirectResponse(url=f"{_rp(request)}/appointments/{appointment_id}", status_code=303)
+    finally:
+        db.close()
+
+
+@router.post("/children/{child_id}/upload")
+async def child_upload(request: Request, child_id: int):
+    if (resp := _require_login(request)):
+        return resp
+    form = await request.form()
+    upload: UploadFile | None = form.get("file")  # type: ignore
+    if not upload:
+        _toast(request, "File required", "danger")
+        return RedirectResponse(url=f"{_rp(request)}/children/{child_id}", status_code=303)
+
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        child = db.query(Child).filter(Child.tenant_id == tid, Child.id == child_id).first()
+        if not child:
+            raise HTTPException(status_code=404, detail="Child not found")
+        att = save_upload(child_id=child_id, upload=upload)
+        db.add(att)
+        db.commit()
+        _toast(request, "Uploaded")
+        return RedirectResponse(url=f"{_rp(request)}/children/{child_id}", status_code=303)
+    finally:
+        db.close()
+
+
+@router.get("/files/{attachment_id}")
+def file_get(request: Request, attachment_id: int):
+    if (resp := _require_login(request)):
+        return resp
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        att = (
+            db.query(Attachment)
+            .join(Child, Child.id == Attachment.child_id)
+            .filter(Attachment.id == attachment_id, Child.tenant_id == tid)
+            .first()
+        )
+        if not att:
+            raise HTTPException(status_code=404, detail="File not found")
+        return FileResponse(att.storage_path, filename=att.original_name, media_type=att.mime_type)
+    finally:
+        db.close()
+
+
+@router.post("/attachments/{attachment_id}/delete")
+async def attachment_delete(request: Request, attachment_id: int):
+    if (resp := _require_login(request)):
+        return resp
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        att = (
+            db.query(Attachment)
+            .join(Child, Child.id == Attachment.child_id)
+            .filter(Attachment.id == attachment_id, Child.tenant_id == tid)
+            .first()
+        )
+        if not att:
+            raise HTTPException(status_code=404, detail="File not found")
+        path = att.storage_path
+        child_id = att.child_id
+        db.delete(att)
+        db.commit()
+        delete_file(path)
+        _toast(request, "Deleted")
+        return RedirectResponse(url=f"{_rp(request)}/children/{child_id}", status_code=303)
+    finally:
+        db.close()
+
+
+# -----------------------------
+# UI: Settings
+# -----------------------------
+
+
+@router.get("/settings", response_class=HTMLResponse)
+def settings_page(request: Request):
+    if (resp := _require_login(request)):
+        return resp
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        clinic = _get_or_create_clinic_settings(db, tid)
+        lic = _get_or_create_app_license(db)
+
+        env_preview = "\n".join(
+            [
+                f"CLINIC_NAME={clinic.clinic_name}",
+                f"INFOBIP_BASE_URL={clinic.infobip_base_url}",
+                f"INFOBIP_SENDER={clinic.infobip_sender}",
+                f"INFOBIP_API_KEY={clinic.infobip_api_key}",
+                f"TENANT_SLUG={ts}",
+            ]
+        )
+
+        ctx = _base_context(db, request, ts, tid)
+        return templates.TemplateResponse(
+            "pages/settings.html",
+            {
+                "request": request,
+                **ctx,
+                "clinic": clinic,
+                "license": lic,
+                "google_maps_link": clinic.map_url,
+                "env_preview": env_preview,
+            },
+        )
+    finally:
+        db.close()
+
+
+@router.post("/settings/clinic")
+async def settings_clinic_save(request: Request):
+    if (resp := _require_login(request)):
+        return resp
+    form = await request.form()
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        clinic = _get_or_create_clinic_settings(db, tid)
+        clinic.clinic_name = str(form.get("clinic_name") or "").strip() or clinic.clinic_name
+        clinic.address = str(form.get("address") or "").strip() or ""
+        lat_raw = str(form.get("lat") or "").strip()
+        lng_raw = str(form.get("lng") or "").strip()
+        clinic.lat = float(lat_raw) if lat_raw else None
+        clinic.lng = float(lng_raw) if lng_raw else None
+        clinic.updated_at = datetime.utcnow()
+        db.add(clinic)
+        db.commit()
+        _toast(request, "Clinic settings saved")
+        return RedirectResponse(url=f"{_rp(request)}/settings", status_code=303)
+    finally:
+        db.close()
+
+
+@router.post("/settings/infobip")
+async def settings_infobip_save(request: Request):
+    if (resp := _require_login(request)):
+        return resp
+    form = await request.form()
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        clinic = _get_or_create_clinic_settings(db, tid)
+        clinic.infobip_base_url = str(form.get("infobip_base_url") or "").strip() or clinic.infobip_base_url
+        clinic.infobip_sender = str(form.get("infobip_sender") or "").strip() or ""
+        clinic.infobip_api_key = str(form.get("infobip_api_key") or "").strip() or ""
+        # optional fields
+        if hasattr(clinic, "infobip_username"):
+            clinic.infobip_username = str(form.get("infobip_username") or "").strip() or ""
+        if hasattr(clinic, "infobip_userkey"):
+            clinic.infobip_userkey = str(form.get("infobip_userkey") or "").strip() or ""
+        clinic.updated_at = datetime.utcnow()
+        db.add(clinic)
+        db.commit()
+        _toast(request, "Infobip settings saved")
+        return RedirectResponse(url=f"{_rp(request)}/settings", status_code=303)
+    finally:
+        db.close()
+
+
+@router.get("/settings/env")
+def settings_env_download(request: Request):
+    if (resp := _require_login(request)):
+        return resp
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        clinic = _get_or_create_clinic_settings(db, tid)
+        content = "\n".join(
+            [
+                f"CLINIC_NAME={clinic.clinic_name}",
+                f"INFOBIP_BASE_URL={clinic.infobip_base_url}",
+                f"INFOBIP_SENDER={clinic.infobip_sender}",
+                f"INFOBIP_API_KEY={clinic.infobip_api_key}",
+                f"TENANT_SLUG={ts}",
+            ]
+        )
+        return Response(
+            content,
+            media_type="text/plain",
+            headers={"Content-Disposition": "attachment; filename=client.env"},
+        )
+    finally:
+        db.close()
+
+
+@router.post("/settings/license")
+async def settings_license_manual(request: Request):
+    """Manual license controls (legacy)."""
+    if (resp := _require_login(request)):
+        return resp
+    form = await request.form()
+    product_mode = str(form.get("product_mode") or "BOTH").strip().upper() or "BOTH"
+    action = str(form.get("action") or "TRIAL").strip().upper() or "TRIAL"
+    weeks_raw = str(form.get("weeks") or "4").strip()
+    try:
+        weeks = int(weeks_raw)
+    except Exception:
+        weeks = 4
+
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        lic = _get_or_create_app_license(db)
+        lic.product_mode = product_mode
+        now = datetime.utcnow()
+        delta = timedelta(days=max(1, weeks) * 7)
+        if action == "TRIAL":
+            lic.trial_end = (lic.trial_end or now) + delta
+        elif action == "RENEW_WEEKS":
+            lic.license_end = (lic.license_end or now) + delta
+        elif action == "RENEW_YEAR":
+            lic.license_end = (lic.license_end or now) + timedelta(days=365)
+        lic.updated_at = now
+        db.add(lic)
+        db.commit()
+        _toast(request, "License updated")
+        return RedirectResponse(url=f"{_rp(request)}/settings", status_code=303)
+    finally:
+        db.close()
+
+
+@router.post("/settings/activate")
+async def settings_activate(request: Request):
+    """Activation code → license/trial renewal."""
+    if (resp := _require_login(request)):
+        return resp
+    form = await request.form()
+    code = str(form.get("activation_code") or "").strip()
+    if not code:
+        return RedirectResponse(url=f"{_rp(request)}/settings?err=missing_code", status_code=303)
+
+    db = _db()
+    try:
+        # tenant not strictly required for activation; but keep access consistent
+        ts, tid = _resolve_tenant_or_404(db, request)
+        lic = _get_or_create_app_license(db)
+
+        try:
+            payload = verify_activation_code(code, settings.LICENSE_PUBLIC_KEY)
+        except Exception:
+            return RedirectResponse(url=f"{_rp(request)}/settings?err=invalid_code", status_code=303)
+
+        # plan mapping: 1=1 week trial, 2=1 month trial, 3=1 year license
+        now = datetime.utcnow()
+        if payload.plan == 1:
+            lic.trial_end = now + timedelta(days=7)
+        elif payload.plan == 2:
+            lic.trial_end = now + timedelta(days=30)
+        elif payload.plan == 3:
+            lic.license_end = now + timedelta(days=365)
+
+        lic.client_id = payload.client_id
+        lic.activation_token = code
+        lic.plan = payload.plan
+        lic.product_mode = payload.mode
+        lic.activated_at = now
+        lic.updated_at = now
+
+        db.add(lic)
+        db.commit()
+        return RedirectResponse(url=f"{_rp(request)}/settings?ok=activated", status_code=303)
+    finally:
+        db.close()
+
+
+# -----------------------------
+# UI: SMS outbox
+# -----------------------------
+
+
 @router.get("/sms-outbox", response_class=HTMLResponse)
-def sms_outbox_page(request: Request, tenant: str = "default", db: Session = Depends(get_db)):
-    redirect = _require_login_for_tenant(request, tenant)
-    if redirect:
-        return redirect
-
-    tctx = resolve_tenant(db, request, tenant_slug=tenant)
-    gate = _require_active_subscription(request, db, tctx.tenant_slug, tctx.tenant_id)
-    if gate:
-        return gate
-
-    rows = (
-        db.query(SmsOutbox)
-        .filter(SmsOutbox.tenant_id == tctx.tenant_id)
-        .order_by(SmsOutbox.created_at.desc())
-        .limit(250)
-        .all()
-    )
-
-    # Map DB rows to the field names expected by the template.
-    outbox = [
-        {
-            "scheduled_at": (r.next_attempt_at or r.created_at),
-            "to_phone": r.to_number,
-            "message": r.body,
-            "status": r.status,
-            "attempts": r.attempts,
-            "provider_message_id": r.provider_message_id,
-            "last_error": r.error,
-        }
-        for r in rows
-    ]
-
-    return _render(
-        request,
-        "pages/sms_outbox.html",
-        {"outbox": outbox},
-        db,
-        tenant_slug=tctx.tenant_slug,
-    )
+def sms_outbox(request: Request):
+    if (resp := _require_login(request)):
+        return resp
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        outbox = (
+            db.query(SmsOutbox)
+            .filter(SmsOutbox.tenant_id == tid)
+            .order_by(SmsOutbox.scheduled_at.desc())
+            .limit(50)
+            .all()
+        )
+        ctx = _base_context(db, request, ts, tid)
+        return templates.TemplateResponse(
+            "pages/sms_outbox.html",
+            {"request": request, **ctx, "outbox": outbox},
+        )
+    finally:
+        db.close()
 
 
 @router.post("/sms-outbox/test")
-def sms_outbox_test(
-    request: Request,
-    tenant: str = Form("default"),
-    to_phone: str = Form(""),
-    message: str = Form(""),
-    db: Session = Depends(get_db),
-):
-    redirect = _require_login_for_tenant(request, tenant)
-    if redirect:
-        return redirect
-
-    tctx = resolve_tenant(db, request, tenant_slug=tenant)
-    gate = _require_active_subscription(request, db, tctx.tenant_slug, tctx.tenant_id)
-    if gate:
-        return gate
-
-    to_phone = (to_phone or "").strip()
-    message = (message or "").strip()
+async def sms_outbox_test(request: Request):
+    if (resp := _require_login(request)):
+        return resp
+    form = await request.form()
+    to_phone = str(form.get("to_phone") or "").strip()
+    message = str(form.get("message") or "").strip()
     if not to_phone or not message:
-        _toast_set(request, "error", "Please provide a phone number and a message")
-        return RedirectResponse(url=f"{_rp(request)}/sms-outbox?tenant={tctx.tenant_slug}", status_code=303)
+        _toast(request, "Phone + message required", "danger")
+        return RedirectResponse(url=f"{_rp(request)}/sms-outbox", status_code=303)
 
-    row = SmsOutbox(
-        tenant_id=tctx.tenant_id,
-        to_number=to_phone,
-        body=message,
-        status="queued",
-        provider="",
-        next_attempt_at=datetime.utcnow(),
-    )
-    db.add(row)
-    db.commit()
-    _toast_set(request, "success", "Message queued")
-    return RedirectResponse(url=f"{_rp(request)}/sms-outbox?tenant={tctx.tenant_slug}", status_code=303)
-
-
-# ----------------------------
-# Legacy compatibility routes (avoid 404s from old buttons)
-# ----------------------------
->>>>>>> Stashed changes
-
-
-@router.get("/api/internal/appointments")
-def api_internal_appointments(
-    request: Request,
-    tenant: str = Query(...),
-    days: int = Query(default=60, ge=1, le=365),
-    db: Session = Depends(get_db),
-):
-    _require_internal_key(request)
-    tctx = resolve_tenant(db, request, tenant_slug=tenant)
-
-    start = datetime.utcnow() - timedelta(days=1)
-    end = datetime.utcnow() + timedelta(days=days)
-
-    q = db.query(Appointment).filter(
-        and_(
-            Appointment.tenant_id == tctx.tenant_id,
-            Appointment.starts_at >= start,
-            Appointment.starts_at <= end,
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        item = SmsOutbox(
+            id=str(uuid.uuid4()),
+            tenant_id=tid,
+            to_phone=to_phone,
+            message=message,
+            scheduled_at=datetime.utcnow(),
+            status="queued",
+            attempts=0,
         )
-    )
+        db.add(item)
+        db.commit()
+        _toast(request, "Queued")
+        return RedirectResponse(url=f"{_rp(request)}/sms-outbox", status_code=303)
+    finally:
+        db.close()
 
-    appts = q.order_by(Appointment.starts_at.asc()).all()
 
-    out: List[Dict[str, Any]] = []
-    for a in appts:
-        # Child may be nullable.
-        child_id = getattr(a, "child_id", None)
-        child_name = None
-        if child_id:
-            c = db.query(Child).filter_by(id=child_id, tenant_id=tctx.tenant_id).one_or_none()
-            child_name = getattr(c, "full_name", None) if c else None
+# -----------------------------
+# Internal API (Portal <-> SMS)
+# -----------------------------
 
-        out.append(
+
+def _require_internal_key(request: Request) -> None:
+    expected = (settings.INTERNAL_API_KEY or "").strip()
+    got = (request.headers.get("X-Internal-Key") or request.headers.get("x-internal-key") or "").strip()
+    if not expected or got != expected:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
+def _require_internal_token(request: Request) -> None:
+    # legacy: SMS app uses INTERNAL_TOKEN == Portal SECRET_KEY
+    expected = (settings.SECRET_KEY or "").strip()
+    got = (request.headers.get("x-internal-token") or request.headers.get("X-Internal-Token") or "").strip()
+    if not expected or got != expected:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
+def _tenant_from_query_or_400(request: Request) -> str:
+    slug = (request.query_params.get("tenant") or "").strip().lower()
+    if not slug:
+        raise HTTPException(status_code=400, detail="tenant required")
+    return slug
+
+
+@router.get("/api/internal/clinic_settings")
+def api_internal_clinic_settings(request: Request):
+    _require_internal_key(request)
+    tenant_slug = _tenant_from_query_or_400(request)
+    db = _db()
+    try:
+        t = db.query(Tenant).filter(Tenant.slug == tenant_slug).first()
+        if not t:
+            raise HTTPException(status_code=404, detail="Tenant not found")
+        cs = _get_or_create_clinic_settings(db, t.id)
+        return JSONResponse(
             {
-                "id": getattr(a, "id", None),
-                "child_id": child_id,
-                "child_name": child_name,
-                "starts_at": getattr(a, "starts_at", None).isoformat() if getattr(a, "starts_at", None) else None,
-                "ends_at": getattr(a, "ends_at", None).isoformat() if getattr(a, "ends_at", None) else None,
-                "therapist_name": getattr(a, "therapist_name", None),
-                "procedure": getattr(a, "procedure", None),
-                "attendance_status": getattr(a, "attendance_status", None),
+                "tenant": tenant_slug,
+                "clinic": {
+                    "clinic_name": cs.clinic_name,
+                    "address": cs.address,
+                    "lat": cs.lat,
+                    "lng": cs.lng,
+                    "google_maps_link": cs.map_url,
+                    "sms_provider": cs.sms_provider,
+                    "infobip_base_url": cs.infobip_base_url,
+                    "infobip_sender": cs.infobip_sender,
+                    "infobip_api_key": cs.infobip_api_key,
+                    "infobip_username": getattr(cs, "infobip_username", ""),
+                    "infobip_userkey": getattr(cs, "infobip_userkey", ""),
+                },
             }
         )
+    finally:
+        db.close()
 
-    return {"appointments": out}
+
+@router.get("/api/internal/infobip")
+def api_internal_infobip(request: Request):
+    _require_internal_token(request)
+    tenant_slug = _tenant_from_query_or_400(request)
+    db = _db()
+    try:
+        t = db.query(Tenant).filter(Tenant.slug == tenant_slug).first()
+        if not t:
+            raise HTTPException(status_code=404, detail="Tenant not found")
+        cs = _get_or_create_clinic_settings(db, t.id)
+        return JSONResponse(
+            {
+                "tenant": tenant_slug,
+                "infobip_base_url": cs.infobip_base_url,
+                "infobip_sender": cs.infobip_sender,
+                "infobip_api_key": cs.infobip_api_key,
+            }
+        )
+    finally:
+        db.close()
+
+
+@router.get("/api/internal/children")
+def api_internal_children_list(request: Request):
+    _require_internal_key(request)
+    tenant_slug = _tenant_from_query_or_400(request)
+    db = _db()
+    try:
+        t = db.query(Tenant).filter(Tenant.slug == tenant_slug).first()
+        if not t:
+            raise HTTPException(status_code=404, detail="Tenant not found")
+        rows = db.query(Child).filter(Child.tenant_id == t.id).order_by(Child.full_name.asc()).all()
+        return JSONResponse(
+            {
+                "tenant": tenant_slug,
+                "children": [
+                    {
+                        "id": c.id,
+                        "full_name": c.full_name,
+                        "parent1_name": getattr(c, "parent1_name", None),
+                        "parent1_phone": getattr(c, "parent1_phone", None),
+                        "parent2_name": getattr(c, "parent2_name", None),
+                        "parent2_phone": getattr(c, "parent2_phone", None),
+                    }
+                    for c in rows
+                ],
+            }
+        )
+    finally:
+        db.close()
+
+
+@router.post("/api/internal/children")
+async def api_internal_children_create(request: Request):
+    _require_internal_key(request)
+    tenant_slug = _tenant_from_query_or_400(request)
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    full_name = str(payload.get("full_name") or "").strip()
+    if not full_name:
+        raise HTTPException(status_code=400, detail="full_name required")
+
+    db = _db()
+    try:
+        t = db.query(Tenant).filter(Tenant.slug == tenant_slug).first()
+        if not t:
+            raise HTTPException(status_code=404, detail="Tenant not found")
+
+        c = Child(
+            tenant_id=t.id,
+            full_name=full_name,
+            notes=str(payload.get("notes") or "").strip() or None,
+            parent1_name=str(payload.get("parent1_name") or "").strip() or None,
+            parent1_phone=str(payload.get("parent1_phone") or "").strip() or None,
+            parent2_name=str(payload.get("parent2_name") or "").strip() or None,
+            parent2_phone=str(payload.get("parent2_phone") or "").strip() or None,
+        )
+        db.add(c)
+        db.commit()
+        db.refresh(c)
+        return JSONResponse({"ok": True, "id": c.id})
+    finally:
+        db.close()

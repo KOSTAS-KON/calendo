@@ -11,7 +11,7 @@
       </div>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end;">
         {% if license %}
-          {% if license.is_active %}
+          {% if license.is_active() %}
             <span style="display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46;font-weight:800;font-size:13px;">✅ License active</span>
           {% else %}
             <span style="display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;background:#fffbeb;border:1px solid #fde68a;color:#92400e;font-weight:800;font-size:13px;">⏳ Trial / License needed</span>

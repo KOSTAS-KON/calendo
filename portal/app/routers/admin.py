@@ -17,10 +17,11 @@ from app.db import get_db
 from app.config import settings
 from app.models.tenant import Tenant
 from app.models.licensing import Plan, Subscription, ActivationCode, LicenseAuditLog
+from app.utils.paths import TEMPLATES_DIR
 from app.utils.security import generate_temp_password
 
 router = APIRouter()
-templates = Jinja2Templates(directory="app/templates")
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
 # ----------------------------
