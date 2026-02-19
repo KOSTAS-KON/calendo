@@ -2167,7 +2167,7 @@ def _post_portal_json(path: str, payload: dict, headers: dict | None = None, tim
         return {"ok": False, "error": str(e)}
 
 
-def _apply_portal_settings_to_env() -> Dict[str, Any]:
+def _apply_portal_settings_to_env(tenant_slug: Optional[str] = None) -> Dict[str, Any]:
     """Pull clinic + Infobip settings from the portal and apply to this app.
 
     We support two internal auth mechanisms (both used in this repo):
@@ -2178,8 +2178,13 @@ def _apply_portal_settings_to_env() -> Dict[str, Any]:
     """
     out: Dict[str, Any] = {}
 
+    tenant_slug = str(
+        tenant_slug or os.getenv("TENANT_SLUG") or TENANT_SLUG or "default"
+    ).strip().lower() or "default"
+
+
     # Clinic display name (non-secret)
-    clinic = _fetch_portal_json("/api/clinic_settings") or {}
+    clinic = _fetch_portal_json(f"/api/clinic_settings?tenant={tenant_slug}") or _fetch_portal_json("/api/clinic_settings") or {}
     if clinic.get("clinic_name"):
         out["clinic_name"] = clinic.get("clinic_name")
 
