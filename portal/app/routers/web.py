@@ -174,47 +174,116 @@ def _resolve_tenant_or_404(db: Session, request: Request, requested_slug: str | 
 
 
 def _ensure_billing_item_columns(db: Session) -> None:
-    """Runtime safety-net for older DBs.
+    """Best-effort schema drift fixer for billing tables.
 
-    If migrations were not run, BillingItem ORM queries would crash because
-    the model now includes amount_cents/currency/description.
+    A few deployments may have been created before the billing feature (or before
+    the latest migrations landed). In that situation, the `/billing` pages can
+    crash due to missing columns (or older boolean flag types).
 
-    We preflight and apply ALTER TABLE statements in a safe best-effort way.
+    This helper keeps the app resilient by:
+      • creating the billing tables if missing (checkfirst)
+      • adding missing columns (billing_due, amount/currency/description, flags)
+      • attempting to normalize old boolean flags to YES/NO strings
+
+    Notes:
+      • This is a *safety net*. The preferred path is still running Alembic migrations.
+      • All operations are best-effort; failures are swallowed to avoid taking the
+        whole portal down.
     """
+    bind = db.get_bind()
+
+    # If the tables do not exist (fresh DB / older install), create them from ORM metadata.
     try:
-        insp = sa.inspect(db.get_bind())
-        cols = {c.get("name") for c in insp.get_columns("billing_items")}
-    except Exception:
-        return
-
-    stmts: list[str] = []
-    if "amount_cents" not in cols:
-        stmts.append("ALTER TABLE billing_items ADD COLUMN amount_cents INTEGER")
-    if "currency" not in cols:
-        stmts.append("ALTER TABLE billing_items ADD COLUMN currency VARCHAR(8) DEFAULT 'EUR'")
-    if "description" not in cols:
-        stmts.append("ALTER TABLE billing_items ADD COLUMN description TEXT")
-
-    if not stmts:
-        return
-
-    for sql in stmts:
-        try:
-            db.execute(sa.text(sql))
-        except Exception:
-            # Don't kill the request; migration should be the primary path.
-            pass
-    try:
-        # backfill default currency
-        if "currency" not in cols:
-            db.execute(sa.text("UPDATE billing_items SET currency='EUR' WHERE currency IS NULL"))
+        BillingPlan.__table__.create(bind, checkfirst=True)
+        BillingItem.__table__.create(bind, checkfirst=True)
     except Exception:
         pass
+
     try:
-        db.commit()
+        insp = sa.inspect(bind)
+        col_info = insp.get_columns("billing_items")
     except Exception:
+        return
+
+    cols = {c.get("name"): c for c in col_info if c.get("name")}
+
+    stmts: list[str] = []
+
+    # --- billing_due (older schema used "month")
+    if "billing_due" not in cols:
+        stmts.append("ALTER TABLE billing_items ADD COLUMN billing_due DATE")
+
+        # Backfill if possible
+        if "month" in cols:
+            if bind.dialect.name == "postgresql":
+                stmts.append(
+                    "UPDATE billing_items "
+                    "SET billing_due = (to_date(month || '-01','YYYY-MM-DD') + INTERVAL '1 month - 1 day')::date "
+                    "WHERE billing_due IS NULL"
+                )
+            else:
+                # SQLite (typeless) - best effort
+                stmts.append(
+                    "UPDATE billing_items "
+                    "SET billing_due = date(month || '-01','start of month','+1 month','-1 day') "
+                    "WHERE billing_due IS NULL"
+                )
+        else:
+            if bind.dialect.name == "postgresql":
+                stmts.append("UPDATE billing_items SET billing_due = CURRENT_DATE WHERE billing_due IS NULL")
+            else:
+                stmts.append("UPDATE billing_items SET billing_due = date('now') WHERE billing_due IS NULL")
+
+    # --- amount/currency/description
+    if "amount_cents" not in cols:
+        stmts.append("ALTER TABLE billing_items ADD COLUMN amount_cents INTEGER NULL")
+    if "currency" not in cols:
+        stmts.append("ALTER TABLE billing_items ADD COLUMN currency VARCHAR(8) NULL")
+    if "description" not in cols:
+        stmts.append("ALTER TABLE billing_items ADD COLUMN description TEXT NULL")
+
+    # Default currency backfill
+    if "currency" in cols or "currency" not in cols:
+        stmts.append("UPDATE billing_items SET currency = 'EUR' WHERE currency IS NULL OR currency = ''")
+
+    # --- flags: paid / invoice_created / parent_signed_off
+    for flag in ("paid", "invoice_created", "parent_signed_off"):
+        if flag not in cols:
+            stmts.append(f"ALTER TABLE billing_items ADD COLUMN {flag} VARCHAR(3) NULL")
+            stmts.append(f"UPDATE billing_items SET {flag} = 'NO' WHERE {flag} IS NULL OR {flag} = ''")
+            continue
+
+        ctype = str(cols[flag].get("type", "")).lower()
+        # Older schema may have BOOLEAN or INTEGER 0/1. Normalize to YES/NO.
+        if ("bool" in ctype) or ("boolean" in ctype):
+            if bind.dialect.name == "postgresql":
+                stmts.append(
+                    f"ALTER TABLE billing_items ALTER COLUMN {flag} TYPE VARCHAR(3) "
+                    f"USING CASE WHEN {flag} THEN 'YES' ELSE 'NO' END"
+                )
+            else:
+                # SQLite: can't ALTER TYPE; but it's typeless and will happily store text.
+                stmts.append(
+                    f"UPDATE billing_items SET {flag} = CASE "
+                    f"WHEN {flag} IN (1,'1','t','true','TRUE') THEN 'YES' ELSE 'NO' END"
+                )
+        else:
+            # Ensure canonical YES/NO values
+            stmts.append(
+                f"UPDATE billing_items SET {flag} = "
+                f"CASE WHEN upper(CAST({flag} AS TEXT)) = 'YES' THEN 'YES' ELSE 'NO' END "
+                f"WHERE {flag} IS NOT NULL"
+            )
+
+    # Execute statements one-by-one so a single failure doesn't break everything.
+    if stmts:
+        for sql in stmts:
+            try:
+                db.execute(sa.text(sql))
+            except Exception:
+                continue
         try:
-            db.rollback()
+            db.commit()
         except Exception:
             pass
 

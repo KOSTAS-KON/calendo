@@ -1388,7 +1388,18 @@ def page_calendar(templates: Dict[str, str], app_tz: Any) -> None:
             "selectMirror": True,
             "height": 720,
         }
-        cal_payload = st_calendar(events=events, options=cal_options, key="main_calendar")
+        # Workaround: streamlit-calendar can occasionally fail to mount in some deployments
+        # (reverse proxies / baseUrlPath / aggressive reruns). Allow a one-click remount.
+        if "calendar_key_version" not in st.session_state:
+            st.session_state["calendar_key_version"] = 0
+        col_reload, _ = st.columns([1, 7])
+        with col_reload:
+            if st.button("🔄 Reload", help="If the calendar is stuck loading, reload the calendar component."):
+                st.session_state["calendar_key_version"] += 1
+                st.rerun()
+
+        cal_key = f"main_calendar_{st.session_state['calendar_key_version']}"
+        cal_payload = st_calendar(events=events, options=cal_options, key=cal_key)
         action = parse_calendar_action(cal_payload)
 
         # Guard against the calendar component repeating the last callback on reruns.
@@ -2005,10 +2016,39 @@ def page_customers() -> None:
         children_payload = _fetch_portal_json(f"/api/internal/children?tenant={tenant_slug}", headers=headers) or {}
         children = children_payload.get("children") or []
         if children:
-            st.dataframe(pd.DataFrame(children), use_container_width=True, hide_index=True)
+            df = pd.DataFrame(children)
+
+            # Portal uses parent1_* fields; keep the phone column visible even if the API changes names
+            if "parent_phone" in df.columns and "parent1_phone" not in df.columns:
+                df["parent1_phone"] = df["parent_phone"]
+
+            q = st.text_input("Search customers", "", placeholder="Search by name or phone…", key="cust_search")
+            if q:
+                ql = q.strip().lower()
+                if ql:
+                    def _match(row) -> bool:
+                        return (
+                            ql in str(row.get("full_name", "")).lower()
+                            or ql in str(row.get("parent1_name", "")).lower()
+                            or ql in str(row.get("parent1_phone", "")).lower()
+                        )
+                    df = df[df.apply(_match, axis=1)]
+
+            cols = [
+                ("full_name", "Child"),
+                ("date_of_birth", "DOB"),
+                ("parent1_name", "Parent/Guardian"),
+                ("parent1_phone", "Phone"),
+                ("notes", "Notes"),
+            ]
+            present = [c for c, _ in cols if c in df.columns]
+            if present:
+                df = df[present].copy()
+                df.rename(columns={c: label for c, label in cols if c in present}, inplace=True)
+
+            st.dataframe(df, use_container_width=True, hide_index=True)
         else:
             st.caption("No customers found yet.")
-
         # Portal link
         portal_app = os.getenv("PORTAL_APP_URL", portal_base).rstrip("/")
         if portal_app:
@@ -2167,7 +2207,7 @@ def _post_portal_json(path: str, payload: dict, headers: dict | None = None, tim
         return {"ok": False, "error": str(e)}
 
 
-def _apply_portal_settings_to_env(tenant_slug: Optional[str] = None) -> Dict[str, Any]:
+def _apply_portal_settings_to_env(tenant_slug: str) -> Dict[str, Any]:
     """Pull clinic + Infobip settings from the portal and apply to this app.
 
     We support two internal auth mechanisms (both used in this repo):
@@ -2178,17 +2218,16 @@ def _apply_portal_settings_to_env(tenant_slug: Optional[str] = None) -> Dict[str
     """
     out: Dict[str, Any] = {}
 
-    tenant_slug = str(
-        tenant_slug or os.getenv("TENANT_SLUG") or TENANT_SLUG or "default"
-    ).strip().lower() or "default"
-
-
     # Clinic display name (non-secret)
-    clinic = _fetch_portal_json(f"/api/clinic_settings?tenant={tenant_slug}") or _fetch_portal_json("/api/clinic_settings") or {}
+    clinic = _fetch_portal_json("/api/clinic_settings") or {}
     if clinic.get("clinic_name"):
         out["clinic_name"] = clinic.get("clinic_name")
 
     # 1) Preferred: fetch everything from /api/internal/clinic_settings using INTERNAL_API_KEY
+    tenant_slug = (tenant_slug or "").strip()
+    if not tenant_slug:
+        return out
+
     internal_key = (os.getenv("INTERNAL_API_KEY") or "").strip()
     if internal_key:
         data = _fetch_portal_json(f"/api/internal/clinic_settings?tenant={tenant_slug}", headers={"X-Internal-Key": internal_key}) or {}
@@ -2358,17 +2397,25 @@ def main() -> None:
         sent, failed, due_seen = process_due_outbox()
         if due_seen > 0:
             st.toast(f"Auto-send processed due={due_seen}: sent={sent}, failed={failed} (provider={effective_provider()})", icon="📨")
+# NOTE: The streamlit-calendar component can be flaky when mounted inside st.tabs
+# (known issue in some Streamlit/component versions). A horizontal radio keeps it stable.
+nav = st.radio(
+    "",
+    ["📅 Ημερολόγιο", "📋 Ραντεβού", "📨 Αποστολές", "🪪 Πελάτες", "✍️ Πρότυπα"],
+    horizontal=True,
+    label_visibility="collapsed",
+    key="main_nav_tab",
+)
 
-    tabs = st.tabs(["📅 Ημερολόγιο", "📋 Ραντεβού", "📨 Αποστολές", "🪪 Πελάτες", "✍️ Πρότυπα"])
-    with tabs[0]:
-        page_calendar(templates, app_tz)
-    with tabs[1]:
-        page_manage_list(templates, app_tz)
-    with tabs[2]:
-        page_outbox()
-    with tabs[3]:
-        page_customers()
-    with tabs[4]:
-        page_templates(templates)
+if nav.startswith("📅"):
+    page_calendar(templates, app_tz)
+elif nav.startswith("📋"):
+    page_manage_list(templates, app_tz)
+elif nav.startswith("📨"):
+    page_outbox()
+elif nav.startswith("🪪"):
+    page_customers()
+else:
+    page_templates(templates)
 if __name__ == "__main__":
     main()

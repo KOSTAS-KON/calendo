@@ -1,118 +1,105 @@
 <!doctype html>
 <html lang="en">
+
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>{{ title or "Calendo" }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{ page_title or "Calendo" }}</title>
 
-  {# When served behind the nginx gateway under /therapy, FastAPI sets request.scope.root_path.
-     We use it to prefix internal links + static assets so styling works both directly
-     and behind the gateway. #}
-  {% set rp = request.scope.get("root_path", "") %}
-  {% set ts = (tenant_slug or request.query_params.get('tenant') or request.session.get('tenant_slug') or 'default') %}
-  {% set suite_url = rp ~ '/t/' ~ ts ~ '/suite' %}
-  {% set children_url = rp ~ '/children?tenant=' ~ ts %}
-  {% set therapists_url = rp ~ '/therapists?tenant=' ~ ts %}
-  {% set settings_url = rp ~ '/settings?tenant=' ~ ts %}
-  {% set outbox_url = rp ~ '/sms-outbox?tenant=' ~ ts %}
+  {# Respect reverse-proxy mounting (Render, etc.) #}
+  {% set rp = request.scope.root_path or "" %}
 
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  {# Tailwind CDN is convenient but heavy; keep for now because templates use some tailwind classes. #}
   <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="{{ rp }}/static/css/app.css" />
-  <script defer src="{{ rp }}/static/js/app.js"></script>
+
+  <link rel="stylesheet" href="{{ rp }}/static/css/app.css?v={{ static_version or '1' }}" />
+  {% block head_extra %}{% endblock %}
 </head>
+
 <body class="bg-slate-100 text-slate-900">
-  {% set toast = request.session.pop('toast', None) %}
-  {% if toast and toast.text %}
-    <div class="toast toast-{{ toast.kind or 'success' }}" data-toast>{{ toast.text }}</div>
-  {% endif %}
-  <div class="topbar">
-    <div class="topbar-inner">
-      <div class="topbar-left">
-        <button class="menu-btn" type="button" aria-label="Open menu" data-action="toggle-sidebar">☰</button>
-
-        <div class="brand">
-          <div class="brand-mark">C</div>
-          <div>
-            <div class="brand-title">Calendo</div>
-            <div class="brand-sub">{{ (clinic.clinic_name if clinic else "Therapy Portal") }}</div>
-          </div>
-        </div>
-
-        <div class="tenant-chip" title="Current tenant">
-          <span class="tenant-chip-label">Tenant</span>
-          <span class="tenant-chip-value">{{ ts }}</span>
-        </div>
-      </div>
-
-      <div class="topbar-right">
-        <div class="userbox">
-          <span class="userbox-label">User</span>
-          <span class="userbox-name">{{ user_name or request.session.get('email') or "User" }}</span>
-        </div>
-
-        <a class="logout" href="{{ sms_app_url }}" title="Open SMS Calendar">SMS</a>
-        <a class="logout" href="{{ suite_url }}" title="Go to Suite">Suite</a>
-      </div>
-    </div>
-  </div>
-
   <div class="page">
-    <aside class="sidebar" aria-label="Sidebar navigation">
-      <div class="sidehdr"><div class="legacy-menu">
-Workspace</div>
-      <a class="sideitem" href="{{ suite_url }}">🏠 Suite</a>
-      <a class="sideitem" href="{{ children_url }}">🧒 Children</a>
-      <a class="sideitem" href="{{ therapists_url }}">🧑‍⚕️ Therapists</a>
 
-      <div class="side-sep"></div>
-      <div class="sidehdr">Operations</div>
-      <a class="sideitem" href="{{ rp }}/billing">💳 Billing</a>
-      <a class="sideitem" href="{{ outbox_url }}">📤 SMS Outbox</a>
+    <aside class="sidebar" id="sidebar" aria-label="Primary navigation">
+      <div class="sidebar-inner">
+        <div class="sidebar-title">Workspace</div>
+        <a class="sidebar-link {% if active=='dashboard' %}active{% endif %}" href="{{ rp }}/?tenant={{ tenant_slug }}">
+          <span>🏠</span>
+          <span>Overview</span>
+        </a>
+        <a class="sidebar-link {% if active=='suite' %}active{% endif %}" href="{{ rp }}/t/{{ tenant_slug }}/suite">
+          <span>🧩</span>
+          <span>Suite</span>
+        </a>
+        <a class="sidebar-link {% if active=='children' %}active{% endif %}" href="{{ rp }}/children?tenant={{ tenant_slug }}">
+          <span>🧒</span>
+          <span>Children</span>
+        </a>
+        <a class="sidebar-link {% if active=='therapists' %}active{% endif %}" href="{{ rp }}/therapists?tenant={{ tenant_slug }}">
+          <span>👩‍⚕️</span>
+          <span>Therapists</span>
+        </a>
+        <a class="sidebar-link {% if active=='appointments' %}active{% endif %}" href="{{ rp }}/appointments?tenant={{ tenant_slug }}">
+          <span>📅</span>
+          <span>Appointments</span>
+        </a>
+        <a class="sidebar-link {% if active=='outbox' %}active{% endif %}" href="{{ rp }}/sms-outbox?tenant={{ tenant_slug }}">
+          <span>📨</span>
+          <span>SMS Outbox</span>
+        </a>
+        <a class="sidebar-link {% if active=='settings' %}active{% endif %}" href="{{ rp }}/settings?tenant={{ tenant_slug }}">
+          <span>⚙️</span>
+          <span>Settings</span>
+        </a>
 
-      <div class="side-sep"></div>
-      <div class="sidehdr">Clinic</div>
-      <a class="sideitem" href="{{ settings_url }}">⚙️ Setup</a>
-
-      <div class="side-sep"></div>
-      <div class="sidehdr">Apps</div>
-      <a class="sideitem" href="{{ sms_app_url }}">📣 SMS Calendar</a>
-      <a class="sideitem muted" href="{{ rp }}/">🏁 Landing</a>
+        {% if sms_app_url %}
+          <div class="sidebar-section">Apps</div>
+          <a class="sidebar-link" href="{{ sms_app_url }}" target="_blank" rel="noopener">
+            <span>🗓️</span>
+            <span>SMS Calendar</span>
+          </a>
+        {% endif %}
+      </div>
     </aside>
 
-    <div class="sidebar-backdrop" data-action="close-sidebar" aria-hidden="true"></div>
+    <div class="sidebar-backdrop" id="sidebarBackdrop" aria-hidden="true"></div>
 
-    
-</div>
-<main class="content">
-      <div class="content-inner">
-        <div class="panel">
-          <div class="panel-head">
-            <div class="panel-title">{{ header or "Clinic Suite" }}</div>
-          </div>
-          <div class="panel-body">
-            {% block content %}{% endblock %}
-          </div>
+    <main class="content">
+      <div class="topbar">
+        <div class="brand">Calendo</div>
+        <div class="top-actions">
+          <button class="menu-btn" id="sidebarToggle" aria-label="Toggle menu" type="button">☰</button>
         </div>
       </div>
+
+      {% block content %}{% endblock %}
     </main>
   </div>
 
   <nav class="bottom-nav" aria-label="Bottom navigation">
-    <a class="bn-item" href="{{ suite_url }}">
-      <span class="bn-ico">🏠</span><span class="bn-txt">Suite</span>
+    <a class="item" href="{{ rp }}/?tenant={{ tenant_slug }}">
+      <div class="icon">🏠</div>
+      <div class="lbl">Home</div>
     </a>
-    <a class="bn-item" href="{{ children_url }}">
-      <span class="bn-ico">🧒</span><span class="bn-txt">Children</span>
+    <a class="item" href="{{ rp }}/children?tenant={{ tenant_slug }}">
+      <div class="icon">🧒</div>
+      <div class="lbl">Children</div>
     </a>
-    <a class="bn-item" href="{{ rp }}/billing">
-      <span class="bn-ico">💳</span><span class="bn-txt">Billing</span>
+    <a class="item" href="{{ rp }}/appointments?tenant={{ tenant_slug }}">
+      <div class="icon">📅</div>
+      <div class="lbl">Appts</div>
     </a>
-    <a class="bn-item" href="{{ outbox_url }}">
-      <span class="bn-ico">📤</span><span class="bn-txt">Outbox</span>
-    </a>
-    <a class="bn-item" href="{{ settings_url }}">
-      <span class="bn-ico">⚙️</span><span class="bn-txt">Setup</span>
+    <a class="item" href="{{ rp }}/settings?tenant={{ tenant_slug }}">
+      <div class="icon">⚙️</div>
+      <div class="lbl">Settings</div>
     </a>
   </nav>
+
+  <script src="{{ rp }}/static/js/app.js?v={{ static_version or '1' }}"></script>
+  {% block body_extra %}{% endblock %}
 </body>
+
 </html>
