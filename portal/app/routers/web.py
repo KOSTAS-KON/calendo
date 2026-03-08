@@ -173,6 +173,37 @@ def _resolve_tenant_or_404(db: Session, request: Request, requested_slug: str | 
     return tenant_slug, t.id
 
 
+def _timeline_base_query(db: Session, tenant_id: str):
+    """Tenant-safe TimelineEvent query without requiring TimelineEvent.tenant_id.
+
+    The TimelineEvent model is keyed to Child via child_id. Some deployments do
+    not have a tenant_id column on timeline_events, so we enforce tenancy by
+    joining through Child. This keeps reads/writes safe without a schema change.
+    """
+    return (
+        db.query(TimelineEvent)
+        .join(Child, Child.id == TimelineEvent.child_id)
+        .filter(Child.tenant_id == tenant_id)
+    )
+
+
+def _new_timeline_event(*, child_id: int, event_type: str, occurred_at: datetime, title: str, details: str | None = None, appointment_id: int | None = None, billing_item_id: int | None = None) -> TimelineEvent:
+    """Construct a TimelineEvent using only columns guaranteed by the model."""
+    kwargs = {
+        "child_id": child_id,
+        "event_type": event_type,
+        "occurred_at": occurred_at,
+        "title": title,
+        "details": details,
+    }
+    # Keep optional links if/when present on the model and table.
+    if hasattr(TimelineEvent, "appointment_id"):
+        kwargs["appointment_id"] = appointment_id
+    if hasattr(TimelineEvent, "billing_item_id"):
+        kwargs["billing_item_id"] = billing_item_id
+    return TimelineEvent(**kwargs)
+
+
 def _ensure_billing_item_columns(db: Session) -> None:
     """Best-effort schema drift fixer for billing tables.
 
@@ -402,6 +433,31 @@ def t_root(request: Request, tenant_slug: str):
     return RedirectResponse(url=f"{_rp(request)}/t/{tenant_slug}/suite", status_code=303)
 
 
+
+
+@router.get("/t/{tenant_slug}/children", include_in_schema=False)
+def tenant_children_alias(request: Request, tenant_slug: str):
+    return RedirectResponse(url=f"{_rp(request)}/children?tenant={tenant_slug}", status_code=303)
+
+
+@router.get("/t/{tenant_slug}/children/{child_id}", include_in_schema=False)
+def tenant_child_detail_alias(request: Request, tenant_slug: str, child_id: int):
+    return RedirectResponse(url=f"{_rp(request)}/children/{child_id}?tenant={tenant_slug}", status_code=303)
+
+
+@router.get("/appointments", include_in_schema=False)
+def appointments_alias(request: Request):
+    child_id = (request.query_params.get("child_id") or "").strip()
+    url = f"{_rp(request)}/calendar"
+    if child_id:
+        url += f"?child_id={quote(child_id)}"
+    return RedirectResponse(url=url, status_code=303)
+
+
+@router.get("/t/{tenant_slug}/appointments", include_in_schema=False)
+def tenant_appointments_alias(request: Request, tenant_slug: str):
+    return RedirectResponse(url=f"{_rp(request)}/appointments?tenant={tenant_slug}", status_code=303)
+
 @router.get("/t/{tenant_slug}/suite", response_class=HTMLResponse)
 def suite(request: Request, tenant_slug: str):
     if (resp := _require_login(request)):
@@ -594,8 +650,9 @@ def child_detail(request: Request, child_id: int):
             .all()
         )
         timeline = (
-            db.query(TimelineEvent)
-            .filter(TimelineEvent.tenant_id == tid, TimelineEvent.child_id == child_id)
+            _timeline_base_query(db, tid)
+            .options(joinedload(TimelineEvent.child))
+            .filter(TimelineEvent.child_id == child_id)
             .order_by(TimelineEvent.occurred_at.desc())
             .limit(80)
             .all()
@@ -980,9 +1037,8 @@ def api_calendar_events(request: Request):
         # (Visits are appointments; billing is shown via BillingItem events.)
         journey_types = ["PARENT_FEEDBACK", "COMMUNICATION", "EXERCISE", "NOTE", "APPT_CANCELLED"]
         tl_q = (
-            db.query(TimelineEvent)
+            _timeline_base_query(db, tid)
             .options(joinedload(TimelineEvent.child))
-            .filter(TimelineEvent.tenant_id == tid)
             .filter(TimelineEvent.occurred_at >= start_dt, TimelineEvent.occurred_at < end_dt)
             .filter(TimelineEvent.event_type.in_(journey_types))
         )
@@ -1133,13 +1189,13 @@ async def calendar_add_appointment(request: Request):
         db.refresh(appt)
 
         if also_add_tl == "YES":
-            tl = TimelineEvent(
-                tenant_id=tid,
+            tl = _new_timeline_event(
                 child_id=child_id,
                 event_type="VISIT",
                 occurred_at=starts_at,
                 title=procedure,
                 details=f"Therapist: {therapist_name}" if therapist_name else None,
+                appointment_id=appt.id,
             )
             db.add(tl)
             db.commit()
@@ -1213,13 +1269,13 @@ async def calendar_add_billing(request: Request):
             title_bits.append(description)
         tl_title = " — ".join(title_bits)
 
-        tl = TimelineEvent(
-            tenant_id=tid,
+        tl = _new_timeline_event(
             child_id=child_id,
             event_type=et,
             occurred_at=datetime.combine(due, time(12, 0)),
             title=tl_title,
             details=None,
+            billing_item_id=b.id,
         )
         db.add(tl)
         db.commit()
@@ -1258,8 +1314,7 @@ async def calendar_add_journey(request: Request):
         if not child:
             raise HTTPException(status_code=404, detail="Child not found")
 
-        tl = TimelineEvent(
-            tenant_id=tid,
+        tl = _new_timeline_event(
             child_id=child_id,
             event_type=event_type,
             occurred_at=occurred_at,
@@ -1546,9 +1601,8 @@ def timeline_page(request: Request):
         children = db.query(Child).filter(Child.tenant_id == tid).order_by(Child.full_name.asc()).all()
 
         q = (
-            db.query(TimelineEvent)
+            _timeline_base_query(db, tid)
             .options(joinedload(TimelineEvent.child))
-            .filter(TimelineEvent.tenant_id == tid)
             .order_by(TimelineEvent.occurred_at.desc())
         )
         if child_id:
@@ -1602,8 +1656,7 @@ async def timeline_create(request: Request):
         child = db.query(Child).filter(Child.tenant_id == tid, Child.id == child_id).first()
         if not child:
             raise HTTPException(status_code=404, detail="Child not found")
-        tl = TimelineEvent(
-            tenant_id=tid,
+        tl = _new_timeline_event(
             child_id=child_id,
             event_type=event_type,
             occurred_at=occurred_at,

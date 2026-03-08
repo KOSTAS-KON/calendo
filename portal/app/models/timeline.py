@@ -9,21 +9,26 @@ from app.db import Base
 
 
 class TimelineEvent(Base):
-    """Patient journey timeline.
+    """Patient journey timeline event.
 
-    This table is intentionally generic: it can represent payments, visits,
-    invoice events, exercises, parent communications, cancellations, etc.
-
-    We keep optional links to related entities (appointment / billing row)
-    for richer navigation without enforcing it.
+    NOTE:
+    - TimelineEvent is tenant-safe *via child_id* -> Child.tenant_id.
+    - We intentionally do NOT require a tenant_id column on this table, because
+      some deployments were created without it and the application already has a
+      stable tenant boundary through Child.
+    - Optional links (appointment_id / billing_item_id) are kept for richer
+      navigation but are not required.
     """
 
     __tablename__ = "timeline_events"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+
+    # Tenant scoping is enforced through the linked child row.
     child_id: Mapped[int] = mapped_column(ForeignKey("children.id"), index=True)
 
-    # e.g. VISIT, PAYMENT, INVOICE_ISSUED, EXERCISE, PARENT_FEEDBACK, APPT_CANCELLED, NOTE, OTHER
+    # e.g. VISIT, PAYMENT, INVOICE_ISSUED, EXERCISE, PARENT_FEEDBACK,
+    # COMMUNICATION, APPT_CANCELLED, NOTE, OTHER
     event_type: Mapped[str] = mapped_column(String(40), index=True)
 
     title: Mapped[str] = mapped_column(String(220))
