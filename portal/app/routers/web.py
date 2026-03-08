@@ -31,19 +31,16 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.config import settings
 from app.db import SessionLocal
-from app.models import (
-    Appointment,
-    Attachment,
-    BillingItem,
-    BillingPlan,
-    Child,
-    ClinicSettings,
-    SessionNote,
-    SmsOutbox,
-    Therapist,
-    TimelineEvent,
-)
-from app.models.clinic_settings import AppLicense
+from app.models.appointment import Appointment
+from app.models.attachment import Attachment
+from app.models.billing import BillingItem
+from app.models.billing_plan import BillingPlan
+from app.models.child import Child
+from app.models.clinic_settings import ClinicSettings, AppLicense
+from app.models.session_note import SessionNote
+from app.models.sms_outbox import SmsOutbox
+from app.models.therapist import Therapist
+from app.models.timeline import TimelineEvent
 from app.models.licensing import Subscription
 from app.models.tenant import Tenant
 from app.services.license_tokens import verify_activation_code
@@ -213,7 +210,7 @@ def _ensure_billing_item_columns(db: Session) -> None:
 
     This helper keeps the app resilient by:
       • creating the billing tables if missing (checkfirst)
-      • adding missing columns (billing_due, amount/currency/description, flags)
+      • adding missing columns (tenant_id, billing_due, amount/currency/description, flags)
       • attempting to normalize old boolean flags to YES/NO strings
 
     Notes:
@@ -239,6 +236,27 @@ def _ensure_billing_item_columns(db: Session) -> None:
     cols = {c.get("name"): c for c in col_info if c.get("name")}
 
     stmts: list[str] = []
+
+    # --- tenant_id (older schema may not have it yet)
+    if "tenant_id" not in cols:
+        stmts.append("ALTER TABLE billing_items ADD COLUMN tenant_id VARCHAR(36) NULL")
+
+        # Best-effort backfill from children table
+        if bind.dialect.name == "postgresql":
+            stmts.append(
+                "UPDATE billing_items bi "
+                "SET tenant_id = c.tenant_id "
+                "FROM children c "
+                "WHERE bi.child_id = c.id AND (bi.tenant_id IS NULL OR bi.tenant_id = '')"
+            )
+            stmts.append("CREATE INDEX IF NOT EXISTS ix_billing_items_tenant_id ON billing_items (tenant_id)")
+        else:
+            stmts.append(
+                "UPDATE billing_items "
+                "SET tenant_id = (SELECT tenant_id FROM children WHERE children.id = billing_items.child_id) "
+                "WHERE tenant_id IS NULL OR tenant_id = ''"
+            )
+
 
     # --- billing_due (older schema used "month")
     if "billing_due" not in cols:
@@ -638,6 +656,7 @@ def child_detail(request: Request, child_id: int):
     db = _db()
     try:
         ts, tid = _resolve_tenant_or_404(db, request)
+        _ensure_billing_item_columns(db)
         child = db.query(Child).filter(Child.tenant_id == tid, Child.id == child_id).first()
         if not child:
             raise HTTPException(status_code=404, detail="Child not found")
