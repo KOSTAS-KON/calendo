@@ -183,6 +183,20 @@ def _timeline_base_query(db: Session, tenant_id: str):
         .filter(Child.tenant_id == tenant_id)
     )
 
+def _billing_base_query(db: Session, tenant_id: str):
+    """Tenant-safe BillingItem query without requiring billing_items.tenant_id.
+
+    Older deployments may not yet have a physical tenant_id column on billing_items.
+    Enforce tenancy via the linked Child row so reads continue to work even before
+    migrations/self-healing add the column.
+    """
+    return (
+        db.query(BillingItem)
+        .join(Child, Child.id == BillingItem.child_id)
+        .filter(Child.tenant_id == tenant_id)
+    )
+
+
 
 def _new_timeline_event(*, child_id: int, event_type: str, occurred_at: datetime, title: str, details: str | None = None, appointment_id: int | None = None, billing_item_id: int | None = None) -> TimelineEvent:
     """Construct a TimelineEvent using only columns guaranteed by the model."""
@@ -509,7 +523,7 @@ def dashboard(request: Request, tenant_slug: str | None = None):
             .filter(Child.tenant_id == tid)
             .count()
         )
-        billing_count = db.query(BillingItem).filter(BillingItem.tenant_id == tid).count()
+        billing_count = _billing_base_query(db, tid).count()
 
         rows = (
             db.query(Appointment)
@@ -568,8 +582,8 @@ def children_list(request: Request):
                 .first()
             )
             unpaid_count = (
-                db.query(BillingItem)
-                .filter(BillingItem.tenant_id == tid, BillingItem.child_id == c.id)
+                _billing_base_query(db, tid)
+                .filter(BillingItem.child_id == c.id)
                 .filter(sa.func.upper(BillingItem.paid) != "YES")
                 .count()
             )
@@ -1042,9 +1056,8 @@ def api_calendar_events(request: Request):
         start_d = start_dt.date()
         end_d = end_dt.date()
         bill_q = (
-            db.query(BillingItem)
+            _billing_base_query(db, tid)
             .options(joinedload(BillingItem.child))
-            .filter(BillingItem.tenant_id == tid)
             .filter(BillingItem.billing_due >= start_d, BillingItem.billing_due < end_d)
         )
         if child_id:
@@ -1376,9 +1389,8 @@ def billing_page(request: Request):
                 selected_child_id = None
 
         q = (
-            db.query(BillingItem)
+            _billing_base_query(db, tid)
             .options(joinedload(BillingItem.child))
-            .filter(BillingItem.tenant_id == tid)
             .order_by(BillingItem.billing_due.desc())
         )
         if selected_child_id:
@@ -1415,7 +1427,7 @@ async def billing_update(request: Request, billing_id: int):
     try:
         ts, tid = _resolve_tenant_or_404(db, request)
         _ensure_billing_item_columns(db)
-        b = db.query(BillingItem).filter(BillingItem.tenant_id == tid, BillingItem.id == billing_id).first()
+        b = _billing_base_query(db, tid).filter(BillingItem.id == billing_id).first()
         if not b:
             raise HTTPException(status_code=404, detail="Billing item not found")
         b.paid = paid
@@ -1557,8 +1569,8 @@ async def billing_inputs_create(request: Request):
         created = 0
         for d in due_dates:
             exists = (
-                db.query(BillingItem)
-                .filter(BillingItem.tenant_id == tid, BillingItem.child_id == child_id, BillingItem.billing_due == d)
+                _billing_base_query(db, tid)
+                .filter(BillingItem.child_id == child_id, BillingItem.billing_due == d)
                 .first()
             )
             if exists:
