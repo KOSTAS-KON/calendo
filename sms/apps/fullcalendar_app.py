@@ -176,6 +176,7 @@ APPT_HEADER = [
 CUSTOMER_HEADER = [
     "customer_id",
     "name",
+    "primary_sms_phone",
     "phone",
     "notes",
     "consent",  # 0/1
@@ -381,7 +382,11 @@ def normalize_customers(df: pd.DataFrame) -> pd.DataFrame:
             df.at[i, "created_at_iso"] = ts
         if str(df.at[i, "updated_at_iso"]).strip() == "":
             df.at[i, "updated_at_iso"] = ts
-        df.at[i, "phone"] = normalize_phone(df.at[i, "phone"])
+        primary_sms_phone = to_e164_heuristic(df.at[i, "primary_sms_phone"]) if "primary_sms_phone" in df.columns else ""
+        guardian_phone = to_e164_heuristic(df.at[i, "phone"])
+        if "primary_sms_phone" in df.columns:
+            df.at[i, "primary_sms_phone"] = primary_sms_phone
+        df.at[i, "phone"] = guardian_phone
     return df
 
 
@@ -1614,7 +1619,7 @@ def page_calendar(templates: Dict[str, str], app_tz: Any) -> None:
         start_utc = to_utc(start_local, app_tz)
         end_utc = to_utc(end_local, app_tz)
 
-        phone_e = to_e164_heuristic(picked_row.get("phone", ""))
+        phone_e = to_e164_heuristic(picked_row.get("primary_sms_phone", "") or picked_row.get("phone", ""))
 
         # new appointment
         if not edit_mode:
@@ -1625,7 +1630,7 @@ def page_calendar(templates: Dict[str, str], app_tz: Any) -> None:
                     return
 
                 if not valid_phone_e164(phone_e):
-                    st.error(f"Invalid phone (need +E.164): '{picked_row.get('phone','')}' -> '{phone_e}'")
+                    st.error(f"Invalid phone (need +E.164): '{picked_row.get('primary_sms_phone','') or picked_row.get('phone','')}' -> '{phone_e}'")
                     return
 
                 ts = iso_utc(now_utc())
@@ -1683,7 +1688,7 @@ def page_calendar(templates: Dict[str, str], app_tz: Any) -> None:
                 return
 
             if not valid_phone_e164(phone_e):
-                st.error(f"Invalid phone (need +E.164): '{picked_row.get('phone','')}' -> '{phone_e}'")
+                st.error(f"Invalid phone (need +E.164): '{picked_row.get('primary_sms_phone','') or picked_row.get('phone','')}' -> '{phone_e}'")
                 return
 
             updates = {
@@ -1993,8 +1998,16 @@ def page_customers() -> None:
             with st.form("create_child_form", clear_on_submit=True):
                 full_name = st.text_input("Child full name *")
                 dob = st.text_input("Date of birth (YYYY-MM-DD)", help="Optional")
+                primary_sms_phone = st.text_input(
+                    "Primary SMS phone",
+                    placeholder="+3069XXXXXXXX",
+                    help="Used as the default SMS recipient for reminders and appointment updates.",
+                )
                 parent1_name = st.text_input("Parent/Guardian name")
-                parent1_phone = st.text_input("Parent/Guardian phone")
+                parent1_phone = st.text_input(
+                    "Parent/Guardian phone",
+                    help="Optional fallback contact number if different from the primary SMS phone.",
+                )
                 notes = st.text_area("Notes", height=80, key="create_child_notes")
                 submitted = st.form_submit_button("Create customer")
             if submitted:
@@ -2002,7 +2015,8 @@ def page_customers() -> None:
                     "full_name": full_name,
                     "date_of_birth": dob,
                     "parent1_name": parent1_name,
-                    "parent1_phone": parent1_phone,
+                    "parent1_phone": primary_sms_phone or parent1_phone,
+                    "primary_sms_phone": primary_sms_phone,
                     "notes": notes,
                 }
                 res = _post_portal_json(f"/api/internal/children?tenant={tenant_slug}", payload=payload, headers=headers) or {}
@@ -2031,6 +2045,7 @@ def page_customers() -> None:
                             ql in str(row.get("full_name", "")).lower()
                             or ql in str(row.get("parent1_name", "")).lower()
                             or ql in str(row.get("parent1_phone", "")).lower()
+                            or ql in str(row.get("primary_sms_phone", "")).lower()
                         )
                     df = df[df.apply(_match, axis=1)]
 
@@ -2052,7 +2067,7 @@ def page_customers() -> None:
         # Portal link
         portal_app = os.getenv("PORTAL_APP_URL", portal_base).rstrip("/")
         if portal_app:
-            st.markdown(f"[Open Children in Therapy Portal]({portal_app}/t/{tenant_slug}/children)")
+            st.markdown(f"[Open Children in Therapy Portal]({portal_app}/children?tenant={tenant_slug})")
         return
 
     st.subheader("🪪 Πελάτες (Editable)")
@@ -2064,6 +2079,11 @@ def page_customers() -> None:
         hide_index=True,
         key="customers_editor",
         column_config={
+            "primary_sms_phone": st.column_config.TextColumn(
+                "primary_sms_phone",
+                help="Default SMS recipient number (+E.164). Falls back to phone if blank.",
+                width="medium",
+            ),
             "consent": st.column_config.SelectboxColumn("consent", options=["0", "1"], help="1=allow messages, 0=block")
         },
     )
@@ -2081,7 +2101,8 @@ def page_customers() -> None:
             row = {
                 "customer_id": str(uuid.uuid4()),
                 "name": "New Customer",
-                "phone": "306900000000",
+                "primary_sms_phone": "+306900000000",
+                "phone": "+306900000000",
                 "notes": "",
                 "consent": "1",
                 "created_at_iso": ts,
@@ -2397,6 +2418,7 @@ def main() -> None:
         sent, failed, due_seen = process_due_outbox()
         if due_seen > 0:
             st.toast(f"Auto-send processed due={due_seen}: sent={sent}, failed={failed} (provider={effective_provider()})", icon="📨")
+    
     # NOTE: The streamlit-calendar component can be flaky when mounted inside st.tabs
     # (known issue in some Streamlit/component versions). A horizontal radio keeps it stable.
     nav = st.radio(
@@ -2417,6 +2439,7 @@ def main() -> None:
         page_customers()
     else:
         page_templates(templates)
+
 
 if __name__ == "__main__":
     main()
