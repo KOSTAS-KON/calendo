@@ -31,16 +31,19 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.config import settings
 from app.db import SessionLocal
-from app.models.appointment import Appointment
-from app.models.attachment import Attachment
-from app.models.billing import BillingItem
-from app.models.billing_plan import BillingPlan
-from app.models.child import Child
-from app.models.clinic_settings import ClinicSettings, AppLicense
-from app.models.session_note import SessionNote
-from app.models.sms_outbox import SmsOutbox
-from app.models.therapist import Therapist
-from app.models.timeline import TimelineEvent
+from app.models import (
+    Appointment,
+    Attachment,
+    BillingItem,
+    BillingPlan,
+    Child,
+    ClinicSettings,
+    SessionNote,
+    SmsOutbox,
+    Therapist,
+    TimelineEvent,
+)
+from app.models.clinic_settings import AppLicense
 from app.models.licensing import Subscription
 from app.models.tenant import Tenant
 from app.services.license_tokens import verify_activation_code
@@ -170,71 +173,13 @@ def _resolve_tenant_or_404(db: Session, request: Request, requested_slug: str | 
     return tenant_slug, t.id
 
 
-def _timeline_base_query(db: Session, tenant_id: str):
-    """Tenant-safe TimelineEvent query without requiring TimelineEvent.tenant_id.
-
-    The TimelineEvent model is keyed to Child via child_id. Some deployments do
-    not have a tenant_id column on timeline_events, so we enforce tenancy by
-    joining through Child. This keeps reads/writes safe without a schema change.
-    """
-    return (
-        db.query(TimelineEvent)
-        .join(Child, Child.id == TimelineEvent.child_id)
-        .filter(Child.tenant_id == tenant_id)
-    )
-
-def _billing_base_query(db: Session, tenant_id: str):
-    """Tenant-safe BillingItem query without requiring billing_items.tenant_id.
-
-    Older deployments may not yet have a physical tenant_id column on billing_items.
-    Enforce tenancy via the linked Child row so reads continue to work even before
-    migrations/self-healing add the column.
-    """
-    return (
-        db.query(BillingItem)
-        .join(Child, Child.id == BillingItem.child_id)
-        .filter(Child.tenant_id == tenant_id)
-    )
-
-
-
-def _new_timeline_event(*, child_id: int, event_type: str, occurred_at: datetime, title: str, details: str | None = None, appointment_id: int | None = None, billing_item_id: int | None = None) -> TimelineEvent:
-    """Construct a TimelineEvent using only columns guaranteed by the model."""
-    kwargs = {
-        "child_id": child_id,
-        "event_type": event_type,
-        "occurred_at": occurred_at,
-        "title": title,
-        "details": details,
-    }
-    # Keep optional links if/when present on the model and table.
-    if hasattr(TimelineEvent, "appointment_id"):
-        kwargs["appointment_id"] = appointment_id
-    if hasattr(TimelineEvent, "billing_item_id"):
-        kwargs["billing_item_id"] = billing_item_id
-    return TimelineEvent(**kwargs)
-
-
 def _ensure_billing_item_columns(db: Session) -> None:
     """Best-effort schema drift fixer for billing tables.
 
-    A few deployments may have been created before the billing feature (or before
-    the latest migrations landed). In that situation, the `/billing` pages can
-    crash due to missing columns (or older boolean flag types).
-
-    This helper keeps the app resilient by:
-      • creating the billing tables if missing (checkfirst)
-      • adding missing columns (tenant_id, billing_due, amount/currency/description, flags)
-      • attempting to normalize old boolean flags to YES/NO strings
-
-    Notes:
-      • This is a *safety net*. The preferred path is still running Alembic migrations.
-      • All operations are best-effort; failures are swallowed to avoid taking the
-        whole portal down.
+    Keeps older deployments alive even if billing columns are missing.
     """
     bind = db.get_bind()
 
-    # If the tables do not exist (fresh DB / older install), create them from ORM metadata.
     try:
         BillingPlan.__table__.create(bind, checkfirst=True)
         BillingItem.__table__.create(bind, checkfirst=True)
@@ -248,14 +193,11 @@ def _ensure_billing_item_columns(db: Session) -> None:
         return
 
     cols = {c.get("name"): c for c in col_info if c.get("name")}
-
     stmts: list[str] = []
 
-    # --- tenant_id (older schema may not have it yet)
+    # --- tenant_id (older schema may not have it)
     if "tenant_id" not in cols:
         stmts.append("ALTER TABLE billing_items ADD COLUMN tenant_id VARCHAR(36) NULL")
-
-        # Best-effort backfill from children table
         if bind.dialect.name == "postgresql":
             stmts.append(
                 "UPDATE billing_items bi "
@@ -271,12 +213,9 @@ def _ensure_billing_item_columns(db: Session) -> None:
                 "WHERE tenant_id IS NULL OR tenant_id = ''"
             )
 
-
-    # --- billing_due (older schema used "month")
+    # --- billing_due (older schema used month)
     if "billing_due" not in cols:
         stmts.append("ALTER TABLE billing_items ADD COLUMN billing_due DATE")
-
-        # Backfill if possible
         if "month" in cols:
             if bind.dialect.name == "postgresql":
                 stmts.append(
@@ -285,7 +224,6 @@ def _ensure_billing_item_columns(db: Session) -> None:
                     "WHERE billing_due IS NULL"
                 )
             else:
-                # SQLite (typeless) - best effort
                 stmts.append(
                     "UPDATE billing_items "
                     "SET billing_due = date(month || '-01','start of month','+1 month','-1 day') "
@@ -297,27 +235,20 @@ def _ensure_billing_item_columns(db: Session) -> None:
             else:
                 stmts.append("UPDATE billing_items SET billing_due = date('now') WHERE billing_due IS NULL")
 
-    # --- amount/currency/description
     if "amount_cents" not in cols:
         stmts.append("ALTER TABLE billing_items ADD COLUMN amount_cents INTEGER NULL")
     if "currency" not in cols:
         stmts.append("ALTER TABLE billing_items ADD COLUMN currency VARCHAR(8) NULL")
     if "description" not in cols:
         stmts.append("ALTER TABLE billing_items ADD COLUMN description TEXT NULL")
+    stmts.append("UPDATE billing_items SET currency = 'EUR' WHERE currency IS NULL OR currency = ''")
 
-    # Default currency backfill
-    if "currency" in cols or "currency" not in cols:
-        stmts.append("UPDATE billing_items SET currency = 'EUR' WHERE currency IS NULL OR currency = ''")
-
-    # --- flags: paid / invoice_created / parent_signed_off
     for flag in ("paid", "invoice_created", "parent_signed_off"):
         if flag not in cols:
             stmts.append(f"ALTER TABLE billing_items ADD COLUMN {flag} VARCHAR(3) NULL")
             stmts.append(f"UPDATE billing_items SET {flag} = 'NO' WHERE {flag} IS NULL OR {flag} = ''")
             continue
-
         ctype = str(cols[flag].get("type", "")).lower()
-        # Older schema may have BOOLEAN or INTEGER 0/1. Normalize to YES/NO.
         if ("bool" in ctype) or ("boolean" in ctype):
             if bind.dialect.name == "postgresql":
                 stmts.append(
@@ -325,20 +256,17 @@ def _ensure_billing_item_columns(db: Session) -> None:
                     f"USING CASE WHEN {flag} THEN 'YES' ELSE 'NO' END"
                 )
             else:
-                # SQLite: can't ALTER TYPE; but it's typeless and will happily store text.
                 stmts.append(
                     f"UPDATE billing_items SET {flag} = CASE "
                     f"WHEN {flag} IN (1,'1','t','true','TRUE') THEN 'YES' ELSE 'NO' END"
                 )
         else:
-            # Ensure canonical YES/NO values
             stmts.append(
                 f"UPDATE billing_items SET {flag} = "
                 f"CASE WHEN upper(CAST({flag} AS TEXT)) = 'YES' THEN 'YES' ELSE 'NO' END "
                 f"WHERE {flag} IS NOT NULL"
             )
 
-    # Execute statements one-by-one so a single failure doesn't break everything.
     if stmts:
         for sql in stmts:
             try:
@@ -465,31 +393,6 @@ def t_root(request: Request, tenant_slug: str):
     return RedirectResponse(url=f"{_rp(request)}/t/{tenant_slug}/suite", status_code=303)
 
 
-
-
-@router.get("/t/{tenant_slug}/children", include_in_schema=False)
-def tenant_children_alias(request: Request, tenant_slug: str):
-    return RedirectResponse(url=f"{_rp(request)}/children?tenant={tenant_slug}", status_code=303)
-
-
-@router.get("/t/{tenant_slug}/children/{child_id}", include_in_schema=False)
-def tenant_child_detail_alias(request: Request, tenant_slug: str, child_id: int):
-    return RedirectResponse(url=f"{_rp(request)}/children/{child_id}?tenant={tenant_slug}", status_code=303)
-
-
-@router.get("/appointments", include_in_schema=False)
-def appointments_alias(request: Request):
-    child_id = (request.query_params.get("child_id") or "").strip()
-    url = f"{_rp(request)}/calendar"
-    if child_id:
-        url += f"?child_id={quote(child_id)}"
-    return RedirectResponse(url=url, status_code=303)
-
-
-@router.get("/t/{tenant_slug}/appointments", include_in_schema=False)
-def tenant_appointments_alias(request: Request, tenant_slug: str):
-    return RedirectResponse(url=f"{_rp(request)}/appointments?tenant={tenant_slug}", status_code=303)
-
 @router.get("/t/{tenant_slug}/suite", response_class=HTMLResponse)
 def suite(request: Request, tenant_slug: str):
     if (resp := _require_login(request)):
@@ -523,7 +426,7 @@ def dashboard(request: Request, tenant_slug: str | None = None):
             .filter(Child.tenant_id == tid)
             .count()
         )
-        billing_count = _billing_base_query(db, tid).count()
+        billing_count = db.query(BillingItem).join(Child, Child.id == BillingItem.child_id).filter(Child.tenant_id == tid).count()
 
         rows = (
             db.query(Appointment)
@@ -582,8 +485,9 @@ def children_list(request: Request):
                 .first()
             )
             unpaid_count = (
-                _billing_base_query(db, tid)
-                .filter(BillingItem.child_id == c.id)
+                db.query(BillingItem)
+                .join(Child, Child.id == BillingItem.child_id)
+                .filter(Child.tenant_id == tid, BillingItem.child_id == c.id)
                 .filter(sa.func.upper(BillingItem.paid) != "YES")
                 .count()
             )
@@ -670,7 +574,6 @@ def child_detail(request: Request, child_id: int):
     db = _db()
     try:
         ts, tid = _resolve_tenant_or_404(db, request)
-        _ensure_billing_item_columns(db)
         child = db.query(Child).filter(Child.tenant_id == tid, Child.id == child_id).first()
         if not child:
             raise HTTPException(status_code=404, detail="Child not found")
@@ -683,9 +586,9 @@ def child_detail(request: Request, child_id: int):
             .all()
         )
         timeline = (
-            _timeline_base_query(db, tid)
-            .options(joinedload(TimelineEvent.child))
-            .filter(TimelineEvent.child_id == child_id)
+            db.query(TimelineEvent)
+            .join(Child, Child.id == TimelineEvent.child_id)
+            .filter(Child.tenant_id == tid, TimelineEvent.child_id == child_id)
             .order_by(TimelineEvent.occurred_at.desc())
             .limit(80)
             .all()
@@ -1056,8 +959,10 @@ def api_calendar_events(request: Request):
         start_d = start_dt.date()
         end_d = end_dt.date()
         bill_q = (
-            _billing_base_query(db, tid)
+            db.query(BillingItem)
             .options(joinedload(BillingItem.child))
+            .join(Child, Child.id == BillingItem.child_id)
+            .filter(Child.tenant_id == tid)
             .filter(BillingItem.billing_due >= start_d, BillingItem.billing_due < end_d)
         )
         if child_id:
@@ -1069,8 +974,10 @@ def api_calendar_events(request: Request):
         # (Visits are appointments; billing is shown via BillingItem events.)
         journey_types = ["PARENT_FEEDBACK", "COMMUNICATION", "EXERCISE", "NOTE", "APPT_CANCELLED"]
         tl_q = (
-            _timeline_base_query(db, tid)
+            db.query(TimelineEvent)
             .options(joinedload(TimelineEvent.child))
+            .join(Child, Child.id == TimelineEvent.child_id)
+            .filter(Child.tenant_id == tid)
             .filter(TimelineEvent.occurred_at >= start_dt, TimelineEvent.occurred_at < end_dt)
             .filter(TimelineEvent.event_type.in_(journey_types))
         )
@@ -1221,13 +1128,12 @@ async def calendar_add_appointment(request: Request):
         db.refresh(appt)
 
         if also_add_tl == "YES":
-            tl = _new_timeline_event(
+            tl = TimelineEvent(
                 child_id=child_id,
                 event_type="VISIT",
                 occurred_at=starts_at,
                 title=procedure,
                 details=f"Therapist: {therapist_name}" if therapist_name else None,
-                appointment_id=appt.id,
             )
             db.add(tl)
             db.commit()
@@ -1301,13 +1207,12 @@ async def calendar_add_billing(request: Request):
             title_bits.append(description)
         tl_title = " — ".join(title_bits)
 
-        tl = _new_timeline_event(
+        tl = TimelineEvent(
             child_id=child_id,
             event_type=et,
             occurred_at=datetime.combine(due, time(12, 0)),
             title=tl_title,
             details=None,
-            billing_item_id=b.id,
         )
         db.add(tl)
         db.commit()
@@ -1346,7 +1251,7 @@ async def calendar_add_journey(request: Request):
         if not child:
             raise HTTPException(status_code=404, detail="Child not found")
 
-        tl = _new_timeline_event(
+        tl = TimelineEvent(
             child_id=child_id,
             event_type=event_type,
             occurred_at=occurred_at,
@@ -1389,8 +1294,10 @@ def billing_page(request: Request):
                 selected_child_id = None
 
         q = (
-            _billing_base_query(db, tid)
+            db.query(BillingItem)
             .options(joinedload(BillingItem.child))
+            .join(Child, Child.id == BillingItem.child_id)
+            .filter(Child.tenant_id == tid)
             .order_by(BillingItem.billing_due.desc())
         )
         if selected_child_id:
@@ -1427,7 +1334,7 @@ async def billing_update(request: Request, billing_id: int):
     try:
         ts, tid = _resolve_tenant_or_404(db, request)
         _ensure_billing_item_columns(db)
-        b = _billing_base_query(db, tid).filter(BillingItem.id == billing_id).first()
+        b = db.query(BillingItem).join(Child, Child.id == BillingItem.child_id).filter(Child.tenant_id == tid, BillingItem.id == billing_id).first()
         if not b:
             raise HTTPException(status_code=404, detail="Billing item not found")
         b.paid = paid
@@ -1569,8 +1476,9 @@ async def billing_inputs_create(request: Request):
         created = 0
         for d in due_dates:
             exists = (
-                _billing_base_query(db, tid)
-                .filter(BillingItem.child_id == child_id, BillingItem.billing_due == d)
+                db.query(BillingItem)
+                .join(Child, Child.id == BillingItem.child_id)
+                .filter(Child.tenant_id == tid, BillingItem.child_id == child_id, BillingItem.billing_due == d)
                 .first()
             )
             if exists:
@@ -1632,8 +1540,10 @@ def timeline_page(request: Request):
         children = db.query(Child).filter(Child.tenant_id == tid).order_by(Child.full_name.asc()).all()
 
         q = (
-            _timeline_base_query(db, tid)
+            db.query(TimelineEvent)
             .options(joinedload(TimelineEvent.child))
+            .join(Child, Child.id == TimelineEvent.child_id)
+            .filter(Child.tenant_id == tid)
             .order_by(TimelineEvent.occurred_at.desc())
         )
         if child_id:
@@ -1687,7 +1597,7 @@ async def timeline_create(request: Request):
         child = db.query(Child).filter(Child.tenant_id == tid, Child.id == child_id).first()
         if not child:
             raise HTTPException(status_code=404, detail="Child not found")
-        tl = _new_timeline_event(
+        tl = TimelineEvent(
             child_id=child_id,
             event_type=event_type,
             occurred_at=occurred_at,
@@ -2272,3 +2182,26 @@ async def api_internal_children_create(request: Request):
         return JSONResponse({"ok": True, "id": c.id})
     finally:
         db.close()
+
+
+@router.get("/t/{tenant_slug}/children")
+def tenant_children_alias(request: Request, tenant_slug: str):
+    return RedirectResponse(url=f"{_rp(request)}/children?tenant={tenant_slug}", status_code=303)
+
+
+@router.get("/t/{tenant_slug}/children/{child_id}")
+def tenant_child_detail_alias(request: Request, tenant_slug: str, child_id: int):
+    return RedirectResponse(url=f"{_rp(request)}/children/{child_id}?tenant={tenant_slug}", status_code=303)
+
+
+@router.get("/appointments")
+def appointments_alias(request: Request):
+    qs = request.url.query
+    suffix = f"?{qs}" if qs else ""
+    return RedirectResponse(url=f"{_rp(request)}/calendar{suffix}", status_code=303)
+
+
+@router.get("/t/{tenant_slug}/appointments")
+def tenant_appointments_alias(request: Request, tenant_slug: str):
+    return RedirectResponse(url=f"{_rp(request)}/calendar?tenant={tenant_slug}", status_code=303)
+
