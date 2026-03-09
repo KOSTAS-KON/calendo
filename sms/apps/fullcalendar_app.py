@@ -1369,12 +1369,74 @@ def enqueue_for_cancelled(appt: Dict[str, str], templates: Dict[str, str], app_t
         message_type="cancelled",
         scheduled_for_utc=now_utc() - timedelta(seconds=1),
     ) else 0
+
+
+def _portal_children_as_customers(tenant_slug: str) -> pd.DataFrame:
+    """Return Portal children reshaped into SMS customer rows.
+
+    Portal is the source of truth for clinic children. We map them to the SMS
+    customer schema using a stable synthetic customer_id ('portal:<id>').
+    """
+    internal_key = (os.getenv("INTERNAL_API_KEY") or "").strip()
+    if not internal_key:
+        return pd.DataFrame(columns=CUSTOMER_HEADER)
+    data = _fetch_portal_json(f"/api/internal/children?tenant={tenant_slug}", headers={"X-Internal-Key": internal_key}) or {}
+    children = data.get("children") or []
+    rows: list[dict[str, str]] = []
+    ts = iso_utc(now_utc())
+    for c in children:
+        cid = f"portal:{c.get('id')}"
+        primary = to_e164_heuristic(str(c.get("primary_sms_phone") or c.get("parent1_phone") or ""))
+        phone = to_e164_heuristic(str(c.get("parent1_phone") or c.get("primary_sms_phone") or ""))
+        rows.append({
+            "customer_id": cid,
+            "name": str(c.get("full_name") or "").strip(),
+            "primary_sms_phone": primary,
+            "phone": phone,
+            "notes": str(c.get("notes") or "").strip(),
+            "consent": "1",
+            "created_at_iso": ts,
+            "updated_at_iso": ts,
+        })
+    if not rows:
+        return pd.DataFrame(columns=CUSTOMER_HEADER)
+    return normalize_customers(pd.DataFrame(rows))
+
+
+def merged_customers_df(tenant_slug: str) -> pd.DataFrame:
+    """Merge local SMS customers with Portal children for UI use."""
+    local_df = normalize_customers(read_csv_df(CUSTOMERS_CSV, CUSTOMER_HEADER))
+    portal_df = _portal_children_as_customers(tenant_slug)
+    if local_df.empty and portal_df.empty:
+        return local_df
+    if local_df.empty:
+        return portal_df
+    if portal_df.empty:
+        return local_df
+
+    by_id: dict[str, dict] = {str(r["customer_id"]): r.to_dict() for _, r in local_df.iterrows()}
+    for _, r in portal_df.iterrows():
+        cid = str(r["customer_id"])
+        existing = by_id.get(cid, {})
+        merged = dict(existing)
+        merged.update({k: v for k, v in r.to_dict().items() if str(v).strip() != ""})
+        merged.setdefault("consent", existing.get("consent", "1") or "1")
+        by_id[cid] = merged
+    out = pd.DataFrame(list(by_id.values()))
+    return normalize_customers(out)
+
+
+def sync_portal_children_to_local_cache(tenant_slug: str) -> pd.DataFrame:
+    """Persist merged customer rows locally so downstream flows immediately see them."""
+    merged = merged_customers_df(tenant_slug)
+    write_csv_df(CUSTOMERS_CSV, merged, CUSTOMER_HEADER)
+    return merged
+
 def page_calendar(templates: Dict[str, str], app_tz: Any) -> None:
     tenant_slug = TENANT_SLUG
     st.subheader("📅 Ημερολόγιο")
 
-    customers = normalize_customers(read_csv_df(CUSTOMERS_CSV, CUSTOMER_HEADER))
-    write_csv_df(CUSTOMERS_CSV, customers, CUSTOMER_HEADER)
+    customers = sync_portal_children_to_local_cache(tenant_slug)
 
     appts = normalize_appointments(read_csv_df(APPOINTMENTS_CSV, APPT_HEADER))
     write_csv_df(APPOINTMENTS_CSV, appts, APPT_HEADER)
@@ -1502,7 +1564,7 @@ def page_calendar(templates: Dict[str, str], app_tz: Any) -> None:
     st.divider()
 
     def booking_panel() -> None:
-        customers2 = normalize_customers(read_csv_df(CUSTOMERS_CSV, CUSTOMER_HEADER))
+        customers2 = sync_portal_children_to_local_cache(tenant_slug)
         if customers2.empty:
             st.info("Πρόσθεσε πελάτη στο tab 🪪 Πελάτες.")
             return
@@ -1648,7 +1710,7 @@ def page_calendar(templates: Dict[str, str], app_tz: Any) -> None:
                     return
 
                 if not valid_phone_e164(phone_e):
-                    st.error(f"Invalid phone (need +E.164): '{picked_row.get('phone','')}' -> '{phone_e}'")
+                    st.error(f"Invalid phone (need +E.164): '{picked_row.get('primary_sms_phone') or picked_row.get('phone','')}' -> '{phone_e}'")
                     return
 
                 ts = iso_utc(now_utc())
@@ -1706,7 +1768,7 @@ def page_calendar(templates: Dict[str, str], app_tz: Any) -> None:
                 return
 
             if not valid_phone_e164(phone_e):
-                st.error(f"Invalid phone (need +E.164): '{picked_row.get('phone','')}' -> '{phone_e}'")
+                st.error(f"Invalid phone (need +E.164): '{picked_row.get('primary_sms_phone') or picked_row.get('phone','')}' -> '{phone_e}'")
                 return
 
             updates = {
@@ -1765,8 +1827,7 @@ def page_manage_list(templates: Dict[str, str], app_tz: Any) -> None:
     st.subheader("📋 Ραντεβού (List view)")
     st.caption("Επίλεξε ένα ενεργό ραντεβού για μετακίνηση ή ακύρωση. Μετά την ενέργεια, το ημερολόγιο ανανεώνεται αυτόματα.")
 
-    customers = normalize_customers(read_csv_df(CUSTOMERS_CSV, CUSTOMER_HEADER))
-    write_csv_df(CUSTOMERS_CSV, customers, CUSTOMER_HEADER)
+    customers = sync_portal_children_to_local_cache(TENANT_SLUG)
 
     appts = normalize_appointments(read_csv_df(APPOINTMENTS_CSV, APPT_HEADER))
     write_csv_df(APPOINTMENTS_CSV, appts, APPT_HEADER)
@@ -2034,6 +2095,8 @@ def page_customers() -> None:
                 }
                 res = _post_portal_json(f"/api/internal/children?tenant={tenant_slug}", payload=payload, headers=headers) or {}
                 if res.get("ok"):
+                    # Also refresh local cache so the booking panel sees the child immediately.
+                    sync_portal_children_to_local_cache(tenant_slug)
                     st.success("Customer created in Portal.")
                     st.rerun()
                 else:
@@ -2081,7 +2144,7 @@ def page_customers() -> None:
         # Portal link
         portal_app = os.getenv("PORTAL_APP_URL", portal_base).rstrip("/")
         if portal_app:
-            st.markdown(f"[Open Children in Therapy Portal]({portal_app}/t/{tenant_slug}/children)")
+            st.markdown(f"[Open Children in Therapy Portal]({portal_app}/children?tenant={tenant_slug})")
         return
 
     st.subheader("🪪 Πελάτες (Editable)")
@@ -2110,7 +2173,8 @@ def page_customers() -> None:
             row = {
                 "customer_id": str(uuid.uuid4()),
                 "name": "New Customer",
-                "phone": "306900000000",
+                "primary_sms_phone": "+306900000000",
+                "phone": "+306900000000",
                 "notes": "",
                 "consent": "1",
                 "created_at_iso": ts,

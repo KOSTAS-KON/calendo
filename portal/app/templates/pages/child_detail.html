@@ -19,14 +19,17 @@
         <span class="mx-2">&middot;</span>
         <span>Parent 2: {{ child.parent2_phone }}</span>
       {% endif %}
-      {% if child.parent1_email %}
-        <span class="mx-2">&middot;</span>
-        <span>{{ child.parent1_email }}</span>
-      {% endif %}
     </div>
   </div>
 
   <div class="flex items-center gap-2">
+    {% if can_edit_child %}
+      {% if edit_mode %}
+        <a class="btn btn-outline" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=overview">Cancel edit</a>
+      {% else %}
+        <a class="btn btn-outline" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=overview&edit=1">Edit details</a>
+      {% endif %}
+    {% endif %}
     <a class="btn btn-outline" href="{{ rp }}/children?tenant={{ tenant_slug }}">All children</a>
     {% if sms_app_url %}
       <a class="btn btn-primary" href="{{ sms_app_url }}" target="_blank" rel="noopener">
@@ -94,9 +97,7 @@
                     <td>{{ a.ends_at or '' }}</td>
                     <td>{{ a.therapist_name or '' }}</td>
                     <td>{{ a.attendance_status or '' }}</td>
-                    <td>
-                      <a class="link" href="{{ rp }}/appointments/{{ a.id }}">{{ a.procedure or '' }}</a>
-                    </td>
+                    <td>{{ a.procedure or '' }}</td>
                   </tr>
                 {% endfor %}
               </tbody>
@@ -153,14 +154,51 @@
       </div>
 
     {% else %}
+      {% if edit_mode and can_edit_child %}
+      <div class="mt-4">
+        <form method="post" action="{{ rp }}/children/{{ child.id }}/edit?tenant={{ tenant_slug }}">
+          <div class="grid gap-4 md:grid-cols-2">
+            <div class="card">
+              <div class="card-head">Child details</div>
+              <div class="card-body">
+                <label class="label">Full name</label>
+                <input class="input" name="full_name" value="{{ child.full_name }}" required>
+                <label class="label mt-3">Date of birth</label>
+                <input class="input" type="date" name="date_of_birth" value="{{ child.date_of_birth.isoformat() if child.date_of_birth else '' }}">
+                <label class="label mt-3">Notes</label>
+                <textarea class="input" name="notes" rows="5">{{ child.notes or '' }}</textarea>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-head">Contact</div>
+              <div class="card-body">
+                <label class="label">Parent 1 name</label>
+                <input class="input" name="parent1_name" value="{{ child.parent1_name or '' }}">
+                <label class="label mt-3">Primary / Parent 1 phone</label>
+                <input class="input" name="parent1_phone" value="{{ child.parent1_phone or '' }}">
+                <label class="label mt-3">Parent 2 name</label>
+                <input class="input" name="parent2_name" value="{{ child.parent2_name or '' }}">
+                <label class="label mt-3">Parent 2 phone</label>
+                <input class="input" name="parent2_phone" value="{{ child.parent2_phone or '' }}">
+              </div>
+            </div>
+          </div>
+          <div class="mt-4 flex items-center gap-2">
+            <button class="btn btn-primary" type="submit">Save changes</button>
+            <a class="btn btn-outline" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=overview">Cancel</a>
+          </div>
+        </form>
+      </div>
+      {% else %}
       <div class="mt-4 grid gap-4 md:grid-cols-2">
         <div class="card">
           <div class="card-head">Contact</div>
           <div class="card-body">
-            <div class="kv"><div class="k">Parent 1 phone</div><div class="v">{{ child.parent1_phone or '—' }}</div></div>
-            <div class="kv"><div class="k">Parent 1 email</div><div class="v">{{ child.parent1_email or '—' }}</div></div>
+            <div class="kv"><div class="k">Parent 1 name</div><div class="v">{{ child.parent1_name or '—' }}</div></div>
+            <div class="kv"><div class="k">Parent 1 / Primary SMS phone</div><div class="v">{{ child.parent1_phone or '—' }}</div></div>
+            <div class="kv"><div class="k">Parent 2 name</div><div class="v">{{ child.parent2_name or '—' }}</div></div>
             <div class="kv"><div class="k">Parent 2 phone</div><div class="v">{{ child.parent2_phone or '—' }}</div></div>
-            <div class="kv"><div class="k">Parent 2 email</div><div class="v">{{ child.parent2_email or '—' }}</div></div>
           </div>
         </div>
 
@@ -171,6 +209,7 @@
           </div>
         </div>
       </div>
+      {% endif %}
     {% endif %}
 
   </div>

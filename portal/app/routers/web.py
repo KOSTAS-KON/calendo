@@ -654,6 +654,7 @@ def children_list(request: Request):
                 **ctx,
                 "children": children,
                 "meta": meta,
+                "can_edit_child": _role_flags(request)["is_clinic_superuser"],
             },
         )
     finally:
@@ -711,6 +712,59 @@ async def children_create(request: Request):
         db.close()
 
 
+
+
+@router.post("/children/{child_id}/edit")
+async def child_update(request: Request, child_id: int):
+    if (resp := _require_login(request)):
+        return resp
+    if (guard := _require_superuser_role(request)):
+        return guard
+
+    form = await request.form()
+    full_name = str(form.get("full_name") or "").strip()
+    if not full_name:
+        _toast(request, "Child name is required", "danger")
+        return RedirectResponse(url=f"{_rp(request)}/children/{child_id}?tab=overview&edit=1", status_code=303)
+
+    dob_raw = str(form.get("date_of_birth") or "").strip()
+    dob: date | None = None
+    if dob_raw:
+        try:
+            dob = date.fromisoformat(dob_raw)
+        except Exception:
+            _toast(request, "Invalid date of birth", "danger")
+            return RedirectResponse(url=f"{_rp(request)}/children/{child_id}?tab=overview&edit=1", status_code=303)
+
+    notes = str(form.get("notes") or "").strip() or None
+    parent1_name = str(form.get("parent1_name") or "").strip() or None
+    parent1_phone = str(form.get("parent1_phone") or form.get("primary_sms_phone") or "").strip() or None
+    parent2_name = str(form.get("parent2_name") or "").strip() or None
+    parent2_phone = str(form.get("parent2_phone") or "").strip() or None
+
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        if (guard := _assert_child_access(db, request, tid, child_id)):
+            return guard
+        child = db.query(Child).filter(Child.tenant_id == tid, Child.id == child_id).first()
+        if not child:
+            raise HTTPException(status_code=404, detail="Child not found")
+
+        child.full_name = full_name
+        child.date_of_birth = dob
+        child.notes = notes
+        child.parent1_name = parent1_name
+        child.parent1_phone = parent1_phone
+        child.parent2_name = parent2_name
+        child.parent2_phone = parent2_phone
+        db.add(child)
+        db.commit()
+        _toast(request, "Child details updated")
+        return RedirectResponse(url=f"{_rp(request)}/children/{child_id}?tab=overview", status_code=303)
+    finally:
+        db.close()
+
 @router.get("/children/{child_id}", response_class=HTMLResponse)
 def child_detail(request: Request, child_id: int):
     if (resp := _require_login(request)):
@@ -762,6 +816,8 @@ def child_detail(request: Request, child_id: int):
                 "timeline": timeline,
                 "attachments": attachments,
                 "tab": tab,
+                "edit_mode": (request.query_params.get("edit") or "").strip() in ("1", "true", "yes"),
+                "can_edit_child": _role_flags(request)["is_clinic_superuser"],
             },
         )
     finally:
@@ -2402,6 +2458,9 @@ def api_internal_children_list(request: Request):
                     {
                         "id": c.id,
                         "full_name": c.full_name,
+                        "date_of_birth": getattr(c, "date_of_birth", None).isoformat() if getattr(c, "date_of_birth", None) else None,
+                        "notes": getattr(c, "notes", None),
+                        "primary_sms_phone": getattr(c, "parent1_phone", None),
                         "parent1_name": getattr(c, "parent1_name", None),
                         "parent1_phone": getattr(c, "parent1_phone", None),
                         "parent2_name": getattr(c, "parent2_name", None),
@@ -2433,12 +2492,14 @@ async def api_internal_children_create(request: Request):
         if not t:
             raise HTTPException(status_code=404, detail="Tenant not found")
 
+        primary_sms_phone = str(payload.get("primary_sms_phone") or "").strip() or None
+        parent1_phone = str(payload.get("parent1_phone") or "").strip() or primary_sms_phone
         c = Child(
             tenant_id=t.id,
             full_name=full_name,
             notes=str(payload.get("notes") or "").strip() or None,
             parent1_name=str(payload.get("parent1_name") or "").strip() or None,
-            parent1_phone=str(payload.get("parent1_phone") or "").strip() or None,
+            parent1_phone=parent1_phone,
             parent2_name=str(payload.get("parent2_name") or "").strip() or None,
             parent2_phone=str(payload.get("parent2_phone") or "").strip() or None,
         )

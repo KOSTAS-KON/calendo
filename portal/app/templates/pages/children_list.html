@@ -11,7 +11,7 @@
       {% for c in children %}
         {% set m = (meta.get(c.id) if meta else None) %}
         <div class="child-card">
-          <a class="child-main" href="{{ rp }}/children/{{ c.id }}">
+          <a class="child-main" href="{{ rp }}/children/{{ c.id }}?tenant={{ tenant_slug }}">
             <div class="child-title">{{ c.full_name }}</div>
             <div class="child-sub">ID {{ c.id }}{% if c.date_of_birth %} · DOB {{ c.date_of_birth }}{% endif %}</div>
 
@@ -35,8 +35,9 @@
           </a>
 
           <div class="child-actions">
-            <a class="btn btn-sm btn-outline" href="{{ rp }}/children/{{ c.id }}?tab=appointments">+ Appointment</a>
-            <a class="btn btn-sm btn-outline" href="{{ rp }}/children/{{ c.id }}?tab=billing">+ Invoice</a>
+            <a class="btn btn-sm btn-outline" href="{{ rp }}/children/{{ c.id }}?tenant={{ tenant_slug }}&tab=appointments">+ Appointment</a>
+            <a class="btn btn-sm btn-outline" href="{{ rp }}/children/{{ c.id }}?tenant={{ tenant_slug }}&tab=billing">+ Invoice</a>
+            {% if can_edit_child %}<a class="btn btn-sm btn-outline" href="{{ rp }}/children/{{ c.id }}?tenant={{ tenant_slug }}&tab=overview&edit=1">✏️ Edit</a>{% endif %}
             {% if m and m.p1_phone %}
               <a class="btn btn-sm btn-outline" href="tel:{{ m.p1_phone }}">📞 Parent</a>
             {% endif %}
