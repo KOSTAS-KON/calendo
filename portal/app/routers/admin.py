@@ -254,6 +254,29 @@ def _get_tenant_row_schema_safe(db: Session, slug: str):
     return row
 
 
+
+def _normalize_role_choice(role_value: str) -> str:
+    rv = (role_value or "").strip().lower()
+    if rv in ("clinic_superuser", "superuser", "owner", "admin"):
+        return "admin"
+    if rv in ("calendar_staff", "staff", "reception", "secretary", "receptionist"):
+        return "staff"
+    if rv in ("therapist",):
+        return "therapist"
+    return "staff"
+
+
+def _role_label(role_value: str) -> str:
+    rv = (role_value or "").strip().lower()
+    if rv in ("owner", "admin", "clinic_superuser"):
+        return "Clinic superuser"
+    if rv in ("staff", "calendar_staff", "reception", "secretary"):
+        return "Calendar staff"
+    if rv == "therapist":
+        return "Therapist"
+    return rv or "—"
+
+
 # ----------------------------
 # Admin landing / unlock
 # ----------------------------
@@ -493,6 +516,74 @@ def admin_tenant_renew(
     _renew_subscription_for_tenant(db, tenant_id=tenant_id, plan=plan, actor=str(actor))
 
     return RedirectResponse(url=f"/admin/licensing?tenant={slug}", status_code=303)
+
+
+
+@router.get("/admin/tenants/new", response_class=HTMLResponse)
+def admin_tenant_new_form(request: Request, db: Session = Depends(get_db)):
+    _require_admin(request)
+    ensure_default_plans(db)
+    plans = db.query(Plan).order_by(Plan.duration_days.asc()).all()
+    return templates.TemplateResponse(
+        "admin/tenant_new.html",
+        {"request": request, "plans": plans, "admin_key": _get_admin_key_from_request(request)},
+    )
+
+
+@router.post("/admin/tenants/new")
+def admin_tenant_new_create(
+    request: Request,
+    slug: str = Form(...),
+    name: str = Form(...),
+    owner_email: str = Form(...),
+    plan_code: str = Form("TRIAL_7D"),
+    db: Session = Depends(get_db),
+):
+    _require_admin(request)
+    ensure_default_plans(db)
+
+    from app.models.user import User
+
+    slug = (slug or "").strip().lower()
+    name = (name or "").strip()
+    owner_email = (owner_email or "").strip().lower()
+
+    if not slug or not name or not owner_email:
+        raise HTTPException(status_code=400, detail="slug, name and owner_email are required")
+
+    existing = db.query(Tenant).filter(Tenant.slug == slug).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Tenant slug already exists")
+
+    plan = db.query(Plan).filter(Plan.code == plan_code).first()
+    if not plan:
+        raise HTTPException(status_code=400, detail="Plan not found")
+
+    tenant_id = secrets.token_hex(16)
+    t = Tenant(id=tenant_id, slug=slug, name=name, status="active")
+    db.add(t)
+
+    temp_pw = generate_temp_password()
+    pw_hash = bcrypt.hashpw(temp_pw.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    owner = User(
+        id=secrets.token_hex(16),
+        tenant_id=tenant_id,
+        email=owner_email,
+        password_hash=pw_hash,
+        role="owner",
+        is_active=True,
+        must_reset_password=True,
+    )
+    db.add(owner)
+    db.commit()
+
+    actor = (_session(request).get("email") or "admin")
+    _renew_subscription_for_tenant(db, tenant_id=tenant_id, plan=plan, actor=str(actor))
+
+    _flash_set(request, "onboard_tenant_slug", slug)
+    _flash_set(request, "onboard_owner_email", owner_email)
+    _flash_set(request, "onboard_temp_password", temp_pw)
+    return RedirectResponse(url="/admin/tenants", status_code=303)
 
 
 # ----------------------------
@@ -819,6 +910,171 @@ def admin_renew_from_licensing(
     _renew_subscription_for_tenant(db, tenant_id=t.id, plan=plan, actor=str(actor))
 
     return RedirectResponse(url=f"/admin/licensing?tenant={tenant_slug}", status_code=303)
+
+
+
+# ----------------------------
+# Team & Access (tenant accounts)
+# ----------------------------
+@router.get("/admin/tenants/{slug}/accounts", response_class=HTMLResponse)
+def admin_tenant_accounts(request: Request, slug: str, db: Session = Depends(get_db)):
+    _require_admin(request)
+
+    row = db.execute(
+        sa.text("SELECT id, slug, name FROM tenants WHERE slug = :slug LIMIT 1"),
+        {"slug": slug},
+    ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    tenant_id, tenant_slug, tenant_name = row[0], row[1], row[2]
+
+    from app.models.user import User
+    from app.models.therapist import Therapist
+
+    users = (
+        db.query(User)
+        .filter(User.tenant_id == tenant_id)
+        .order_by(User.created_at.desc())
+        .all()
+    )
+    therapists = (
+        db.query(Therapist)
+        .filter(Therapist.tenant_id == tenant_id)
+        .order_by(Therapist.name.asc())
+        .all()
+    )
+
+    ctx = {
+        "request": request,
+        "tenant": {"id": tenant_id, "slug": tenant_slug, "name": tenant_name},
+        "users": users,
+        "therapists": therapists,
+        "temp_user_email": _flash_pop(request, "temp_user_email", ""),
+        "temp_password": _flash_pop(request, "temp_password", ""),
+        "temp_user_role_label": _flash_pop(request, "temp_user_role_label", ""),
+        "message": _flash_pop(request, "team_message", ""),
+        "role_label": _role_label,
+    }
+    return templates.TemplateResponse("admin/team_access.html", ctx)
+
+
+@router.post("/admin/tenants/{slug}/accounts/create")
+def admin_tenant_accounts_create(
+    request: Request,
+    slug: str,
+    email: str = Form(...),
+    role: str = Form("staff"),
+    therapist_name: str = Form(""),
+    therapist_phone: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    _require_admin(request)
+
+    row = db.execute(
+        sa.text("SELECT id, slug, name FROM tenants WHERE slug = :slug LIMIT 1"),
+        {"slug": slug},
+    ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    tenant_id, tenant_slug, tenant_name = row[0], row[1], row[2]
+
+    from app.models.user import User
+    from app.models.therapist import Therapist
+
+    email_lc = (email or "").strip().lower()
+    if not email_lc:
+        raise HTTPException(status_code=400, detail="Email is required")
+
+    role_db = _normalize_role_choice(role)
+    existing = db.query(User).filter(User.tenant_id == tenant_id, User.email == email_lc).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="User already exists for this tenant")
+
+    temp_pw = generate_temp_password()
+    pw_hash = bcrypt.hashpw(temp_pw.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    user = User(
+        id=secrets.token_hex(16),
+        tenant_id=tenant_id,
+        email=email_lc,
+        password_hash=pw_hash,
+        role=role_db,
+        is_active=True,
+        must_reset_password=True,
+    )
+    db.add(user)
+
+    if role_db == "therapist":
+        th_name = (therapist_name or email_lc.split("@")[0]).strip() or email_lc
+        th = (
+            db.query(Therapist)
+            .filter(Therapist.tenant_id == tenant_id, sa.func.lower(Therapist.email) == email_lc)
+            .first()
+        )
+        if not th:
+            db.add(
+                Therapist(
+                    tenant_id=tenant_id,
+                    name=th_name,
+                    email=email_lc,
+                    phone=(therapist_phone or "").strip() or None,
+                    role="therapist",
+                    availability_json="{}",
+                    annual_leave_json="[]",
+                )
+            )
+
+    db.commit()
+    _flash_set(request, "temp_user_email", email_lc)
+    _flash_set(request, "temp_password", temp_pw)
+    _flash_set(request, "temp_user_role_label", _role_label(role_db))
+    return RedirectResponse(url=f"/admin/tenants/{tenant_slug}/accounts", status_code=303)
+
+
+@router.post("/admin/tenants/{slug}/accounts/{user_id}/toggle")
+def admin_tenant_accounts_toggle(request: Request, slug: str, user_id: str, db: Session = Depends(get_db)):
+    _require_admin(request)
+    from app.models.user import User
+
+    row = db.execute(sa.text("SELECT id, slug FROM tenants WHERE slug = :slug LIMIT 1"), {"slug": slug}).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    tenant_id, tenant_slug = row[0], row[1]
+
+    user = db.query(User).filter(User.tenant_id == tenant_id, User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.is_active = not bool(user.is_active)
+    db.add(user)
+    db.commit()
+    _flash_set(request, "team_message", f"{user.email} {'activated' if user.is_active else 'revoked'}")
+    return RedirectResponse(url=f"/admin/tenants/{tenant_slug}/accounts", status_code=303)
+
+
+@router.post("/admin/tenants/{slug}/accounts/{user_id}/reset_password")
+def admin_tenant_accounts_reset_password(request: Request, slug: str, user_id: str, db: Session = Depends(get_db)):
+    _require_admin(request)
+    from app.models.user import User
+
+    row = db.execute(sa.text("SELECT id, slug FROM tenants WHERE slug = :slug LIMIT 1"), {"slug": slug}).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    tenant_id, tenant_slug = row[0], row[1]
+
+    user = db.query(User).filter(User.tenant_id == tenant_id, User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    temp_pw = generate_temp_password()
+    user.password_hash = bcrypt.hashpw(temp_pw.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    user.must_reset_password = True
+    user.is_active = True
+    db.add(user)
+    db.commit()
+
+    _flash_set(request, "temp_user_email", user.email)
+    _flash_set(request, "temp_password", temp_pw)
+    _flash_set(request, "temp_user_role_label", _role_label(user.role))
+    return RedirectResponse(url=f"/admin/tenants/{tenant_slug}/accounts", status_code=303)
 
 
 # ----------------------------

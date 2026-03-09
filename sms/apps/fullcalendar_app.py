@@ -2436,25 +2436,27 @@ def main() -> None:
         sent, failed, due_seen = process_due_outbox()
         if due_seen > 0:
             st.toast(f"Auto-send processed due={due_seen}: sent={sent}, failed={failed} (provider={effective_provider()})", icon="📨")
-# NOTE: The streamlit-calendar component can be flaky when mounted inside st.tabs
-# (known issue in some Streamlit/component versions). A horizontal radio keeps it stable.
-nav = st.radio(
-    "",
-    ["📅 Ημερολόγιο", "📋 Ραντεβού", "📨 Αποστολές", "🪪 Πελάτες", "✍️ Πρότυπα"],
-    horizontal=True,
-    label_visibility="collapsed",
-    key="main_nav_tab",
-)
 
-if nav.startswith("📅"):
-    page_calendar(templates, app_tz)
-elif nav.startswith("📋"):
-    page_manage_list(templates, app_tz)
-elif nav.startswith("📨"):
-    page_outbox()
-elif nav.startswith("🪪"):
-    page_customers()
-else:
-    page_templates(templates)
+    # NOTE: The streamlit-calendar component can be flaky when mounted inside st.tabs
+    # (known issue in some Streamlit/component versions). A horizontal radio keeps it stable.
+    nav = st.radio(
+        "",
+        ["📅 Ημερολόγιο", "📋 Ραντεβού", "📨 Αποστολές", "🪪 Πελάτες", "✍️ Πρότυπα"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="main_nav_tab",
+    )
+
+    if nav.startswith("📅"):
+        page_calendar(templates, app_tz)
+    elif nav.startswith("📋"):
+        page_manage_list(templates, app_tz)
+    elif nav.startswith("📨"):
+        page_outbox()
+    elif nav.startswith("🪪"):
+        page_customers()
+    else:
+        page_templates(templates)
+
 if __name__ == "__main__":
     main()

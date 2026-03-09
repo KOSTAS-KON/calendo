@@ -112,6 +112,7 @@ Temp password: {{ onboard.temp_password }}">
               <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
                 <a class="btn btn-sm btn-outline" href="/admin/tenants/{{ t.slug }}/reset_password">🔑 Reset</a>
                 <a class="btn btn-sm btn-outline" href="/admin/licensing?tenant={{ t.slug }}">💳 Licensing</a>
+                <a class="btn btn-sm btn-outline" href="/admin/tenants/{{ t.slug }}/accounts">👥 Accounts</a>
 
                 <!-- ✅ NEW: Quick Renew -->
                 <form method="post" action="/admin/tenants/{{ t.slug }}/renew" style="display:inline; gap:6px; align-items:center;">
