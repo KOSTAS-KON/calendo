@@ -5,6 +5,7 @@
 <div class="grid grid-cols-1 xl:grid-cols-3 gap-5">
   <section class="xl:col-span-2">
     <div class="mb-3 text-sm text-slate-600">Select a child to view records, documents, appointments, and billing.</div>
+<div class="flex flex-wrap gap-2 mb-4"><a class="btn btn-sm {% if show != 'archived' and show != 'all' %}btn-primary{% else %}btn-outline{% endif %}" href="{{ rp }}/children?tenant={{ tenant_slug }}">Active</a><a class="btn btn-sm {% if show == 'archived' %}btn-primary{% else %}btn-outline{% endif %}" href="{{ rp }}/children?tenant={{ tenant_slug }}&show=archived">Archived</a><a class="btn btn-sm {% if show == 'all' %}btn-primary{% else %}btn-outline{% endif %}" href="{{ rp }}/children?tenant={{ tenant_slug }}&show=all">All</a></div>
 
     
     <div class="list children-cards">
@@ -40,6 +41,17 @@
             {% if can_edit_child %}<a class="btn btn-sm btn-outline" href="{{ rp }}/children/{{ c.id }}?tenant={{ tenant_slug }}&tab=overview&edit=1">✏️ Edit</a>{% endif %}
             {% if m and m.p1_phone %}
               <a class="btn btn-sm btn-outline" href="tel:{{ m.p1_phone }}">📞 Parent</a>
+            {% endif %}
+            {% if is_clinic_superuser %}
+              {% if c.is_archived %}
+                <form method="post" action="{{ rp }}/children/{{ c.id }}/restore" style="display:inline;">
+                  <button class="btn btn-sm btn-outline" type="submit">♻ Restore</button>
+                </form>
+              {% else %}
+                <form method="post" action="{{ rp }}/children/{{ c.id }}/archive" style="display:inline;">
+                  <button class="btn btn-sm btn-outline" type="submit">🗄 Archive</button>
+                </form>
+              {% endif %}
             {% endif %}
           </div>
         </div>

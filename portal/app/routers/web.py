@@ -520,6 +520,57 @@ def _base_context(db: Session, request: Request, tenant_slug: str, tenant_id: st
     }
 
 
+
+
+def _ensure_people_archive_columns(db: Session) -> None:
+    """Best-effort schema safety net for child/therapist archiving.
+
+    Adds:
+      - children.is_archived, children.archived_at
+      - therapists.is_archived, therapists.archived_at
+    Older deployments may not have these yet.
+    """
+    bind = db.get_bind()
+    try:
+        insp = sa.inspect(bind)
+    except Exception:
+        return
+
+    plans = {
+        "children": [
+            ("is_archived", "BOOLEAN"),
+            ("archived_at", "TIMESTAMP"),
+        ],
+        "therapists": [
+            ("is_archived", "BOOLEAN"),
+            ("archived_at", "TIMESTAMP"),
+        ],
+    }
+    stmts: list[str] = []
+    for table, cols_needed in plans.items():
+        try:
+            existing = {c.get("name") for c in insp.get_columns(table) if c.get("name")}
+        except Exception:
+            continue
+        for col, typ in cols_needed:
+            if col not in existing:
+                stmts.append(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+        if "is_archived" not in existing:
+            if bind.dialect.name == "postgresql":
+                stmts.append(f"UPDATE {table} SET is_archived = FALSE WHERE is_archived IS NULL")
+            else:
+                stmts.append(f"UPDATE {table} SET is_archived = 0 WHERE is_archived IS NULL")
+    for stmt in stmts:
+        try:
+            with bind.begin() as conn:
+                conn.exec_driver_sql(stmt)
+        except Exception:
+            pass
+
+
+def _is_active_filter(model):
+    return sa.or_(getattr(model, "is_archived").is_(False), getattr(model, "is_archived").is_(None))
+
 # -----------------------------
 # UI: Suite & Dashboard
 # -----------------------------
@@ -597,6 +648,7 @@ def dashboard(request: Request, tenant_slug: str | None = None):
 
 
 @router.get("/children", response_class=HTMLResponse)
+
 def children_list(request: Request):
     if (resp := _require_login(request)):
         return resp
@@ -604,11 +656,19 @@ def children_list(request: Request):
     try:
         ts, tid = _resolve_tenant_or_404(db, request)
         _ensure_billing_item_columns(db)
+        _ensure_people_archive_columns(db)
         guard = _assert_child_access(db, request, tid, -1) if _role_flags(request)["is_calendar_staff"] else None
         if guard:
             return guard
 
+        show = (request.query_params.get("show") or "active").strip().lower()
+        _ensure_people_archive_columns(db)
         q_children = db.query(Child).filter(Child.tenant_id == tid)
+        if show == "archived":
+            q_children = q_children.filter(Child.is_archived.is_(True))
+        elif show != "all":
+            q_children = q_children.filter(_is_active_filter(Child))
+
         if _role_flags(request)["is_therapist"]:
             assigned_ids = _assigned_child_ids_for_request(db, request, tid)
             if not assigned_ids:
@@ -654,11 +714,13 @@ def children_list(request: Request):
                 **ctx,
                 "children": children,
                 "meta": meta,
+                "show": show,
                 "can_edit_child": _role_flags(request)["is_clinic_superuser"],
             },
         )
     finally:
         db.close()
+
 
 
 @router.post("/children/create")
@@ -824,6 +886,52 @@ def child_detail(request: Request, child_id: int):
         db.close()
 
 
+
+@router.post("/children/{child_id}/archive")
+def child_archive(request: Request, child_id: int):
+    if (resp := _require_login(request)):
+        return resp
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        _ensure_people_archive_columns(db)
+        if (guard := _require_superuser_role(request)):
+            return guard
+        child = db.query(Child).filter(Child.tenant_id == tid, Child.id == child_id).first()
+        if not child:
+            raise HTTPException(status_code=404, detail="Child not found")
+        child.is_archived = True
+        child.archived_at = datetime.utcnow()
+        db.add(child)
+        db.commit()
+        _toast(request, "Child archived")
+        return RedirectResponse(url=f"{_rp(request)}/children?tenant={ts}", status_code=303)
+    finally:
+        db.close()
+
+
+@router.post("/children/{child_id}/restore")
+def child_restore(request: Request, child_id: int):
+    if (resp := _require_login(request)):
+        return resp
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        _ensure_people_archive_columns(db)
+        if (guard := _require_superuser_role(request)):
+            return guard
+        child = db.query(Child).filter(Child.tenant_id == tid, Child.id == child_id).first()
+        if not child:
+            raise HTTPException(status_code=404, detail="Child not found")
+        child.is_archived = False
+        child.archived_at = None
+        db.add(child)
+        db.commit()
+        _toast(request, "Child restored")
+        return RedirectResponse(url=f"{_rp(request)}/children?tenant={ts}&show=archived", status_code=303)
+    finally:
+        db.close()
+
 # -----------------------------
 # UI: Therapists
 # -----------------------------
@@ -863,22 +971,31 @@ def _blocks_hours(blocks: list[dict[str, str]]) -> float:
 
 
 @router.get("/therapists", response_class=HTMLResponse)
+
 def therapists_list(request: Request):
     if (resp := _require_login(request)):
         return resp
     db = _db()
     try:
         ts, tid = _resolve_tenant_or_404(db, request)
+        _ensure_people_archive_columns(db)
         if (guard := _require_superuser_role(request)):
             return guard
-        therapists = db.query(Therapist).filter(Therapist.tenant_id == tid).order_by(Therapist.name.asc()).all()
+        show = (request.query_params.get("show") or "active").strip().lower()
+        q = db.query(Therapist).filter(Therapist.tenant_id == tid)
+        if show == "archived":
+            q = q.filter(Therapist.is_archived.is_(True))
+        elif show != "all":
+            q = q.filter(_is_active_filter(Therapist))
+        therapists = q.order_by(Therapist.name.asc()).all()
         ctx = _base_context(db, request, ts, tid)
         return templates.TemplateResponse(
             "pages/therapists.html",
-            {"request": request, **ctx, "therapists": therapists},
+            {"request": request, **ctx, "therapists": therapists, "show": show},
         )
     finally:
         db.close()
+
 
 
 @router.post("/therapists/create")
@@ -1008,6 +1125,52 @@ async def therapist_update(request: Request, therapist_id: int):
         db.close()
 
 
+
+@router.post("/therapists/{therapist_id}/archive")
+async def therapist_archive(request: Request, therapist_id: int):
+    if (resp := _require_login(request)):
+        return resp
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        _ensure_people_archive_columns(db)
+        if (guard := _require_superuser_role(request)):
+            return guard
+        t = db.query(Therapist).filter(Therapist.tenant_id == tid, Therapist.id == therapist_id).first()
+        if not t:
+            raise HTTPException(status_code=404, detail="Therapist not found")
+        t.is_archived = True
+        t.archived_at = datetime.utcnow()
+        db.add(t)
+        db.commit()
+        _toast(request, "Therapist archived")
+        return RedirectResponse(url=f"{_rp(request)}/therapists?show=active", status_code=303)
+    finally:
+        db.close()
+
+
+@router.post("/therapists/{therapist_id}/restore")
+async def therapist_restore(request: Request, therapist_id: int):
+    if (resp := _require_login(request)):
+        return resp
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        _ensure_people_archive_columns(db)
+        if (guard := _require_superuser_role(request)):
+            return guard
+        t = db.query(Therapist).filter(Therapist.tenant_id == tid, Therapist.id == therapist_id).first()
+        if not t:
+            raise HTTPException(status_code=404, detail="Therapist not found")
+        t.is_archived = False
+        t.archived_at = None
+        db.add(t)
+        db.commit()
+        _toast(request, "Therapist restored")
+        return RedirectResponse(url=f"{_rp(request)}/therapists?show=archived", status_code=303)
+    finally:
+        db.close()
+
 @router.post("/therapists/{therapist_id}/leave/add")
 async def therapist_leave_add(request: Request, therapist_id: int):
     if (resp := _require_login(request)):
@@ -1097,7 +1260,7 @@ def calendar_page(request: Request):
             children = q_children.order_by(Child.full_name.asc()).all()
         else:
             children = []
-        therapists = db.query(Therapist).filter(Therapist.tenant_id == tid).order_by(Therapist.name.asc()).all()
+        therapists = db.query(Therapist).filter(Therapist.tenant_id == tid).filter(_is_active_filter(Therapist)).order_by(Therapist.name.asc()).all()
         selected_child_id: int | None = None
         raw = (request.query_params.get("child_id") or "").strip()
         if raw:
@@ -1197,7 +1360,8 @@ def api_calendar_events(request: Request):
         ts, tid = _resolve_tenant_or_404(db, request)
         _ensure_billing_item_columns(db)
         rolef = _role_flags(request)
-        therapist_by_id = {t.id: t for t in db.query(Therapist).filter(Therapist.tenant_id == tid).all()}
+        _ensure_people_archive_columns(db)
+        therapist_by_id = {t.id: t for t in db.query(Therapist).filter(Therapist.tenant_id == tid).filter(_is_active_filter(Therapist)).all()}
         if rolef["is_therapist"]:
             therapist_self = _therapist_for_current_user(db, request, tid)
             therapist_ids = [therapist_self.id] if therapist_self else []
@@ -1209,7 +1373,9 @@ def api_calendar_events(request: Request):
         appt_q = (
             db.query(Appointment)
             .options(joinedload(Appointment.child))
-            .filter(Appointment.tenant_id == tid)
+            .join(Child, Child.id == Appointment.child_id)
+            .filter(Appointment.tenant_id == tid, Child.tenant_id == tid)
+            .filter(_is_active_filter(Child))
             .filter(Appointment.starts_at >= start_dt, Appointment.starts_at < end_dt)
         )
         if child_id:
@@ -2450,7 +2616,8 @@ def api_internal_children_list(request: Request):
         t = db.query(Tenant).filter(Tenant.slug == tenant_slug).first()
         if not t:
             raise HTTPException(status_code=404, detail="Tenant not found")
-        rows = db.query(Child).filter(Child.tenant_id == t.id).order_by(Child.full_name.asc()).all()
+        _ensure_people_archive_columns(db)
+        rows = db.query(Child).filter(Child.tenant_id == t.id).filter(_is_active_filter(Child)).order_by(Child.full_name.asc()).all()
         return JSONResponse(
             {
                 "tenant": tenant_slug,
@@ -2463,6 +2630,8 @@ def api_internal_children_list(request: Request):
                         "primary_sms_phone": getattr(c, "parent1_phone", None),
                         "parent1_name": getattr(c, "parent1_name", None),
                         "parent1_phone": getattr(c, "parent1_phone", None),
+                        "primary_sms_phone": getattr(c, "parent1_phone", None),
+                        "archived": bool(getattr(c, "is_archived", False)),
                         "parent2_name": getattr(c, "parent2_name", None),
                         "parent2_phone": getattr(c, "parent2_phone", None),
                     }
@@ -2725,7 +2894,128 @@ def api_internal_therapists(request: Request):
         t = db.query(Tenant).filter(Tenant.slug == tenant_slug).first()
         if not t:
             raise HTTPException(status_code=404, detail="Tenant not found")
-        rows = db.query(Therapist).filter(Therapist.tenant_id == t.id).order_by(Therapist.name.asc()).all()
-        return JSONResponse({"tenant": tenant_slug, "therapists": [{"id": x.id, "name": x.name, "email": x.email, "role": x.role} for x in rows]})
+        _ensure_people_archive_columns(db)
+        rows = db.query(Therapist).filter(Therapist.tenant_id == t.id).filter(_is_active_filter(Therapist)).order_by(Therapist.name.asc()).all()
+        return JSONResponse({"tenant": tenant_slug, "therapists": [{"id": x.id, "name": x.name, "email": x.email, "role": x.role, "phone": x.phone, "archived": bool(getattr(x, "is_archived", False))} for x in rows]})
     finally:
         db.close()
+@router.post("/api/internal/therapists")
+async def api_internal_therapists_create(request: Request):
+    _require_internal_key(request)
+    tenant_slug = _tenant_from_query_or_400(request)
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name required")
+    db = _db()
+    try:
+        trow = db.query(Tenant).filter(Tenant.slug == tenant_slug).first()
+        if not trow:
+            raise HTTPException(status_code=404, detail="Tenant not found")
+        _ensure_people_archive_columns(db)
+        th = Therapist(
+            tenant_id=trow.id,
+            name=name,
+            phone=str(payload.get("phone") or "").strip() or None,
+            email=str(payload.get("email") or "").strip() or None,
+            role=str(payload.get("role") or "").strip() or "therapist",
+            is_archived=False,
+        )
+        db.add(th)
+        db.commit()
+        db.refresh(th)
+        return JSONResponse({"ok": True, "id": th.id, "name": th.name})
+    finally:
+        db.close()
+
+
+@router.post("/api/internal/children/{child_id}/archive")
+async def api_internal_child_archive(request: Request, child_id: int):
+    _require_internal_key(request)
+    tenant_slug = _tenant_from_query_or_400(request)
+    db = _db()
+    try:
+        t = db.query(Tenant).filter(Tenant.slug == tenant_slug).first()
+        if not t:
+            raise HTTPException(status_code=404, detail="Tenant not found")
+        _ensure_people_archive_columns(db)
+        c = db.query(Child).filter(Child.tenant_id == t.id, Child.id == child_id).first()
+        if not c:
+            raise HTTPException(status_code=404, detail="Child not found")
+        c.is_archived = True
+        c.archived_at = datetime.utcnow()
+        db.add(c)
+        db.commit()
+        return JSONResponse({"ok": True})
+    finally:
+        db.close()
+
+
+@router.post("/api/internal/children/{child_id}/restore")
+async def api_internal_child_restore(request: Request, child_id: int):
+    _require_internal_key(request)
+    tenant_slug = _tenant_from_query_or_400(request)
+    db = _db()
+    try:
+        t = db.query(Tenant).filter(Tenant.slug == tenant_slug).first()
+        if not t:
+            raise HTTPException(status_code=404, detail="Tenant not found")
+        _ensure_people_archive_columns(db)
+        c = db.query(Child).filter(Child.tenant_id == t.id, Child.id == child_id).first()
+        if not c:
+            raise HTTPException(status_code=404, detail="Child not found")
+        c.is_archived = False
+        c.archived_at = None
+        db.add(c)
+        db.commit()
+        return JSONResponse({"ok": True})
+    finally:
+        db.close()
+
+
+@router.post("/api/internal/therapists/{therapist_id}/archive")
+async def api_internal_therapist_archive(request: Request, therapist_id: int):
+    _require_internal_key(request)
+    tenant_slug = _tenant_from_query_or_400(request)
+    db = _db()
+    try:
+        t = db.query(Tenant).filter(Tenant.slug == tenant_slug).first()
+        if not t:
+            raise HTTPException(status_code=404, detail="Tenant not found")
+        _ensure_people_archive_columns(db)
+        th = db.query(Therapist).filter(Therapist.tenant_id == t.id, Therapist.id == therapist_id).first()
+        if not th:
+            raise HTTPException(status_code=404, detail="Therapist not found")
+        th.is_archived = True
+        th.archived_at = datetime.utcnow()
+        db.add(th)
+        db.commit()
+        return JSONResponse({"ok": True})
+    finally:
+        db.close()
+
+
+@router.post("/api/internal/therapists/{therapist_id}/restore")
+async def api_internal_therapist_restore(request: Request, therapist_id: int):
+    _require_internal_key(request)
+    tenant_slug = _tenant_from_query_or_400(request)
+    db = _db()
+    try:
+        t = db.query(Tenant).filter(Tenant.slug == tenant_slug).first()
+        if not t:
+            raise HTTPException(status_code=404, detail="Tenant not found")
+        _ensure_people_archive_columns(db)
+        th = db.query(Therapist).filter(Therapist.tenant_id == t.id, Therapist.id == therapist_id).first()
+        if not th:
+            raise HTTPException(status_code=404, detail="Therapist not found")
+        th.is_archived = False
+        th.archived_at = None
+        db.add(th)
+        db.commit()
+        return JSONResponse({"ok": True})
+    finally:
+        db.close()
+
+

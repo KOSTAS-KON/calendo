@@ -5,18 +5,30 @@
 <div class="grid grid-cols-1 xl:grid-cols-3 gap-5">
   <section class="xl:col-span-2">
     <div class="mb-3 text-sm text-slate-600">Manage therapists/providers. Their names are used in appointment drop-downs.</div>
+<div class="flex flex-wrap gap-2 mb-4"><a class="btn btn-sm {% if show != 'archived' and show != 'all' %}btn-primary{% else %}btn-outline{% endif %}" href="{{ rp }}/therapists">Active</a><a class="btn btn-sm {% if show == 'archived' %}btn-primary{% else %}btn-outline{% endif %}" href="{{ rp }}/therapists?show=archived">Archived</a><a class="btn btn-sm {% if show == 'all' %}btn-primary{% else %}btn-outline{% endif %}" href="{{ rp }}/therapists?show=all">All</a></div>
 
     <div class="list">
       {% for t in therapists %}
-        <a class="listrow" href="{{ rp }}/therapists/{{ t.id }}">
-          <div class="flex items-center justify-between gap-3">
-            <div>
-              <div class="font-semibold">{{ t.name }}</div>
-              <div class="text-xs text-slate-500">{% if t.role %}{{ t.role }}{% else %}Therapist{% endif %}{% if t.phone %} · {{ t.phone }}{% endif %}{% if t.email %} · {{ t.email }}{% endif %}</div>
-            </div>
-            <span class="pill p-gray">Open</span>
-          </div>
-        </a>
+        <div class="listrow">
+  <div class="flex items-center justify-between gap-3">
+    <div>
+      <a class="font-semibold" href="{{ rp }}/therapists/{{ t.id }}">{{ t.name }}</a>
+      <div class="text-xs text-slate-500">{% if t.role %}{{ t.role }}{% else %}Therapist{% endif %}{% if t.phone %} · {{ t.phone }}{% endif %}{% if t.email %} · {{ t.email }}{% endif %}</div>
+    </div>
+    <div class="flex gap-2 items-center">
+      <a class="btn btn-sm btn-outline" href="{{ rp }}/therapists/{{ t.id }}">Open</a>
+      {% if t.is_archived %}
+        <form method="post" action="{{ rp }}/therapists/{{ t.id }}/restore" style="display:inline;">
+          <button class="btn btn-sm btn-outline" type="submit">♻ Restore</button>
+        </form>
+      {% else %}
+        <form method="post" action="{{ rp }}/therapists/{{ t.id }}/archive" style="display:inline;">
+          <button class="btn btn-sm btn-outline" type="submit">🗄 Archive</button>
+        </form>
+      {% endif %}
+    </div>
+  </div>
+</div>
       {% else %}
         <div class="text-sm text-slate-500">No therapists yet. Add one from the panel on the right.</div>
       {% endfor %}

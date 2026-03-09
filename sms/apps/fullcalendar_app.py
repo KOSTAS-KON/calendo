@@ -149,6 +149,7 @@ for _d in (CALENDAR_DIR, OUTPUT_DIR):
 
 APPOINTMENTS_CSV = CALENDAR_DIR / "appointments.csv"
 CUSTOMERS_CSV = CALENDAR_DIR / "customers.csv"
+THERAPISTS_CSV = CALENDAR_DIR / "therapists.csv"
 TEMPLATES_JSON = CALENDAR_DIR / "templates.json"
 
 OUTBOX_JSONL = OUTPUT_DIR / "outbox.jsonl"
@@ -181,6 +182,17 @@ CUSTOMER_HEADER = [
     "phone",
     "notes",
     "consent",  # 0/1
+    "created_at_iso",
+    "updated_at_iso",
+]
+
+THERAPIST_HEADER = [
+    "therapist_id",
+    "name",
+    "phone",
+    "email",
+    "role",
+    "archived",
     "created_at_iso",
     "updated_at_iso",
 ]
@@ -387,6 +399,92 @@ def normalize_customers(df: pd.DataFrame) -> pd.DataFrame:
         df.at[i, "phone"] = normalize_phone(df.at[i, "phone"])
     return df
 
+
+
+def normalize_therapists(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    df = df.copy()
+    ts = iso_utc(now_utc())
+    for i in df.index:
+        if not str(df.at[i, "therapist_id"]).strip():
+            df.at[i, "therapist_id"] = str(uuid.uuid4())
+        for c in ("name", "phone", "email", "role", "archived", "created_at_iso", "updated_at_iso"):
+            if c not in df.columns:
+                df[c] = ""
+        if str(df.at[i, "archived"]).strip() == "":
+            df.at[i, "archived"] = "0"
+        if str(df.at[i, "created_at_iso"]).strip() == "":
+            df.at[i, "created_at_iso"] = ts
+        if str(df.at[i, "updated_at_iso"]).strip() == "":
+            df.at[i, "updated_at_iso"] = ts
+        ph = str(df.at[i, "phone"]).strip()
+        if ph:
+            df.at[i, "phone"] = to_e164_heuristic(ph)
+    return df
+
+def _portal_sync_enabled() -> bool:
+    return bool((os.getenv("PORTAL_BASE_URL") or "").strip() and (os.getenv("INTERNAL_API_KEY") or "").strip())
+
+def _internal_headers() -> Dict[str, str]:
+    return {"X-Internal-Key": (os.getenv("INTERNAL_API_KEY") or "").strip()}
+
+def sync_portal_children_to_local(tenant_slug: str) -> pd.DataFrame:
+    """Merge active portal children into local SMS customer cache so booking works immediately."""
+    local = normalize_customers(read_csv_df(CUSTOMERS_CSV, CUSTOMER_HEADER))
+    if not _portal_sync_enabled():
+        return local
+    payload = _fetch_portal_json(f"/api/internal/children?tenant={tenant_slug}", headers=_internal_headers()) or {}
+    children = payload.get("children") or []
+    if not children:
+        write_csv_df(CUSTOMERS_CSV, local, CUSTOMER_HEADER)
+        return local
+    by_id = {str(r.get("customer_id")): r.copy() for _, r in local.iterrows()} if not local.empty else {}
+    ts = iso_utc(now_utc())
+    for c in children:
+        cid = f"portal:{c.get('id')}"
+        existing = by_id.get(cid, {})
+        by_id[cid] = {
+            "customer_id": cid,
+            "name": str(c.get("full_name") or existing.get("name") or "").strip(),
+            "primary_sms_phone": to_e164_heuristic(str(c.get("primary_sms_phone") or c.get("parent1_phone") or existing.get("primary_sms_phone") or "").strip()),
+            "phone": to_e164_heuristic(str(c.get("parent1_phone") or existing.get("phone") or "").strip()),
+            "notes": str(c.get("notes") or existing.get("notes") or "").strip(),
+            "consent": str(existing.get("consent") or "1"),
+            "created_at_iso": str(existing.get("created_at_iso") or ts),
+            "updated_at_iso": ts,
+        }
+    merged = pd.DataFrame(list(by_id.values())) if by_id else pd.DataFrame(columns=CUSTOMER_HEADER)
+    merged = normalize_customers(merged)
+    write_csv_df(CUSTOMERS_CSV, merged, CUSTOMER_HEADER)
+    return merged
+
+def sync_portal_therapists_to_local(tenant_slug: str) -> pd.DataFrame:
+    local = normalize_therapists(read_csv_df(THERAPISTS_CSV, THERAPIST_HEADER))
+    if not _portal_sync_enabled():
+        return local
+    payload = _fetch_portal_json(f"/api/internal/therapists?tenant={tenant_slug}", headers=_internal_headers()) or {}
+    therapists = payload.get("therapists") or []
+    by_id = {str(r.get("therapist_id")): r.copy() for _, r in local.iterrows()} if not local.empty else {}
+    ts = iso_utc(now_utc())
+    for t in therapists:
+        tid = f"portal:{t.get('id')}"
+        existing = by_id.get(tid, {})
+        by_id[tid] = {
+            "therapist_id": tid,
+            "name": str(t.get("name") or existing.get("name") or "").strip(),
+            "phone": to_e164_heuristic(str(t.get("phone") or existing.get("phone") or "").strip()),
+            "email": str(t.get("email") or existing.get("email") or "").strip(),
+            "role": str(t.get("role") or existing.get("role") or "therapist").strip(),
+            "archived": "1" if bool(t.get("archived", False)) else "0",
+            "created_at_iso": str(existing.get("created_at_iso") or ts),
+            "updated_at_iso": ts,
+        }
+    merged = pd.DataFrame(list(by_id.values())) if by_id else pd.DataFrame(columns=THERAPIST_HEADER)
+    merged = normalize_therapists(merged)
+    # Keep only active in local cache by default for dropdowns
+    write_csv_df(THERAPISTS_CSV, merged, THERAPIST_HEADER)
+    return merged
 
 def normalize_appointments(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
@@ -1240,12 +1338,25 @@ def apply_calendar_selection_into_booking(start_utc: datetime, end_utc: datetime
     st.session_state[LAST_SELECT_LABEL] = f"{start_loc.strftime('%Y-%m-%d %H:%M')} → {end_loc.strftime('%H:%M')} ({os.getenv('APP_TIMEZONE','Europe/Athens')})"
 
 
-def collision_exists(appts: pd.DataFrame, start_utc: datetime, end_utc: datetime, ignore_appt_id: Optional[str] = None) -> bool:
+
+def collision_exists(
+    appts: pd.DataFrame,
+    start_utc: datetime,
+    end_utc: datetime,
+    ignore_appt_id: Optional[str] = None,
+    therapist_name: Optional[str] = None,
+) -> bool:
     def overlap(a_s: datetime, a_e: datetime, b_s: datetime, b_e: datetime) -> bool:
         return a_s < b_e and b_s < a_e
 
+    wanted = str(therapist_name or "").strip().lower()
     for _, r in appts[appts["status"] == "active"].iterrows():
         if ignore_appt_id and str(r["appointment_id"]) == str(ignore_appt_id):
+            continue
+        existing_t = str(r.get("therapist_name") or "").strip().lower()
+        # Allow same time for different therapists.
+        # If either side has no therapist assigned, stay conservative and treat it as a collision.
+        if wanted and existing_t and wanted != existing_t:
             continue
         rs = parse_iso_any(r["start_iso"])
         re_ = parse_iso_any(r["end_iso"])
@@ -1254,6 +1365,7 @@ def collision_exists(appts: pd.DataFrame, start_utc: datetime, end_utc: datetime
         if overlap(start_utc, end_utc, rs.astimezone(timezone.utc), re_.astimezone(timezone.utc)):
             return True
     return False
+
 
 
 def clamp_future(dt_utc: datetime) -> Optional[datetime]:
@@ -1437,6 +1549,8 @@ def page_calendar(templates: Dict[str, str], app_tz: Any) -> None:
     st.subheader("📅 Ημερολόγιο")
 
     customers = sync_portal_children_to_local_cache(tenant_slug)
+    therapists_df = sync_portal_therapists_to_local(tenant_slug) if _portal_sync_enabled() else normalize_therapists(read_csv_df(THERAPISTS_CSV, THERAPIST_HEADER))
+    write_csv_df(THERAPISTS_CSV, therapists_df, THERAPIST_HEADER)
 
     appts = normalize_appointments(read_csv_df(APPOINTMENTS_CSV, APPT_HEADER))
     write_csv_df(APPOINTMENTS_CSV, appts, APPT_HEADER)
@@ -1448,7 +1562,7 @@ def page_calendar(templates: Dict[str, str], app_tz: Any) -> None:
     if st_calendar is None:
         st.warning("Install: pip install streamlit-calendar")
     else:
-        therapist_options = sorted([x.get("name","") for x in _fetch_portal_therapists(tenant_slug) if x.get("name")])
+        therapist_options = sorted([str(x.get("name") or "") for x in therapists_df.to_dict("records") if str(x.get("archived","0")) != "1" and x.get("name")])
         selected_therapists = st.multiselect("Therapist filter", therapist_options, default=therapist_options, key="therapist_filter") if therapist_options else []
         appts_view = appts
         if selected_therapists:
@@ -1527,7 +1641,7 @@ def page_calendar(templates: Dict[str, str], app_tz: Any) -> None:
                     st.warning("Το ραντεβού δεν είναι ενεργό.")
                     st.stop()
 
-                if collision_exists(appts_all, s_utc, e_utc, ignore_appt_id=appt_id):
+                if collision_exists(appts_all, s_utc, e_utc, ignore_appt_id=appt_id, therapist_name=str(appt_old.get("therapist_name") or "")):
                     st.warning("⚠️ Επικάλυψη με άλλο ενεργό ραντεβού. Η μετακίνηση ακυρώθηκε.")
                     st.stop()
 
@@ -1654,7 +1768,8 @@ def page_calendar(templates: Dict[str, str], app_tz: Any) -> None:
         with c3:
             st.selectbox("Διάρκεια (min)", [15, 30, 45, 60, 90, 120], key=FORM_KEYS["duration"])
         with c4:
-            therapist_options = [x.get("name","") for x in _fetch_portal_therapists(tenant_slug) if x.get("name")]
+            therapist_options = [str(x.get("name") or "") for x in sync_portal_therapists_to_local(tenant_slug).to_dict("records")] if _portal_sync_enabled() else [str(x.get("name") or "") for x in normalize_therapists(read_csv_df(THERAPISTS_CSV, THERAPIST_HEADER)).to_dict("records")] 
+            therapist_options = [x for x in therapist_options if x]
             if therapist_options:
                 current_t = st.session_state.get(FORM_KEYS["therapist_name"], "")
                 idx_t = therapist_options.index(current_t) if current_t in therapist_options else 0
@@ -1705,7 +1820,7 @@ def page_calendar(templates: Dict[str, str], app_tz: Any) -> None:
         if not edit_mode:
             if st.button("✅ Save appointment (new)", width="stretch"):
                 appts_all2 = normalize_appointments(read_csv_df(APPOINTMENTS_CSV, APPT_HEADER))
-                if collision_exists(appts_all2, start_utc, end_utc):
+                if collision_exists(appts_all2, start_utc, end_utc, therapist_name=str(st.session_state.get(FORM_KEYS["therapist_name"], "") or "")):
                     st.warning("⚠️ Επικάλυψη με άλλο ενεργό ραντεβού.")
                     return
 
@@ -1724,6 +1839,7 @@ def page_calendar(templates: Dict[str, str], app_tz: Any) -> None:
                     "end_iso": iso_utc(end_utc),
                     "status": "active",
                     "service": (st.session_state.get(FORM_KEYS["service"], "Session") or "Session").strip(),
+                    "therapist_name": (st.session_state.get(FORM_KEYS["therapist_name"], "") or "").strip(),
                     "notes": (st.session_state.get(FORM_KEYS["notes"], "") or "").strip(),
                     "created_at_iso": ts,
                     "updated_at_iso": ts,
@@ -1763,7 +1879,7 @@ def page_calendar(templates: Dict[str, str], app_tz: Any) -> None:
 
         if update_btn:
             appts_all2 = normalize_appointments(read_csv_df(APPOINTMENTS_CSV, APPT_HEADER))
-            if collision_exists(appts_all2, start_utc, end_utc, ignore_appt_id=selected_appt_id):
+            if collision_exists(appts_all2, start_utc, end_utc, ignore_appt_id=selected_appt_id, therapist_name=str(st.session_state.get(FORM_KEYS["therapist_name"], "") or "")):
                 st.warning("⚠️ Επικάλυψη με άλλο ενεργό ραντεβού.")
                 return
 
@@ -1778,6 +1894,7 @@ def page_calendar(templates: Dict[str, str], app_tz: Any) -> None:
                 "start_iso": iso_utc(start_utc),
                 "end_iso": iso_utc(end_utc),
                 "service": (st.session_state.get(FORM_KEYS["service"], "Session") or "Session").strip(),
+                "therapist_name": (st.session_state.get(FORM_KEYS["therapist_name"], "") or "").strip(),
                 "notes": (st.session_state.get(FORM_KEYS["notes"], "") or "").strip(),
                 "pref_send_new_now": "1" if bool(st.session_state.get(FORM_KEYS["pref_new_now"], True)) else "0",
                 "pref_reminder_day": "1" if bool(st.session_state.get(FORM_KEYS["pref_day"], False)) else "0",
@@ -1953,7 +2070,7 @@ def page_manage_list(templates: Dict[str, str], app_tz: Any) -> None:
         if st.button("✅ Move appointment + send SMS", width="stretch", key=f"btn_move_{appt_id}"):
             appts_all = normalize_appointments(read_csv_df(APPOINTMENTS_CSV, APPT_HEADER))
 
-            if collision_exists(appts_all, new_start_utc, new_end_utc, ignore_appt_id=appt_id):
+            if collision_exists(appts_all, new_start_utc, new_end_utc, ignore_appt_id=appt_id, therapist_name=str(appt.get("therapist_name") or "")):
                 st.warning("⚠️ Επικάλυψη με άλλο ενεργό ραντεβού. Η μετακίνηση ακυρώθηκε.")
             else:
                 # Update time
@@ -2139,6 +2256,31 @@ def page_customers() -> None:
                 df.rename(columns={c: label for c, label in cols if c in present}, inplace=True)
 
             st.dataframe(df, use_container_width=True, hide_index=True)
+            st.markdown("### Archive / restore customer")
+            rows = children
+            options = [f"{c.get('full_name','')} · #{c.get('id')}" for c in rows]
+            if options:
+                pick = st.selectbox("Select child", options=options, key="cust_archive_pick")
+                picked = rows[options.index(pick)]
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.button("🗄 Archive customer", key="btn_archive_customer"):
+                        res = _post_portal_json(f"/api/internal/children/{picked.get('id')}/archive?tenant={tenant_slug}", payload={}, headers=headers) or {}
+                        if res.get("ok"):
+                            sync_portal_children_to_local(tenant_slug)
+                            st.success("Customer archived.")
+                            st.rerun()
+                        else:
+                            st.error(f"Archive failed: {res}")
+                with c2:
+                    if st.button("♻ Restore customer", key="btn_restore_customer"):
+                        res = _post_portal_json(f"/api/internal/children/{picked.get('id')}/restore?tenant={tenant_slug}", payload={}, headers=headers) or {}
+                        if res.get("ok"):
+                            sync_portal_children_to_local(tenant_slug)
+                            st.success("Customer restored.")
+                            st.rerun()
+                        else:
+                            st.error(f"Restore failed: {res}")
         else:
             st.caption("No customers found yet.")
         # Portal link
@@ -2187,6 +2329,85 @@ def page_customers() -> None:
             st.rerun()
 
 
+
+def page_therapists() -> None:
+    portal_base = os.getenv("PORTAL_BASE_URL", "").rstrip("/")
+    internal_key = os.getenv("INTERNAL_API_KEY", "").strip()
+    tenant_slug = TENANT_SLUG
+
+    st.subheader("🧑‍⚕️ Therapists")
+    if portal_base and internal_key:
+        headers = {"X-Internal-Key": internal_key}
+        st.info("Portal-synced therapists. Archived therapists are hidden from normal scheduling.")
+
+        with st.expander("➕ Add therapist", expanded=False):
+            with st.form("create_therapist_form", clear_on_submit=True):
+                name = st.text_input("Therapist name *")
+                role = st.text_input("Role", value="therapist")
+                phone = st.text_input("Phone", placeholder="+3069XXXXXXXX")
+                email = st.text_input("Email")
+                submitted = st.form_submit_button("Create therapist")
+            if submitted:
+                payload = {"name": name, "role": role, "phone": phone, "email": email}
+                res = _post_portal_json(f"/api/internal/therapists?tenant={tenant_slug}", payload=payload, headers=headers) or {}
+                if res.get("ok"):
+                    sync_portal_therapists_to_local(tenant_slug)
+                    st.success("Therapist created.")
+                    st.rerun()
+                else:
+                    st.error(f"Create failed: {res}")
+
+        tdf = sync_portal_therapists_to_local(tenant_slug)
+        tdf = tdf[tdf["archived"] != "1"] if not tdf.empty else tdf
+        if not tdf.empty:
+            st.dataframe(tdf[["name","role","phone","email"]], width="stretch", hide_index=True)
+            options = [f"{r['name']} · {r['role']}" for _, r in tdf.iterrows()]
+            pick = st.selectbox("Select therapist", options=options, key="th_archive_pick")
+            picked = tdf.iloc[options.index(pick)].to_dict()
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("🗄 Archive therapist", key="btn_archive_th"):
+                    raw_id = str(picked.get("therapist_id","")).split("portal:")[-1]
+                    res = _post_portal_json(f"/api/internal/therapists/{raw_id}/archive?tenant={tenant_slug}", payload={}, headers=headers) or {}
+                    if res.get("ok"):
+                        sync_portal_therapists_to_local(tenant_slug)
+                        st.success("Therapist archived.")
+                        st.rerun()
+                    else:
+                        st.error(f"Archive failed: {res}")
+            with c2:
+                if st.button("♻ Restore therapist", key="btn_restore_th"):
+                    raw_id = str(picked.get("therapist_id","")).split("portal:")[-1]
+                    res = _post_portal_json(f"/api/internal/therapists/{raw_id}/restore?tenant={tenant_slug}", payload={}, headers=headers) or {}
+                    if res.get("ok"):
+                        sync_portal_therapists_to_local(tenant_slug)
+                        st.success("Therapist restored.")
+                        st.rerun()
+                    else:
+                        st.error(f"Restore failed: {res}")
+        else:
+            st.caption("No active therapists yet.")
+        return
+
+    # local fallback
+    therapists = normalize_therapists(read_csv_df(THERAPISTS_CSV, THERAPIST_HEADER))
+    edited = st.data_editor(therapists, width="stretch", hide_index=True, key="therapists_editor")
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("💾 Save therapists", width="stretch"):
+            write_csv_df(THERAPISTS_CSV, normalize_therapists(edited.copy()), THERAPIST_HEADER)
+            st.success("Saved.")
+            st.rerun()
+    with c2:
+        if st.button("➕ Add therapist", width="stretch"):
+            ts = iso_utc(now_utc())
+            row = {"therapist_id": str(uuid.uuid4()), "name": "New Therapist", "phone": "", "email": "", "role": "therapist", "archived": "0", "created_at_iso": ts, "updated_at_iso": ts}
+            therapists = pd.concat([therapists, pd.DataFrame([row])], ignore_index=True)
+            write_csv_df(THERAPISTS_CSV, normalize_therapists(therapists), THERAPIST_HEADER)
+            st.success("Therapist added.")
+            st.rerun()
+
+
 def page_templates(templates: Dict[str, str]) -> None:
     st.subheader("✍️ Πρότυπα")
     with st.form("tpl_form"):
@@ -2203,6 +2424,7 @@ def bootstrap() -> None:
     ensure_dirs()
     ensure_csv(APPOINTMENTS_CSV, APPT_HEADER)
     ensure_csv(CUSTOMERS_CSV, CUSTOMER_HEADER)
+    ensure_csv(THERAPISTS_CSV, THERAPIST_HEADER)
     if not TEMPLATES_JSON.exists():
         save_templates(dict(DEFAULT_TEMPLATES))
     outbox_jsonl_ensure()
@@ -2505,7 +2727,7 @@ def main() -> None:
     # (known issue in some Streamlit/component versions). A horizontal radio keeps it stable.
     nav = st.radio(
         "",
-        ["📅 Ημερολόγιο", "📋 Ραντεβού", "📨 Αποστολές", "🪪 Πελάτες", "✍️ Πρότυπα"],
+        ["📅 Ημερολόγιο", "📋 Ραντεβού", "📨 Αποστολές", "🪪 Πελάτες", "🧑‍⚕️ Θεραπευτές", "✍️ Πρότυπα"],
         horizontal=True,
         label_visibility="collapsed",
         key="main_nav_tab",
@@ -2519,6 +2741,8 @@ def main() -> None:
         page_outbox()
     elif nav.startswith("🪪"):
         page_customers()
+    elif nav.startswith("🧑"):
+        page_therapists()
     else:
         page_templates(templates)
 

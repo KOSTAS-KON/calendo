@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import String, Date, Text, ForeignKey
+from sqlalchemy import String, Date, Text, ForeignKey, Boolean, DateTime, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -21,6 +21,9 @@ class Child(Base):
     parent1_phone: Mapped[str | None] = mapped_column(String(80), nullable=True)
     parent2_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     parent2_phone: Mapped[str | None] = mapped_column(String(80), nullable=True)
+
+    is_archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    archived_at: Mapped[DateTime | None] = mapped_column(DateTime, nullable=True)
 
     therapist_assignments = relationship(
         "ChildTherapistAssignment",

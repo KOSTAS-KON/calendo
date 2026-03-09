@@ -10,6 +10,15 @@
   </div>
   <div class="flex gap-2">
     <a class="btn" href="{{ rp }}/therapists">Back to list</a>
+    {% if t.is_archived %}
+      <form method="post" action="{{ rp }}/therapists/{{ t.id }}/restore" style="display:inline;">
+        <button class="btn btn-outline" type="submit">♻ Restore therapist</button>
+      </form>
+    {% else %}
+      <form method="post" action="{{ rp }}/therapists/{{ t.id }}/archive" style="display:inline;">
+        <button class="btn btn-outline" type="submit">🗄 Archive therapist</button>
+      </form>
+    {% endif %}
   </div>
 </div>
 

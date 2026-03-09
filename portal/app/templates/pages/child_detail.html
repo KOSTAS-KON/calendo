@@ -36,6 +36,17 @@
         Open SMS Calendar
       </a>
     {% endif %}
+    {% if is_clinic_superuser %}
+      {% if child.is_archived %}
+        <form method="post" action="{{ rp }}/children/{{ child.id }}/restore" style="display:inline;">
+          <button class="btn btn-outline" type="submit">♻ Restore child</button>
+        </form>
+      {% else %}
+        <form method="post" action="{{ rp }}/children/{{ child.id }}/archive" style="display:inline;">
+          <button class="btn btn-outline" type="submit">🗄 Archive child</button>
+        </form>
+      {% endif %}
+    {% endif %}
   </div>
 </div>
 
