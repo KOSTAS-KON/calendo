@@ -23,6 +23,7 @@ from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import quote
 
 import sqlalchemy as sa
+import bcrypt
 from fastapi import APIRouter, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
@@ -42,6 +43,8 @@ from app.models import (
     SmsOutbox,
     Therapist,
     TimelineEvent,
+    User,
+    ChildTherapistAssignment,
 )
 from app.models.clinic_settings import AppLicense
 from app.models.licensing import Subscription
@@ -49,6 +52,7 @@ from app.models.tenant import Tenant
 from app.services.license_tokens import verify_activation_code
 from app.services.storage import delete_file, save_upload
 from app.utils.paths import TEMPLATES_DIR
+from app.utils.security import generate_temp_password
 
 
 router = APIRouter()
@@ -173,13 +177,137 @@ def _resolve_tenant_or_404(db: Session, request: Request, requested_slug: str | 
     return tenant_slug, t.id
 
 
+
+ROLE_CLINIC_SUPERUSER = {"clinic_superuser", "owner", "admin", "superuser"}
+ROLE_CALENDAR_STAFF = {"calendar_staff", "receptionist", "secretary", "staff"}
+ROLE_THERAPIST = {"therapist"}
+
+def _session_role(request: Request) -> str:
+    s = request.session or {}
+    return str(s.get("role") or "").strip().lower()
+
+def _role_flags(request: Request) -> dict:
+    role = _session_role(request)
+    is_superuser = role in ROLE_CLINIC_SUPERUSER
+    is_calendar_staff = (role in ROLE_CALENDAR_STAFF) and not is_superuser
+    is_therapist = role in ROLE_THERAPIST
+    return {
+        "current_role": role or "calendar_staff",
+        "is_clinic_superuser": is_superuser,
+        "is_calendar_staff": is_calendar_staff,
+        "is_therapist": is_therapist,
+        "can_manage_team": is_superuser,
+        "can_access_children": is_superuser or is_therapist,
+        "can_access_therapists": is_superuser,
+        "can_access_billing": is_superuser,
+        "can_access_settings": is_superuser,
+        "can_access_sms_outbox": is_superuser or is_calendar_staff,
+        "can_access_calendar": is_superuser or is_calendar_staff or is_therapist,
+    }
+
+def _redirect_suite(request: Request, message: str | None = None) -> RedirectResponse:
+    if message:
+        _toast(request, message, "danger")
+    slug = _session_tenant_slug(request)
+    return RedirectResponse(url=f"{_rp(request)}/t/{slug}/suite", status_code=303)
+
+def _require_superuser_role(request: Request) -> Optional[RedirectResponse]:
+    if not _role_flags(request)["is_clinic_superuser"]:
+        return _redirect_suite(request, "Access restricted to clinic superusers.")
+    return None
+
+def _require_calendar_role(request: Request) -> Optional[RedirectResponse]:
+    if not _role_flags(request)["can_access_calendar"]:
+        return _redirect_suite(request, "Access restricted to calendar roles.")
+    return None
+
+def _current_user_row(db: Session, request: Request, tid: str) -> Optional[User]:
+    uid = request.session.get("user_id")
+    if uid:
+        u = db.query(User).filter(User.tenant_id == tid, User.id == str(uid)).first()
+        if u:
+            return u
+    email = str(request.session.get("email") or "").strip().lower()
+    if email:
+        return db.query(User).filter(User.tenant_id == tid, sa.func.lower(User.email) == email).first()
+    return None
+
+def _ensure_assignment_table(db: Session) -> None:
+    bind = db.get_bind()
+    try:
+        ChildTherapistAssignment.__table__.create(bind, checkfirst=True)
+    except Exception:
+        pass
+
+def _therapist_for_current_user(db: Session, request: Request, tid: str) -> Optional[Therapist]:
+    _ensure_assignment_table(db)
+    u = _current_user_row(db, request, tid)
+    if not u:
+        return None
+    # first try explicit link if column exists in db/model
+    q = db.query(Therapist).filter(Therapist.tenant_id == tid)
+    if hasattr(Therapist, "user_id"):
+        t = q.filter(Therapist.user_id == u.id).first()
+        if t:
+            return t
+    email = (u.email or "").strip().lower()
+    if email:
+        return db.query(Therapist).filter(Therapist.tenant_id == tid, sa.func.lower(Therapist.email) == email).first()
+    return None
+
+def _assigned_child_ids_for_request(db: Session, request: Request, tid: str) -> list[int]:
+    rolef = _role_flags(request)
+    if rolef["is_clinic_superuser"] or rolef["is_calendar_staff"]:
+        return []
+    if not rolef["is_therapist"]:
+        return []
+    t = _therapist_for_current_user(db, request, tid)
+    if not t:
+        return []
+    rows = (
+        db.query(ChildTherapistAssignment.child_id)
+        .filter(
+            ChildTherapistAssignment.tenant_id == tid,
+            ChildTherapistAssignment.therapist_id == t.id,
+            ChildTherapistAssignment.is_active.is_(True),
+        )
+        .all()
+    )
+    return [int(r[0]) for r in rows]
+
+def _assert_child_access(db: Session, request: Request, tid: str, child_id: int) -> Optional[RedirectResponse]:
+    rolef = _role_flags(request)
+    if rolef["is_clinic_superuser"]:
+        return None
+    if rolef["is_calendar_staff"]:
+        return _redirect_suite(request, "Calendar staff do not have access to child records.")
+    if rolef["is_therapist"]:
+        allowed = set(_assigned_child_ids_for_request(db, request, tid))
+        if child_id not in allowed:
+            return _redirect_suite(request, "You only have access to children assigned to you.")
+        return None
+    return _redirect_suite(request, "Access denied.")
+
 def _ensure_billing_item_columns(db: Session) -> None:
     """Best-effort schema drift fixer for billing tables.
 
-    Keeps older deployments alive even if billing columns are missing.
+    A few deployments may have been created before the billing feature (or before
+    the latest migrations landed). In that situation, the `/billing` pages can
+    crash due to missing columns (or older boolean flag types).
+
+    This helper keeps the app resilient by:
+      • creating the billing tables if missing (checkfirst)
+      • adding missing columns (billing_due, amount/currency/description, flags)
+      • attempting to normalize old boolean flags to YES/NO strings
+
+    Notes:
+      • This is a *safety net*. The preferred path is still running Alembic migrations.
+      • All operations are best-effort; failures are swallowed to avoid taking the
+        whole portal down.
     """
     bind = db.get_bind()
 
+    # If the tables do not exist (fresh DB / older install), create them from ORM metadata.
     try:
         BillingPlan.__table__.create(bind, checkfirst=True)
         BillingItem.__table__.create(bind, checkfirst=True)
@@ -193,29 +321,14 @@ def _ensure_billing_item_columns(db: Session) -> None:
         return
 
     cols = {c.get("name"): c for c in col_info if c.get("name")}
+
     stmts: list[str] = []
 
-    # --- tenant_id (older schema may not have it)
-    if "tenant_id" not in cols:
-        stmts.append("ALTER TABLE billing_items ADD COLUMN tenant_id VARCHAR(36) NULL")
-        if bind.dialect.name == "postgresql":
-            stmts.append(
-                "UPDATE billing_items bi "
-                "SET tenant_id = c.tenant_id "
-                "FROM children c "
-                "WHERE bi.child_id = c.id AND (bi.tenant_id IS NULL OR bi.tenant_id = '')"
-            )
-            stmts.append("CREATE INDEX IF NOT EXISTS ix_billing_items_tenant_id ON billing_items (tenant_id)")
-        else:
-            stmts.append(
-                "UPDATE billing_items "
-                "SET tenant_id = (SELECT tenant_id FROM children WHERE children.id = billing_items.child_id) "
-                "WHERE tenant_id IS NULL OR tenant_id = ''"
-            )
-
-    # --- billing_due (older schema used month)
+    # --- billing_due (older schema used "month")
     if "billing_due" not in cols:
         stmts.append("ALTER TABLE billing_items ADD COLUMN billing_due DATE")
+
+        # Backfill if possible
         if "month" in cols:
             if bind.dialect.name == "postgresql":
                 stmts.append(
@@ -224,6 +337,7 @@ def _ensure_billing_item_columns(db: Session) -> None:
                     "WHERE billing_due IS NULL"
                 )
             else:
+                # SQLite (typeless) - best effort
                 stmts.append(
                     "UPDATE billing_items "
                     "SET billing_due = date(month || '-01','start of month','+1 month','-1 day') "
@@ -235,20 +349,36 @@ def _ensure_billing_item_columns(db: Session) -> None:
             else:
                 stmts.append("UPDATE billing_items SET billing_due = date('now') WHERE billing_due IS NULL")
 
+    # --- tenant_id (older schema may not have it)
+    if "tenant_id" not in cols:
+        stmts.append("ALTER TABLE billing_items ADD COLUMN tenant_id VARCHAR(36) NULL")
+        if bind.dialect.name == "postgresql":
+            stmts.append("UPDATE billing_items bi SET tenant_id = c.tenant_id FROM children c WHERE bi.child_id = c.id AND (bi.tenant_id IS NULL OR bi.tenant_id = '')")
+            stmts.append("CREATE INDEX IF NOT EXISTS ix_billing_items_tenant_id ON billing_items (tenant_id)")
+        else:
+            stmts.append("UPDATE billing_items SET tenant_id = (SELECT tenant_id FROM children WHERE children.id = billing_items.child_id) WHERE tenant_id IS NULL OR tenant_id = ''")
+
+    # --- amount/currency/description
     if "amount_cents" not in cols:
         stmts.append("ALTER TABLE billing_items ADD COLUMN amount_cents INTEGER NULL")
     if "currency" not in cols:
         stmts.append("ALTER TABLE billing_items ADD COLUMN currency VARCHAR(8) NULL")
     if "description" not in cols:
         stmts.append("ALTER TABLE billing_items ADD COLUMN description TEXT NULL")
-    stmts.append("UPDATE billing_items SET currency = 'EUR' WHERE currency IS NULL OR currency = ''")
 
+    # Default currency backfill
+    if "currency" in cols or "currency" not in cols:
+        stmts.append("UPDATE billing_items SET currency = 'EUR' WHERE currency IS NULL OR currency = ''")
+
+    # --- flags: paid / invoice_created / parent_signed_off
     for flag in ("paid", "invoice_created", "parent_signed_off"):
         if flag not in cols:
             stmts.append(f"ALTER TABLE billing_items ADD COLUMN {flag} VARCHAR(3) NULL")
             stmts.append(f"UPDATE billing_items SET {flag} = 'NO' WHERE {flag} IS NULL OR {flag} = ''")
             continue
+
         ctype = str(cols[flag].get("type", "")).lower()
+        # Older schema may have BOOLEAN or INTEGER 0/1. Normalize to YES/NO.
         if ("bool" in ctype) or ("boolean" in ctype):
             if bind.dialect.name == "postgresql":
                 stmts.append(
@@ -256,17 +386,20 @@ def _ensure_billing_item_columns(db: Session) -> None:
                     f"USING CASE WHEN {flag} THEN 'YES' ELSE 'NO' END"
                 )
             else:
+                # SQLite: can't ALTER TYPE; but it's typeless and will happily store text.
                 stmts.append(
                     f"UPDATE billing_items SET {flag} = CASE "
                     f"WHEN {flag} IN (1,'1','t','true','TRUE') THEN 'YES' ELSE 'NO' END"
                 )
         else:
+            # Ensure canonical YES/NO values
             stmts.append(
                 f"UPDATE billing_items SET {flag} = "
                 f"CASE WHEN upper(CAST({flag} AS TEXT)) = 'YES' THEN 'YES' ELSE 'NO' END "
                 f"WHERE {flag} IS NOT NULL"
             )
 
+    # Execute statements one-by-one so a single failure doesn't break everything.
     if stmts:
         for sql in stmts:
             try:
@@ -373,12 +506,17 @@ def _base_context(db: Session, request: Request, tenant_slug: str, tenant_id: st
     until = _subscription_until(db, tenant_id)
     if until:
         request.session["subscription_until"] = until.replace(microsecond=0).isoformat()
+    rolef = _role_flags(request)
+    therapist = _therapist_for_current_user(db, request, tenant_id) if rolef["is_therapist"] else None
 
     return {
         "tenant_slug": tenant_slug,
         "clinic": clinic,
         "license": license_obj,
         "sms_app_url": _sms_sso_url(tenant_slug),
+        "active": request.scope.get("route").name if request.scope.get("route") else "",
+        "therapist_self": therapist,
+        **rolef,
     }
 
 
@@ -426,7 +564,7 @@ def dashboard(request: Request, tenant_slug: str | None = None):
             .filter(Child.tenant_id == tid)
             .count()
         )
-        billing_count = db.query(BillingItem).join(Child, Child.id == BillingItem.child_id).filter(Child.tenant_id == tid).count()
+        billing_count = db.query(BillingItem).filter(BillingItem.tenant_id == tid).count()
 
         rows = (
             db.query(Appointment)
@@ -466,8 +604,19 @@ def children_list(request: Request):
     try:
         ts, tid = _resolve_tenant_or_404(db, request)
         _ensure_billing_item_columns(db)
+        guard = _assert_child_access(db, request, tid, -1) if _role_flags(request)["is_calendar_staff"] else None
+        if guard:
+            return guard
 
-        children = db.query(Child).filter(Child.tenant_id == tid).order_by(Child.full_name.asc()).all()
+        q_children = db.query(Child).filter(Child.tenant_id == tid)
+        if _role_flags(request)["is_therapist"]:
+            assigned_ids = _assigned_child_ids_for_request(db, request, tid)
+            if not assigned_ids:
+                children = []
+            else:
+                children = q_children.filter(Child.id.in_(assigned_ids)).order_by(Child.full_name.asc()).all()
+        else:
+            children = q_children.order_by(Child.full_name.asc()).all()
 
         now = datetime.utcnow()
         meta: dict[int, dict[str, Any]] = {}
@@ -486,8 +635,7 @@ def children_list(request: Request):
             )
             unpaid_count = (
                 db.query(BillingItem)
-                .join(Child, Child.id == BillingItem.child_id)
-                .filter(Child.tenant_id == tid, BillingItem.child_id == c.id)
+                .filter(BillingItem.tenant_id == tid, BillingItem.child_id == c.id)
                 .filter(sa.func.upper(BillingItem.paid) != "YES")
                 .count()
             )
@@ -516,6 +664,8 @@ def children_list(request: Request):
 async def children_create(request: Request):
     if (resp := _require_login(request)):
         return resp
+    if (guard := _require_superuser_role(request)):
+        return guard
 
     form = await request.form()
     full_name = str(form.get("full_name") or "").strip()
@@ -574,6 +724,8 @@ def child_detail(request: Request, child_id: int):
     db = _db()
     try:
         ts, tid = _resolve_tenant_or_404(db, request)
+        if (guard := _assert_child_access(db, request, tid, child_id)):
+            return guard
         child = db.query(Child).filter(Child.tenant_id == tid, Child.id == child_id).first()
         if not child:
             raise HTTPException(status_code=404, detail="Child not found")
@@ -661,6 +813,8 @@ def therapists_list(request: Request):
     db = _db()
     try:
         ts, tid = _resolve_tenant_or_404(db, request)
+        if (guard := _require_superuser_role(request)):
+            return guard
         therapists = db.query(Therapist).filter(Therapist.tenant_id == tid).order_by(Therapist.name.asc()).all()
         ctx = _base_context(db, request, ts, tid)
         return templates.TemplateResponse(
@@ -686,6 +840,8 @@ async def therapist_create(request: Request):
     db = _db()
     try:
         ts, tid = _resolve_tenant_or_404(db, request)
+        if (guard := _require_superuser_role(request)):
+            return guard
         t = Therapist(tenant_id=tid, name=name, role=role, phone=phone, email=email)
         db.add(t)
         db.commit()
@@ -703,6 +859,8 @@ def therapist_detail(request: Request, therapist_id: int):
     db = _db()
     try:
         ts, tid = _resolve_tenant_or_404(db, request)
+        if (guard := _require_superuser_role(request)):
+            return guard
         t = db.query(Therapist).filter(Therapist.tenant_id == tid, Therapist.id == therapist_id).first()
         if not t:
             raise HTTPException(status_code=404, detail="Therapist not found")
@@ -869,10 +1027,20 @@ async def therapist_leave_remove(request: Request, therapist_id: int):
 def calendar_page(request: Request):
     if (resp := _require_login(request)):
         return resp
+    if (guard := _require_calendar_role(request)):
+        return guard
     db = _db()
     try:
         ts, tid = _resolve_tenant_or_404(db, request)
-        children = db.query(Child).filter(Child.tenant_id == tid).order_by(Child.full_name.asc()).all()
+        rolef = _role_flags(request)
+        q_children = db.query(Child).filter(Child.tenant_id == tid)
+        if rolef["is_therapist"]:
+            assigned_ids = _assigned_child_ids_for_request(db, request, tid)
+            children = q_children.filter(Child.id.in_(assigned_ids)).order_by(Child.full_name.asc()).all() if assigned_ids else []
+        elif rolef["is_calendar_staff"] or rolef["is_clinic_superuser"]:
+            children = q_children.order_by(Child.full_name.asc()).all()
+        else:
+            children = []
         therapists = db.query(Therapist).filter(Therapist.tenant_id == tid).order_by(Therapist.name.asc()).all()
         selected_child_id: int | None = None
         raw = (request.query_params.get("child_id") or "").strip()
@@ -881,6 +1049,20 @@ def calendar_page(request: Request):
                 selected_child_id = int(raw)
             except Exception:
                 selected_child_id = None
+        selected_therapist_ids: list[int] = []
+        raw_multi = request.query_params.getlist("therapist_ids") if hasattr(request.query_params, "getlist") else []
+        if not raw_multi:
+            one = (request.query_params.get("therapist_ids") or "").strip()
+            if one:
+                raw_multi = [x for x in one.split(",") if x.strip()]
+        for val in raw_multi:
+            try:
+                selected_therapist_ids.append(int(val))
+            except Exception:
+                continue
+        if rolef["is_therapist"]:
+            therapist_self = _therapist_for_current_user(db, request, tid)
+            selected_therapist_ids = [therapist_self.id] if therapist_self else []
         ctx = _base_context(db, request, ts, tid)
         return templates.TemplateResponse(
             "pages/calendar.html",
@@ -890,6 +1072,7 @@ def calendar_page(request: Request):
                 "children": children,
                 "therapists": therapists,
                 "selected_child_id": selected_child_id,
+                "selected_therapist_ids": selected_therapist_ids,
             },
         )
     finally:
@@ -925,6 +1108,8 @@ def _parse_calendar_range_dt(v: str | None) -> datetime | None:
 def api_calendar_events(request: Request):
     if (resp := _require_login(request)):
         return resp
+    if (guard := _require_calendar_role(request)):
+        return guard
 
     start_dt = _parse_calendar_range_dt(request.query_params.get("start"))
     end_dt = _parse_calendar_range_dt(request.query_params.get("end"))
@@ -939,10 +1124,30 @@ def api_calendar_events(request: Request):
         except Exception:
             child_id = None
 
+    therapist_ids: list[int] = []
+    raw_multi = request.query_params.getlist("therapist_ids") if hasattr(request.query_params, "getlist") else []
+    if not raw_multi:
+        one = (request.query_params.get("therapist_ids") or "").strip()
+        if one:
+            raw_multi = [x for x in one.split(",") if x.strip()]
+    for val in raw_multi:
+        try:
+            therapist_ids.append(int(val))
+        except Exception:
+            continue
+
     db = _db()
     try:
         ts, tid = _resolve_tenant_or_404(db, request)
         _ensure_billing_item_columns(db)
+        rolef = _role_flags(request)
+        therapist_by_id = {t.id: t for t in db.query(Therapist).filter(Therapist.tenant_id == tid).all()}
+        if rolef["is_therapist"]:
+            therapist_self = _therapist_for_current_user(db, request, tid)
+            therapist_ids = [therapist_self.id] if therapist_self else []
+        therapist_names = [therapist_by_id[i].name for i in therapist_ids if i in therapist_by_id]
+
+        allowed_child_ids = _assigned_child_ids_for_request(db, request, tid) if rolef["is_therapist"] else []
 
         # Appointments
         appt_q = (
@@ -953,25 +1158,31 @@ def api_calendar_events(request: Request):
         )
         if child_id:
             appt_q = appt_q.filter(Appointment.child_id == child_id)
+        if allowed_child_ids:
+            appt_q = appt_q.filter(Appointment.child_id.in_(allowed_child_ids))
+        elif rolef["is_therapist"]:
+            appt_q = appt_q.filter(sa.sql.false())
+        if therapist_names:
+            appt_q = appt_q.filter(Appointment.therapist_name.in_(therapist_names))
         appts = appt_q.all()
 
-        # Billing (by date)
+        # Billing (by date) - therapists do not see billing events
         start_d = start_dt.date()
         end_d = end_dt.date()
-        bill_q = (
-            db.query(BillingItem)
-            .options(joinedload(BillingItem.child))
-            .join(Child, Child.id == BillingItem.child_id)
-            .filter(Child.tenant_id == tid)
-            .filter(BillingItem.billing_due >= start_d, BillingItem.billing_due < end_d)
-        )
-        if child_id:
-            bill_q = bill_q.filter(BillingItem.child_id == child_id)
-        bills = bill_q.all()
+        bills = []
+        if rolef["is_clinic_superuser"]:
+            bill_q = (
+                db.query(BillingItem)
+                .options(joinedload(BillingItem.child))
+                .join(Child, Child.id == BillingItem.child_id)
+                .filter(Child.tenant_id == tid)
+                .filter(BillingItem.billing_due >= start_d, BillingItem.billing_due < end_d)
+            )
+            if child_id:
+                bill_q = bill_q.filter(BillingItem.child_id == child_id)
+            bills = bill_q.all()
 
         # Journey / Timeline
-        # Only include journey types shown in the Calendar legend.
-        # (Visits are appointments; billing is shown via BillingItem events.)
         journey_types = ["PARENT_FEEDBACK", "COMMUNICATION", "EXERCISE", "NOTE", "APPT_CANCELLED"]
         tl_q = (
             db.query(TimelineEvent)
@@ -983,6 +1194,10 @@ def api_calendar_events(request: Request):
         )
         if child_id:
             tl_q = tl_q.filter(TimelineEvent.child_id == child_id)
+        if allowed_child_ids:
+            tl_q = tl_q.filter(TimelineEvent.child_id.in_(allowed_child_ids))
+        elif rolef["is_therapist"]:
+            tl_q = tl_q.filter(sa.sql.false())
         journey = tl_q.all()
 
         events: list[dict[str, Any]] = []
@@ -1003,7 +1218,10 @@ def api_calendar_events(request: Request):
             start = a.starts_at
             end = a.ends_at or (a.starts_at + timedelta(minutes=60))
             child_name = getattr(getattr(a, "child", None), "full_name", "") or ""
+            tname = (getattr(a, "therapist_name", "") or "").strip()
             title = f"{child_name} — {a.procedure}".strip(" —")
+            if tname:
+                title = f"{title} · {tname}"
             events.append(
                 {
                     "id": f"appt-{a.id}",
@@ -1092,6 +1310,8 @@ def api_calendar_events(request: Request):
 async def calendar_add_appointment(request: Request):
     if (resp := _require_login(request)):
         return resp
+    if (guard := _require_calendar_role(request)):
+        return guard
     form = await request.form()
 
     child_id_raw = str(form.get("child_id") or "").strip()
@@ -1110,6 +1330,8 @@ async def calendar_add_appointment(request: Request):
     db = _db()
     try:
         ts, tid = _resolve_tenant_or_404(db, request)
+        if (guard := _assert_child_access(db, request, tid, child_id)):
+            return guard
         child = db.query(Child).filter(Child.tenant_id == tid, Child.id == child_id).first()
         if not child:
             raise HTTPException(status_code=404, detail="Child not found")
@@ -1148,6 +1370,8 @@ async def calendar_add_appointment(request: Request):
 async def calendar_add_billing(request: Request):
     if (resp := _require_login(request)):
         return resp
+    if (guard := _require_calendar_role(request)):
+        return guard
     form = await request.form()
 
     child_id_raw = str(form.get("child_id") or "").strip()
@@ -1227,6 +1451,8 @@ async def calendar_add_billing(request: Request):
 async def calendar_add_journey(request: Request):
     if (resp := _require_login(request)):
         return resp
+    if (guard := _require_calendar_role(request)):
+        return guard
     form = await request.form()
 
     child_id_raw = str(form.get("child_id") or "").strip()
@@ -1247,6 +1473,8 @@ async def calendar_add_journey(request: Request):
     db = _db()
     try:
         ts, tid = _resolve_tenant_or_404(db, request)
+        if (guard := _assert_child_access(db, request, tid, child_id)):
+            return guard
         child = db.query(Child).filter(Child.tenant_id == tid, Child.id == child_id).first()
         if not child:
             raise HTTPException(status_code=404, detail="Child not found")
@@ -1275,6 +1503,8 @@ async def calendar_add_journey(request: Request):
 def billing_page(request: Request):
     if (resp := _require_login(request)):
         return resp
+    if (guard := _require_superuser_role(request)):
+        return guard
     db = _db()
     try:
         ts, tid = _resolve_tenant_or_404(db, request)
@@ -1296,8 +1526,7 @@ def billing_page(request: Request):
         q = (
             db.query(BillingItem)
             .options(joinedload(BillingItem.child))
-            .join(Child, Child.id == BillingItem.child_id)
-            .filter(Child.tenant_id == tid)
+            .filter(BillingItem.tenant_id == tid)
             .order_by(BillingItem.billing_due.desc())
         )
         if selected_child_id:
@@ -1324,6 +1553,8 @@ def billing_page(request: Request):
 async def billing_update(request: Request, billing_id: int):
     if (resp := _require_login(request)):
         return resp
+    if (guard := _require_superuser_role(request)):
+        return guard
     form = await request.form()
     redirect_to = str(form.get("redirect") or "").strip()
     paid = _parse_yes_no(str(form.get("paid") or "NO"))
@@ -1334,7 +1565,7 @@ async def billing_update(request: Request, billing_id: int):
     try:
         ts, tid = _resolve_tenant_or_404(db, request)
         _ensure_billing_item_columns(db)
-        b = db.query(BillingItem).join(Child, Child.id == BillingItem.child_id).filter(Child.tenant_id == tid, BillingItem.id == billing_id).first()
+        b = db.query(BillingItem).filter(BillingItem.tenant_id == tid, BillingItem.id == billing_id).first()
         if not b:
             raise HTTPException(status_code=404, detail="Billing item not found")
         b.paid = paid
@@ -1477,8 +1708,7 @@ async def billing_inputs_create(request: Request):
         for d in due_dates:
             exists = (
                 db.query(BillingItem)
-                .join(Child, Child.id == BillingItem.child_id)
-                .filter(Child.tenant_id == tid, BillingItem.child_id == child_id, BillingItem.billing_due == d)
+                .filter(BillingItem.tenant_id == tid, BillingItem.child_id == child_id, BillingItem.billing_due == d)
                 .first()
             )
             if exists:
@@ -1537,7 +1767,15 @@ def timeline_page(request: Request):
     db = _db()
     try:
         ts, tid = _resolve_tenant_or_404(db, request)
-        children = db.query(Child).filter(Child.tenant_id == tid).order_by(Child.full_name.asc()).all()
+        rolef = _role_flags(request)
+        if rolef["is_calendar_staff"]:
+            return _redirect_suite(request, "Calendar staff do not have access to the clinical timeline.")
+        q_children = db.query(Child).filter(Child.tenant_id == tid)
+        if rolef["is_therapist"]:
+            allowed_ids = _assigned_child_ids_for_request(db, request, tid)
+            children = q_children.filter(Child.id.in_(allowed_ids)).order_by(Child.full_name.asc()).all() if allowed_ids else []
+        else:
+            children = q_children.order_by(Child.full_name.asc()).all()
 
         q = (
             db.query(TimelineEvent)
@@ -1548,6 +1786,12 @@ def timeline_page(request: Request):
         )
         if child_id:
             q = q.filter(TimelineEvent.child_id == child_id)
+        if rolef["is_therapist"]:
+            allowed_ids = _assigned_child_ids_for_request(db, request, tid)
+            if allowed_ids:
+                q = q.filter(TimelineEvent.child_id.in_(allowed_ids))
+            else:
+                q = q.filter(sa.sql.false())
         if event_type:
             q = q.filter(TimelineEvent.event_type == event_type)
         events = q.limit(200).all()
@@ -1594,6 +1838,8 @@ async def timeline_create(request: Request):
     db = _db()
     try:
         ts, tid = _resolve_tenant_or_404(db, request)
+        if (guard := _assert_child_access(db, request, tid, child_id)):
+            return guard
         child = db.query(Child).filter(Child.tenant_id == tid, Child.id == child_id).first()
         if not child:
             raise HTTPException(status_code=404, detail="Child not found")
@@ -1624,6 +1870,8 @@ def appointment_detail(request: Request, appointment_id: int):
     db = _db()
     try:
         ts, tid = _resolve_tenant_or_404(db, request)
+        if _role_flags(request)["is_calendar_staff"]:
+            return _redirect_suite(request, "Calendar staff do not have access to clinical appointment notes.")
         appt = (
             db.query(Appointment)
             .options(joinedload(Appointment.child))
@@ -1632,6 +1880,8 @@ def appointment_detail(request: Request, appointment_id: int):
         )
         if not appt:
             raise HTTPException(status_code=404, detail="Appointment not found")
+        if (guard := _assert_child_access(db, request, tid, appt.child_id)):
+            return guard
 
         note = db.query(SessionNote).filter(SessionNote.tenant_id == tid, SessionNote.appointment_id == appt.id).first()
         if not note:
@@ -1664,6 +1914,8 @@ async def appointment_attendance(request: Request, appointment_id: int):
         appt = db.query(Appointment).filter(Appointment.tenant_id == tid, Appointment.id == appointment_id).first()
         if not appt:
             raise HTTPException(status_code=404, detail="Appointment not found")
+        if (guard := _assert_child_access(db, request, tid, appt.child_id)) and _role_flags(request)["is_therapist"]:
+            return guard
         appt.attendance_status = status
 
         # Backwards-compatible fields (template expects them; not all DBs have them)
@@ -1696,6 +1948,10 @@ async def appointment_note_save(request: Request, appointment_id: int):
         appt = db.query(Appointment).filter(Appointment.tenant_id == tid, Appointment.id == appointment_id).first()
         if not appt:
             raise HTTPException(status_code=404, detail="Appointment not found")
+        if _role_flags(request)["is_calendar_staff"]:
+            return _redirect_suite(request, "Calendar staff do not have access to session notes.")
+        if (guard := _assert_child_access(db, request, tid, appt.child_id)):
+            return guard
         note = db.query(SessionNote).filter(SessionNote.tenant_id == tid, SessionNote.appointment_id == appt.id).first()
         if not note:
             note = SessionNote(tenant_id=tid, appointment_id=appt.id)
@@ -1724,6 +1980,8 @@ async def child_upload(request: Request, child_id: int):
     db = _db()
     try:
         ts, tid = _resolve_tenant_or_404(db, request)
+        if (guard := _assert_child_access(db, request, tid, child_id)):
+            return guard
         child = db.query(Child).filter(Child.tenant_id == tid, Child.id == child_id).first()
         if not child:
             raise HTTPException(status_code=404, detail="Child not found")
@@ -1751,6 +2009,8 @@ def file_get(request: Request, attachment_id: int):
         )
         if not att:
             raise HTTPException(status_code=404, detail="File not found")
+        if (guard := _assert_child_access(db, request, tid, att.child_id)):
+            return guard
         return FileResponse(att.storage_path, filename=att.original_name, media_type=att.mime_type)
     finally:
         db.close()
@@ -1791,6 +2051,8 @@ async def attachment_delete(request: Request, attachment_id: int):
 def settings_page(request: Request):
     if (resp := _require_login(request)):
         return resp
+    if (guard := _require_superuser_role(request)):
+        return guard
     db = _db()
     try:
         ts, tid = _resolve_tenant_or_404(db, request)
@@ -1827,6 +2089,8 @@ def settings_page(request: Request):
 async def settings_clinic_save(request: Request):
     if (resp := _require_login(request)):
         return resp
+    if (guard := _require_superuser_role(request)):
+        return guard
     form = await request.form()
     db = _db()
     try:
@@ -1851,6 +2115,8 @@ async def settings_clinic_save(request: Request):
 async def settings_infobip_save(request: Request):
     if (resp := _require_login(request)):
         return resp
+    if (guard := _require_superuser_role(request)):
+        return guard
     form = await request.form()
     db = _db()
     try:
@@ -2184,24 +2450,221 @@ async def api_internal_children_create(request: Request):
         db.close()
 
 
-@router.get("/t/{tenant_slug}/children")
-def tenant_children_alias(request: Request, tenant_slug: str):
+@router.get("/t/{tenant_slug}/children", include_in_schema=False)
+def t_children_alias(request: Request, tenant_slug: str):
     return RedirectResponse(url=f"{_rp(request)}/children?tenant={tenant_slug}", status_code=303)
 
-
-@router.get("/t/{tenant_slug}/children/{child_id}")
-def tenant_child_detail_alias(request: Request, tenant_slug: str, child_id: int):
+@router.get("/t/{tenant_slug}/children/{child_id}", include_in_schema=False)
+def t_child_detail_alias(request: Request, tenant_slug: str, child_id: int):
     return RedirectResponse(url=f"{_rp(request)}/children/{child_id}?tenant={tenant_slug}", status_code=303)
 
-
-@router.get("/appointments")
+@router.get("/appointments", include_in_schema=False)
 def appointments_alias(request: Request):
-    qs = request.url.query
-    suffix = f"?{qs}" if qs else ""
-    return RedirectResponse(url=f"{_rp(request)}/calendar{suffix}", status_code=303)
+    return RedirectResponse(url=f"{_rp(request)}/calendar", status_code=303)
 
-
-@router.get("/t/{tenant_slug}/appointments")
-def tenant_appointments_alias(request: Request, tenant_slug: str):
+@router.get("/t/{tenant_slug}/appointments", include_in_schema=False)
+def t_appointments_alias(request: Request, tenant_slug: str):
     return RedirectResponse(url=f"{_rp(request)}/calendar?tenant={tenant_slug}", status_code=303)
 
+
+@router.get("/team", response_class=HTMLResponse)
+def team_page(request: Request):
+    if (resp := _require_login(request)):
+        return resp
+    if (guard := _require_superuser_role(request)):
+        return guard
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        _ensure_assignment_table(db)
+        users = db.query(User).filter(User.tenant_id == tid).order_by(User.email.asc()).all()
+        therapists = db.query(Therapist).filter(Therapist.tenant_id == tid).order_by(Therapist.name.asc()).all()
+        children = db.query(Child).filter(Child.tenant_id == tid).order_by(Child.full_name.asc()).all()
+        assignments = (
+            db.query(ChildTherapistAssignment)
+            .options(joinedload(ChildTherapistAssignment.child), joinedload(ChildTherapistAssignment.therapist))
+            .filter(ChildTherapistAssignment.tenant_id == tid)
+            .order_by(ChildTherapistAssignment.assigned_at.desc())
+            .all()
+        )
+        ctx = _base_context(db, request, ts, tid)
+        return templates.TemplateResponse(
+            "pages/team.html",
+            {
+                "request": request,
+                **ctx,
+                "users": users,
+                "therapists": therapists,
+                "children": children,
+                "assignments": assignments,
+                "temp_password": request.session.pop("team_temp_password", None),
+                "temp_email": request.session.pop("team_temp_email", None),
+            },
+        )
+    finally:
+        db.close()
+
+@router.post("/team/users/create")
+async def team_user_create(request: Request):
+    if (resp := _require_login(request)):
+        return resp
+    if (guard := _require_superuser_role(request)):
+        return guard
+    form = await request.form()
+    email = str(form.get("email") or "").strip().lower()
+    role = str(form.get("role") or "calendar_staff").strip().lower()
+    job_title = str(form.get("job_title") or "").strip() or None
+    therapist_id_raw = str(form.get("therapist_id") or "").strip()
+    if not email:
+        _toast(request, "Email is required", "danger")
+        return RedirectResponse(url=f"{_rp(request)}/team", status_code=303)
+    allowed = {"clinic_superuser","calendar_staff","therapist"}
+    if role not in allowed:
+        role = "calendar_staff"
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        existing = db.query(User).filter(User.tenant_id == tid, sa.func.lower(User.email) == email).first()
+        temp_pw = generate_temp_password()
+        pw_hash = bcrypt.hashpw(temp_pw.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+        if existing:
+            existing.password_hash = pw_hash
+            existing.role = role
+            existing.job_title = job_title
+            existing.is_active = True
+            existing.must_reset_password = True
+            u = existing
+        else:
+            u = User(id=str(uuid.uuid4()), tenant_id=tid, email=email, password_hash=pw_hash, role=role, job_title=job_title, is_active=True, must_reset_password=True)
+            db.add(u)
+        db.commit()
+        db.refresh(u)
+        if role == "therapist" and therapist_id_raw:
+            try:
+                therapist_id = int(therapist_id_raw)
+            except Exception:
+                therapist_id = None
+            if therapist_id:
+                t = db.query(Therapist).filter(Therapist.tenant_id == tid, Therapist.id == therapist_id).first()
+                if t:
+                    t.email = email
+                    if hasattr(t, "user_id"):
+                        t.user_id = u.id
+                    db.add(t)
+                    db.commit()
+        request.session["team_temp_password"] = temp_pw
+        request.session["team_temp_email"] = email
+        _toast(request, "User created / password reset", "success")
+        return RedirectResponse(url=f"{_rp(request)}/team", status_code=303)
+    finally:
+        db.close()
+
+@router.post("/team/users/{user_id}/toggle")
+async def team_user_toggle(request: Request, user_id: str):
+    if (resp := _require_login(request)):
+        return resp
+    if (guard := _require_superuser_role(request)):
+        return guard
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        u = db.query(User).filter(User.tenant_id == tid, User.id == user_id).first()
+        if not u:
+            raise HTTPException(status_code=404, detail="User not found")
+        u.is_active = not bool(u.is_active)
+        db.add(u)
+        db.commit()
+        _toast(request, "User access updated", "success")
+        return RedirectResponse(url=f"{_rp(request)}/team", status_code=303)
+    finally:
+        db.close()
+
+@router.post("/team/users/{user_id}/reset_password")
+async def team_user_reset_password(request: Request, user_id: str):
+    if (resp := _require_login(request)):
+        return resp
+    if (guard := _require_superuser_role(request)):
+        return guard
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        u = db.query(User).filter(User.tenant_id == tid, User.id == user_id).first()
+        if not u:
+            raise HTTPException(status_code=404, detail="User not found")
+        temp_pw = generate_temp_password()
+        u.password_hash = bcrypt.hashpw(temp_pw.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+        u.must_reset_password = True
+        u.is_active = True
+        db.add(u)
+        db.commit()
+        request.session["team_temp_password"] = temp_pw
+        request.session["team_temp_email"] = u.email
+        _toast(request, "Temporary password generated", "success")
+        return RedirectResponse(url=f"{_rp(request)}/team", status_code=303)
+    finally:
+        db.close()
+
+@router.post("/team/assignments/create")
+async def team_assignment_create(request: Request):
+    if (resp := _require_login(request)):
+        return resp
+    if (guard := _require_superuser_role(request)):
+        return guard
+    form = await request.form()
+    child_id_raw = str(form.get("child_id") or "").strip()
+    therapist_id_raw = str(form.get("therapist_id") or "").strip()
+    try:
+        child_id = int(child_id_raw)
+        therapist_id = int(therapist_id_raw)
+    except Exception:
+        _toast(request, "Select both child and therapist", "danger")
+        return RedirectResponse(url=f"{_rp(request)}/team", status_code=303)
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        _ensure_assignment_table(db)
+        existing = db.query(ChildTherapistAssignment).filter(ChildTherapistAssignment.tenant_id == tid, ChildTherapistAssignment.child_id == child_id, ChildTherapistAssignment.therapist_id == therapist_id).first()
+        if existing:
+            existing.is_active = True
+            db.add(existing)
+        else:
+            db.add(ChildTherapistAssignment(tenant_id=tid, child_id=child_id, therapist_id=therapist_id, assigned_by_user_id=str(request.session.get("user_id") or "") or None, is_active=True))
+        db.commit()
+        _toast(request, "Child assigned to therapist", "success")
+        return RedirectResponse(url=f"{_rp(request)}/team", status_code=303)
+    finally:
+        db.close()
+
+@router.post("/team/assignments/{assignment_id}/toggle")
+async def team_assignment_toggle(request: Request, assignment_id: int):
+    if (resp := _require_login(request)):
+        return resp
+    if (guard := _require_superuser_role(request)):
+        return guard
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        a = db.query(ChildTherapistAssignment).filter(ChildTherapistAssignment.tenant_id == tid, ChildTherapistAssignment.id == assignment_id).first()
+        if not a:
+            raise HTTPException(status_code=404, detail="Assignment not found")
+        a.is_active = not bool(a.is_active)
+        db.add(a)
+        db.commit()
+        _toast(request, "Assignment updated", "success")
+        return RedirectResponse(url=f"{_rp(request)}/team", status_code=303)
+    finally:
+        db.close()
+
+@router.get("/api/internal/therapists")
+def api_internal_therapists(request: Request):
+    _require_internal_key(request)
+    tenant_slug = _tenant_from_query_or_400(request)
+    db = _db()
+    try:
+        t = db.query(Tenant).filter(Tenant.slug == tenant_slug).first()
+        if not t:
+            raise HTTPException(status_code=404, detail="Tenant not found")
+        rows = db.query(Therapist).filter(Therapist.tenant_id == t.id).order_by(Therapist.name.asc()).all()
+        return JSONResponse({"tenant": tenant_slug, "therapists": [{"id": x.id, "name": x.name, "email": x.email, "role": x.role} for x in rows]})
+    finally:
+        db.close()

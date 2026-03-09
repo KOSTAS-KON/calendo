@@ -163,6 +163,7 @@ APPT_HEADER = [
     "end_iso",  # UTC ISO
     "status",  # active|cancelled
     "service",
+    "therapist_name",
     "notes",
     "created_at_iso",
     "updated_at_iso",
@@ -201,6 +202,7 @@ FORM_KEYS = {
     "customer_id": "form_customer_id",
     "customer_label": "form_customer_label",
     "service": "form_service",
+    "therapist_name": "form_therapist_name",
     "date": "form_date",
     "time": "form_time",
     "duration": "form_duration",
@@ -382,87 +384,8 @@ def normalize_customers(df: pd.DataFrame) -> pd.DataFrame:
             df.at[i, "created_at_iso"] = ts
         if str(df.at[i, "updated_at_iso"]).strip() == "":
             df.at[i, "updated_at_iso"] = ts
-        if "primary_sms_phone" in df.columns:
-            df.at[i, "primary_sms_phone"] = normalize_phone(df.at[i, "primary_sms_phone"])
         df.at[i, "phone"] = normalize_phone(df.at[i, "phone"])
     return df
-
-def customer_sms_phone(row: Dict[str, Any] | pd.Series | None) -> str:
-    if row is None:
-        return ""
-    primary = ""
-    phone = ""
-    try:
-        primary = str((row.get("primary_sms_phone") if hasattr(row, "get") else row["primary_sms_phone"]) or "").strip()
-    except Exception:
-        primary = ""
-    try:
-        phone = str((row.get("phone") if hasattr(row, "get") else row["phone"]) or "").strip()
-    except Exception:
-        phone = ""
-    return to_e164_heuristic(primary or phone)
-
-def portal_sync_enabled() -> bool:
-    return bool(_portal_base_url() and (os.getenv("INTERNAL_API_KEY") or "").strip())
-
-def fetch_portal_children(tenant_slug: str) -> List[Dict[str, Any]]:
-    if not portal_sync_enabled():
-        return []
-    tenant_slug = (tenant_slug or TENANT_SLUG or "default").strip().lower()
-    headers = {"X-Internal-Key": (os.getenv("INTERNAL_API_KEY") or "").strip()}
-    payload = _fetch_portal_json(f"/api/internal/children?tenant={tenant_slug}", headers=headers) or {}
-    rows = payload.get("children") or []
-    if not isinstance(rows, list):
-        return []
-    out: List[Dict[str, Any]] = []
-    for c in rows:
-        if not isinstance(c, dict):
-            continue
-        primary_sms = to_e164_heuristic(str(c.get("parent1_phone") or c.get("parent2_phone") or ""))
-        out.append({
-            "customer_id": f"portal:{c.get('id')}",
-            "name": str(c.get("full_name") or ""),
-            "primary_sms_phone": primary_sms,
-            "phone": primary_sms,
-            "notes": str(c.get("notes") or ""),
-            "consent": "1",
-            "created_at_iso": "",
-            "updated_at_iso": "",
-            "_source": "portal",
-            "_portal_id": c.get("id"),
-            "_parent1_name": c.get("parent1_name"),
-            "_parent1_phone": c.get("parent1_phone"),
-            "_parent2_name": c.get("parent2_name"),
-            "_parent2_phone": c.get("parent2_phone"),
-        })
-    return out
-
-def get_booking_customers() -> pd.DataFrame:
-    local_df = normalize_customers(read_csv_df(CUSTOMERS_CSV, CUSTOMER_HEADER))
-    if local_df.empty:
-        local_df = pd.DataFrame(columns=CUSTOMER_HEADER)
-    local_df = local_df.copy()
-    if "_source" not in local_df.columns:
-        local_df["_source"] = "local"
-
-    rows = []
-    seen = set(local_df["customer_id"].astype(str).tolist()) if not local_df.empty else set()
-    for row in fetch_portal_children(TENANT_SLUG):
-        cid = str(row.get("customer_id") or "")
-        if cid and cid not in seen:
-            rows.append(row)
-            seen.add(cid)
-
-    if rows:
-        portal_df = pd.DataFrame(rows)
-        merged = pd.concat([local_df, portal_df], ignore_index=True, sort=False)
-    else:
-        merged = local_df
-    for col in CUSTOMER_HEADER:
-        if col not in merged.columns:
-            merged[col] = ""
-    merged["display_phone"] = merged.apply(lambda r: customer_sms_phone(r.to_dict()), axis=1)
-    return merged
 
 
 def normalize_appointments(df: pd.DataFrame) -> pd.DataFrame:
@@ -1238,7 +1161,10 @@ def build_calendar_events_local(appts: pd.DataFrame, app_tz: Any) -> List[Dict[s
         e_loc = to_local(e_utc, app_tz)
         if r["status"] == "cancelled":
             continue
+        tname = str(r.get("therapist_name") or "").strip()
         title = f'{r["customer_name"]} • {r["service"]}'
+        if tname:
+            title += f" · {tname}"
         events.append(
             {
                 "id": r["appointment_id"],
@@ -1283,6 +1209,7 @@ def init_form_defaults(customers: pd.DataFrame, app_tz: Any) -> None:
             st.session_state[FORM_KEYS["customer_id"]] = ""
 
     st.session_state.setdefault(FORM_KEYS["service"], "Session")
+    st.session_state.setdefault(FORM_KEYS["therapist_name"], "")
     st.session_state.setdefault(FORM_KEYS["date"], to_local(now_utc(), app_tz).date())
     st.session_state.setdefault(FORM_KEYS["time"], (to_local(now_utc(), app_tz) + timedelta(hours=1)).time().replace(second=0, microsecond=0))
     st.session_state.setdefault(FORM_KEYS["duration"], 30)
@@ -1443,11 +1370,11 @@ def enqueue_for_cancelled(appt: Dict[str, str], templates: Dict[str, str], app_t
         scheduled_for_utc=now_utc() - timedelta(seconds=1),
     ) else 0
 def page_calendar(templates: Dict[str, str], app_tz: Any) -> None:
+    tenant_slug = TENANT_SLUG
     st.subheader("📅 Ημερολόγιο")
 
-    local_customers = normalize_customers(read_csv_df(CUSTOMERS_CSV, CUSTOMER_HEADER))
-    write_csv_df(CUSTOMERS_CSV, local_customers, CUSTOMER_HEADER)
-    customers = get_booking_customers()
+    customers = normalize_customers(read_csv_df(CUSTOMERS_CSV, CUSTOMER_HEADER))
+    write_csv_df(CUSTOMERS_CSV, customers, CUSTOMER_HEADER)
 
     appts = normalize_appointments(read_csv_df(APPOINTMENTS_CSV, APPT_HEADER))
     write_csv_df(APPOINTMENTS_CSV, appts, APPT_HEADER)
@@ -1459,7 +1386,12 @@ def page_calendar(templates: Dict[str, str], app_tz: Any) -> None:
     if st_calendar is None:
         st.warning("Install: pip install streamlit-calendar")
     else:
-        events = build_calendar_events_local(appts, app_tz)
+        therapist_options = sorted([x.get("name","") for x in _fetch_portal_therapists(tenant_slug) if x.get("name")])
+        selected_therapists = st.multiselect("Therapist filter", therapist_options, default=therapist_options, key="therapist_filter") if therapist_options else []
+        appts_view = appts
+        if selected_therapists:
+            appts_view = appts[appts["therapist_name"].isin(selected_therapists)] if "therapist_name" in appts.columns else appts
+        events = build_calendar_events_local(appts_view, app_tz)
         cal_options = {
             "initialView": "timeGridWeek",
             "timeZone": "local",
@@ -1570,9 +1502,9 @@ def page_calendar(templates: Dict[str, str], app_tz: Any) -> None:
     st.divider()
 
     def booking_panel() -> None:
-        customers2 = get_booking_customers()
+        customers2 = normalize_customers(read_csv_df(CUSTOMERS_CSV, CUSTOMER_HEADER))
         if customers2.empty:
-            st.info("Πρόσθεσε πελάτη στο tab 🪪 Πελάτες. In portal-synced mode, customers you create there will appear here immediately.")
+            st.info("Πρόσθεσε πελάτη στο tab 🪪 Πελάτες.")
             return
 
         appts_all = normalize_appointments(read_csv_df(APPOINTMENTS_CSV, APPT_HEADER))
@@ -1586,6 +1518,7 @@ def page_calendar(templates: Dict[str, str], app_tz: Any) -> None:
             if appt_sel:
                 st.session_state[FORM_KEYS["customer_id"]] = str(appt_sel.get("customer_id", "")).strip() or st.session_state.get(FORM_KEYS["customer_id"], "")
                 st.session_state[FORM_KEYS["service"]] = str(appt_sel.get("service") or "Session")
+                st.session_state[FORM_KEYS["therapist_name"]] = str(appt_sel.get("therapist_name") or "")
                 st.session_state[FORM_KEYS["notes"]] = str(appt_sel.get("notes") or "")
 
                 s_utc = parse_iso_any(appt_sel.get("start_iso")) or now_utc()
@@ -1610,7 +1543,8 @@ def page_calendar(templates: Dict[str, str], app_tz: Any) -> None:
         id_to_row: Dict[str, Dict[str, str]] = {str(r["customer_id"]): r.to_dict() for _, r in customers2.iterrows()}  # type: ignore
         id_to_label: Dict[str, str] = {}
         for cid, row in id_to_row.items():
-            id_to_label[cid] = f'{row.get("name","")} ({customer_sms_phone(row)})'
+            sms_phone = row.get("primary_sms_phone") or row.get("phone","")
+            id_to_label[cid] = f'{row.get("name","")} ({to_e164_heuristic(sms_phone)})'
 
         cid_now = str(st.session_state.get(FORM_KEYS["customer_id"], "")).strip()
         if cid_now in id_to_label:
@@ -1642,7 +1576,7 @@ def page_calendar(templates: Dict[str, str], app_tz: Any) -> None:
 
         # widgets
         subcard_open("Booking details", icon="🧾")
-        c1, c2, c3 = st.columns([2, 1, 1])
+        c1, c2, c3, c4 = st.columns([2, 1, 1, 1.2])
         with c1:
             picked_id = st.selectbox(
                 "Πελάτης",
@@ -1657,6 +1591,14 @@ def page_calendar(templates: Dict[str, str], app_tz: Any) -> None:
             st.text_input("Υπηρεσία", key=FORM_KEYS["service"])
         with c3:
             st.selectbox("Διάρκεια (min)", [15, 30, 45, 60, 90, 120], key=FORM_KEYS["duration"])
+        with c4:
+            therapist_options = [x.get("name","") for x in _fetch_portal_therapists(tenant_slug) if x.get("name")]
+            if therapist_options:
+                current_t = st.session_state.get(FORM_KEYS["therapist_name"], "")
+                idx_t = therapist_options.index(current_t) if current_t in therapist_options else 0
+                st.selectbox("Θεραπευτής", therapist_options, index=idx_t, key=FORM_KEYS["therapist_name"])
+            else:
+                st.text_input("Θεραπευτής", key=FORM_KEYS["therapist_name"])
 
         d1, d2 = st.columns([1, 1])
         with d1:
@@ -1695,7 +1637,7 @@ def page_calendar(templates: Dict[str, str], app_tz: Any) -> None:
         start_utc = to_utc(start_local, app_tz)
         end_utc = to_utc(end_local, app_tz)
 
-        phone_e = customer_sms_phone(picked_row)
+        phone_e = to_e164_heuristic(picked_row.get("primary_sms_phone") or picked_row.get("phone", ""))
 
         # new appointment
         if not edit_mode:
@@ -1706,7 +1648,7 @@ def page_calendar(templates: Dict[str, str], app_tz: Any) -> None:
                     return
 
                 if not valid_phone_e164(phone_e):
-                    st.error(f"Invalid phone (need +E.164): '{customer_sms_phone(picked_row)}'")
+                    st.error(f"Invalid phone (need +E.164): '{picked_row.get('phone','')}' -> '{phone_e}'")
                     return
 
                 ts = iso_utc(now_utc())
@@ -1764,7 +1706,7 @@ def page_calendar(templates: Dict[str, str], app_tz: Any) -> None:
                 return
 
             if not valid_phone_e164(phone_e):
-                st.error(f"Invalid phone (need +E.164): '{customer_sms_phone(picked_row)}'")
+                st.error(f"Invalid phone (need +E.164): '{picked_row.get('phone','')}' -> '{phone_e}'")
                 return
 
             updates = {
@@ -1823,9 +1765,8 @@ def page_manage_list(templates: Dict[str, str], app_tz: Any) -> None:
     st.subheader("📋 Ραντεβού (List view)")
     st.caption("Επίλεξε ένα ενεργό ραντεβού για μετακίνηση ή ακύρωση. Μετά την ενέργεια, το ημερολόγιο ανανεώνεται αυτόματα.")
 
-    local_customers = normalize_customers(read_csv_df(CUSTOMERS_CSV, CUSTOMER_HEADER))
-    write_csv_df(CUSTOMERS_CSV, local_customers, CUSTOMER_HEADER)
-    customers = get_booking_customers()
+    customers = normalize_customers(read_csv_df(CUSTOMERS_CSV, CUSTOMER_HEADER))
+    write_csv_df(CUSTOMERS_CSV, customers, CUSTOMER_HEADER)
 
     appts = normalize_appointments(read_csv_df(APPOINTMENTS_CSV, APPT_HEADER))
     write_csv_df(APPOINTMENTS_CSV, appts, APPT_HEADER)
@@ -1852,6 +1793,7 @@ def page_manage_list(templates: Dict[str, str], app_tz: Any) -> None:
             "customer": str(r.get("customer_name","")),
             "phone": str(r.get("customer_phone","")),
             "service": str(r.get("service","")),
+            "therapist_name": str(r.get("therapist_name","")),
         })
 
     dfv = pd.DataFrame(rows)
@@ -1862,7 +1804,7 @@ def page_manage_list(templates: Dict[str, str], app_tz: Any) -> None:
     dfv = dfv.sort_values("start_local", ascending=True).reset_index(drop=True)
 
     labels = [
-        f'{row["when"]} • {row["customer"]} • {row["service"]}'
+        f'{row["when"]} • {row["customer"]} • {row["service"]}' + (f' • {row["therapist_name"]}' if row.get("therapist_name") else '')
         for _, row in dfv.iterrows()
     ]
     label_to_id = {labels[i]: dfv.iloc[i]["appointment_id"] for i in range(len(labels))}
@@ -1916,7 +1858,8 @@ def page_manage_list(templates: Dict[str, str], app_tz: Any) -> None:
         c1, c2, c3 = st.columns([1.3, 1, 1])
         c1.write(f"**Πελάτης:** {appt.get('customer_name','')}  ({appt.get('customer_phone','')})")
         c2.write(f"**Υπηρεσία:** {appt.get('service','')}")
-        c3.write(f"**Ώρα:** {s_loc.strftime('%Y-%m-%d %H:%M')} – {e_loc.strftime('%H:%M')}")
+        c3.write(f"**Θεραπευτής:** {appt.get('therapist_name','') or '—'}")
+        st.write(f"**Ώρα:** {s_loc.strftime('%Y-%m-%d %H:%M')} – {e_loc.strftime('%H:%M')}")
 
     card("Appointment details", _details_block, icon="🧾")
 
@@ -2060,26 +2003,24 @@ def page_outbox() -> None:
 
 
 def page_customers() -> None:
-    st.subheader("🪪 Πελάτες")
-    portal_base = _portal_base_url().rstrip("/")
-    internal_key = (os.getenv("INTERNAL_API_KEY") or "").strip()
-    tenant_slug = TENANT_SLUG
-
+    # Portal-synced customers (Portal Children)
+    portal_base = os.getenv("PORTAL_BASE_URL", "").rstrip("/")
+    internal_key = os.getenv("INTERNAL_API_KEY", "").strip()
     if portal_base and internal_key:
-        st.info("Portal-synced mode uses Therapy Portal Children. You can create customers here and use them immediately in the Calendar booking panel.")
-        headers = {"X-Internal-Key": internal_key}
+        st.subheader("Customers")
+        st.info("Portal-synced mode uses Therapy Portal Children. You can create customers here.")
 
+        headers = {"X-Internal-Key": internal_key}
+        tenant_slug = TENANT_SLUG
+
+        # Create form
         with st.expander("➕ Add new customer (Child)", expanded=True):
             with st.form("create_child_form", clear_on_submit=True):
                 full_name = st.text_input("Child full name *")
                 dob = st.text_input("Date of birth (YYYY-MM-DD)", help="Optional")
-                primary_sms_phone = st.text_input(
-                    "Primary SMS phone",
-                    placeholder="+3069XXXXXXXX",
-                    help="Used as the default SMS recipient for reminders and appointment updates.",
-                )
                 parent1_name = st.text_input("Parent/Guardian name")
-                parent1_phone = st.text_input("Parent/Guardian phone", placeholder="Optional if Primary SMS phone is already filled")
+                primary_sms_phone = st.text_input("Primary SMS phone", placeholder="+3069XXXXXXXX")
+                parent1_phone = st.text_input("Parent/Guardian phone")
                 notes = st.text_area("Notes", height=80, key="create_child_notes")
                 submitted = st.form_submit_button("Create customer")
             if submitted:
@@ -2087,70 +2028,72 @@ def page_customers() -> None:
                     "full_name": full_name,
                     "date_of_birth": dob,
                     "parent1_name": parent1_name,
-                    "parent1_phone": primary_sms_phone or parent1_phone,
+                    "primary_sms_phone": primary_sms_phone,
+                    "parent1_phone": parent1_phone,
                     "notes": notes,
                 }
                 res = _post_portal_json(f"/api/internal/children?tenant={tenant_slug}", payload=payload, headers=headers) or {}
                 if res.get("ok"):
-                    # optional local cache row so customer also exists in local CSV
-                    local_df = normalize_customers(read_csv_df(CUSTOMERS_CSV, CUSTOMER_HEADER))
-                    ts = iso_utc(now_utc())
-                    local_row = {
-                        "customer_id": f"portal:{res.get('id')}",
-                        "name": (full_name or "").strip(),
-                        "primary_sms_phone": to_e164_heuristic(primary_sms_phone),
-                        "phone": to_e164_heuristic(parent1_phone or primary_sms_phone),
-                        "notes": (notes or "").strip(),
-                        "consent": "1",
-                        "created_at_iso": ts,
-                        "updated_at_iso": ts,
-                    }
-                    if not (local_df["customer_id"].astype(str) == str(local_row["customer_id"])).any():
-                        local_df = pd.concat([local_df, pd.DataFrame([local_row])], ignore_index=True)
-                        write_csv_df(CUSTOMERS_CSV, local_df, CUSTOMER_HEADER)
-                    st.success("Customer created in Portal and is ready to use in Calendar.")
+                    st.success("Customer created in Portal.")
                     st.rerun()
                 else:
                     st.error(f"Create failed: {res}")
 
+        # List children
         children_payload = _fetch_portal_json(f"/api/internal/children?tenant={tenant_slug}", headers=headers) or {}
         children = children_payload.get("children") or []
         if children:
-            rows = []
-            for c in children:
-                rows.append({
-                    "Child": c.get("full_name", ""),
-                    "Primary SMS phone": to_e164_heuristic(str(c.get("parent1_phone") or c.get("parent2_phone") or "")),
-                    "Parent/Guardian": c.get("parent1_name", "") or c.get("parent2_name", ""),
-                    "Parent phone": to_e164_heuristic(str(c.get("parent1_phone") or c.get("parent2_phone") or "")),
-                    "Notes": c.get("notes", ""),
-                })
-            df = pd.DataFrame(rows)
+            df = pd.DataFrame(children)
+
+            # Portal uses parent1_* fields; keep the phone column visible even if the API changes names
+            if "parent_phone" in df.columns and "parent1_phone" not in df.columns:
+                df["parent1_phone"] = df["parent_phone"]
+
             q = st.text_input("Search customers", "", placeholder="Search by name or phone…", key="cust_search")
             if q:
                 ql = q.strip().lower()
                 if ql:
                     def _match(row) -> bool:
-                        return any(ql in str(v).lower() for v in row.values())
+                        return (
+                            ql in str(row.get("full_name", "")).lower()
+                            or ql in str(row.get("parent1_name", "")).lower()
+                            or ql in str(row.get("primary_sms_phone", "")).lower()
+                            or ql in str(row.get("parent1_phone", "")).lower()
+                        )
                     df = df[df.apply(_match, axis=1)]
+
+            cols = [
+                ("full_name", "Child"),
+                ("date_of_birth", "DOB"),
+                ("parent1_name", "Parent/Guardian"),
+                ("primary_sms_phone", "Primary SMS"),
+                ("parent1_phone", "Phone"),
+                ("notes", "Notes"),
+            ]
+            present = [c for c, _ in cols if c in df.columns]
+            if present:
+                df = df[present].copy()
+                df.rename(columns={c: label for c, label in cols if c in present}, inplace=True)
+
             st.dataframe(df, use_container_width=True, hide_index=True)
         else:
             st.caption("No customers found yet.")
-        if portal_base:
-            st.markdown(f"[Open Children in Therapy Portal]({portal_base}/children?tenant={tenant_slug})")
+        # Portal link
+        portal_app = os.getenv("PORTAL_APP_URL", portal_base).rstrip("/")
+        if portal_app:
+            st.markdown(f"[Open Children in Therapy Portal]({portal_app}/t/{tenant_slug}/children)")
         return
 
-    st.info("Standalone mode: customers are stored locally in CSV.")
+    st.subheader("🪪 Πελάτες (Editable)")
     customers = normalize_customers(read_csv_df(CUSTOMERS_CSV, CUSTOMER_HEADER))
+
     edited = st.data_editor(
         customers,
         width="stretch",
         hide_index=True,
         key="customers_editor",
         column_config={
-            "primary_sms_phone": st.column_config.TextColumn("Primary SMS phone"),
-            "phone": st.column_config.TextColumn("Parent/Guardian phone"),
-            "consent": st.column_config.SelectboxColumn("consent", options=["0", "1"], help="1=allow messages, 0=block"),
+            "consent": st.column_config.SelectboxColumn("consent", options=["0", "1"], help="1=allow messages, 0=block")
         },
     )
 
@@ -2167,8 +2110,7 @@ def page_customers() -> None:
             row = {
                 "customer_id": str(uuid.uuid4()),
                 "name": "New Customer",
-                "primary_sms_phone": "+306900000000",
-                "phone": "+306900000000",
+                "phone": "306900000000",
                 "notes": "",
                 "consent": "1",
                 "created_at_iso": ts,
@@ -2262,7 +2204,7 @@ def _fetch_portal_json(path: str, headers: Dict[str, str] | None = None) -> Dict
 
 def _post_portal_json(path: str, payload: dict, headers: dict | None = None, timeout_s: int = 10) -> dict:
     """POST JSON to the Portal (internal API) and return parsed JSON."""
-    base = _portal_base_url()
+    base = os.getenv("PORTAL_BASE_URL", "").rstrip("/")
     if not base:
         return {"ok": False, "error": "PORTAL_BASE_URL is not set"}
     url = base + path
@@ -2293,6 +2235,16 @@ def _post_portal_json(path: str, payload: dict, headers: dict | None = None, tim
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
+
+
+def _fetch_portal_therapists(tenant_slug: str) -> list[dict[str, Any]]:
+    internal_key = (os.getenv("INTERNAL_API_KEY") or "").strip()
+    if not internal_key:
+        return []
+    data = _fetch_portal_json(f"/api/internal/therapists?tenant={tenant_slug}", headers={"X-Internal-Key": internal_key}) or {}
+    if not isinstance(data, dict):
+        return []
+    return list(data.get("therapists") or [])
 
 def _apply_portal_settings_to_env(tenant_slug: str) -> Dict[str, Any]:
     """Pull clinic + Infobip settings from the portal and apply to this app.
@@ -2484,27 +2436,25 @@ def main() -> None:
         sent, failed, due_seen = process_due_outbox()
         if due_seen > 0:
             st.toast(f"Auto-send processed due={due_seen}: sent={sent}, failed={failed} (provider={effective_provider()})", icon="📨")
+# NOTE: The streamlit-calendar component can be flaky when mounted inside st.tabs
+# (known issue in some Streamlit/component versions). A horizontal radio keeps it stable.
+nav = st.radio(
+    "",
+    ["📅 Ημερολόγιο", "📋 Ραντεβού", "📨 Αποστολές", "🪪 Πελάτες", "✍️ Πρότυπα"],
+    horizontal=True,
+    label_visibility="collapsed",
+    key="main_nav_tab",
+)
 
-    # NOTE: The streamlit-calendar component can be flaky when mounted inside st.tabs
-    # (known issue in some Streamlit/component versions). A horizontal radio keeps it stable.
-    nav = st.radio(
-        "",
-        ["📅 Ημερολόγιο", "📋 Ραντεβού", "📨 Αποστολές", "🪪 Πελάτες", "✍️ Πρότυπα"],
-        horizontal=True,
-        label_visibility="collapsed",
-        key="main_nav_tab",
-    )
-
-    if nav.startswith("📅"):
-        page_calendar(templates, app_tz)
-    elif nav.startswith("📋"):
-        page_manage_list(templates, app_tz)
-    elif nav.startswith("📨"):
-        page_outbox()
-    elif nav.startswith("🪪"):
-        page_customers()
-    else:
-        page_templates(templates)
-
+if nav.startswith("📅"):
+    page_calendar(templates, app_tz)
+elif nav.startswith("📋"):
+    page_manage_list(templates, app_tz)
+elif nav.startswith("📨"):
+    page_outbox()
+elif nav.startswith("🪪"):
+    page_customers()
+else:
+    page_templates(templates)
 if __name__ == "__main__":
     main()

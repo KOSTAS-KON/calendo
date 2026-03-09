@@ -17,3 +17,5 @@ from app.models.sms_outbox import SmsOutbox
 from .clinic_settings import ClinicSettings, AppLicense
 
 from app.models.auth_rate_limit import AuthRateLimit
+
+from app.models.child_therapist_assignment import ChildTherapistAssignment

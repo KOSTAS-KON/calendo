@@ -8,14 +8,25 @@
 <form method="get" action="{{ rp }}/calendar" class="flex flex-wrap items-end gap-3 mb-4">
   <div>
     <label class="label">Filter by child</label>
-    <select name="child_id" class="input" onchange="this.form.submit()">
+    <select name="child_id" class="input">
       <option value="">All</option>
       {% for c in children %}
         <option value="{{ c.id }}" {% if selected_child_id == c.id %}selected{% endif %}>{{ c.full_name }}</option>
       {% endfor %}
     </select>
   </div>
-  <noscript><button class="btn" type="submit">Apply</button></noscript>
+  <div>
+    <label class="label">{% if is_therapist %}Therapist{% else %}Therapist view{% endif %}</label>
+    <select name="therapist_ids" class="input" multiple size="4" {% if is_therapist %}disabled{% endif %}>
+      {% for t in therapists %}
+        <option value="{{ t.id }}" {% if selected_therapist_ids and t.id in selected_therapist_ids %}selected{% endif %}>{{ t.name }}</option>
+      {% endfor %}
+    </select>
+    <div class="hint">{% if is_calendar_staff %}Reception can select multiple therapists{% elif is_therapist %}Restricted to your own calendar{% else %}Select one or more therapists to focus the calendar{% endif %}</div>
+  </div>
+  <div class="flex items-end gap-2">
+    <button class="btn" type="submit">Apply</button>
+  </div>
 </form>
 
 <div class="legend">
@@ -367,6 +378,7 @@
 <script>
 (function(){
   const childId = "{{ selected_child_id if selected_child_id is not none else '' }}";
+  const therapistIds = {{ (selected_therapist_ids or []) | tojson }};
   const el = document.getElementById("calendar");
   const modal = document.getElementById("createModal");
 

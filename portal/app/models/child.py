@@ -22,6 +22,13 @@ class Child(Base):
     parent2_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     parent2_phone: Mapped[str | None] = mapped_column(String(80), nullable=True)
 
+    therapist_assignments = relationship(
+        "ChildTherapistAssignment",
+        back_populates="child",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
     appointments = relationship(
         "Appointment",
         back_populates="child",
@@ -50,7 +57,6 @@ class Child(Base):
         passive_deletes=True,
     )
 
-    # FIX: TimelineEvent.child expects back_populates="timeline_events"
     timeline_events = relationship(
         "TimelineEvent",
         back_populates="child",

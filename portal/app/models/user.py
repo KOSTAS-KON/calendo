@@ -20,7 +20,8 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), index=True)  # store lowercase
     password_hash: Mapped[str] = mapped_column(String(2000))
 
-    role: Mapped[str] = mapped_column(String(20), default="staff")  # owner|admin|staff|read_only
+    role: Mapped[str] = mapped_column(String(32), default="calendar_staff")  # clinic_superuser|calendar_staff|therapist|owner|admin|staff|read_only
+    job_title: Mapped[str | None] = mapped_column(String(120), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
     must_reset_password: Mapped[bool] = mapped_column(Boolean, default=False)

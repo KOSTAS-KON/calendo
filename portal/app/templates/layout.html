@@ -34,26 +34,42 @@
           <span>🧩</span>
           <span>Suite</span>
         </a>
+        {% if can_access_children %}
         <a class="sidebar-link {% if active=='children' %}active{% endif %}" href="{{ rp }}/children?tenant={{ tenant_slug }}">
           <span>🧒</span>
-          <span>Children</span>
+          <span>{% if is_therapist %}My Caseload{% else %}Children{% endif %}</span>
         </a>
+        {% endif %}
+        {% if can_access_therapists %}
         <a class="sidebar-link {% if active=='therapists' %}active{% endif %}" href="{{ rp }}/therapists?tenant={{ tenant_slug }}">
           <span>👩‍⚕️</span>
           <span>Therapists</span>
         </a>
+        {% endif %}
+        {% if can_access_calendar %}
         <a class="sidebar-link {% if active=='appointments' %}active{% endif %}" href="{{ rp }}/appointments?tenant={{ tenant_slug }}">
           <span>📅</span>
-          <span>Appointments</span>
+          <span>Calendar</span>
         </a>
+        {% endif %}
+        {% if can_access_sms_outbox %}
         <a class="sidebar-link {% if active=='outbox' %}active{% endif %}" href="{{ rp }}/sms-outbox?tenant={{ tenant_slug }}">
           <span>📨</span>
           <span>SMS Outbox</span>
         </a>
+        {% endif %}
+        {% if can_manage_team %}
+        <a class="sidebar-link {% if active=='team' %}active{% endif %}" href="{{ rp }}/team?tenant={{ tenant_slug }}">
+          <span>🔐</span>
+          <span>Team & Access</span>
+        </a>
+        {% endif %}
+        {% if can_access_settings %}
         <a class="sidebar-link {% if active=='settings' %}active{% endif %}" href="{{ rp }}/settings?tenant={{ tenant_slug }}">
           <span>⚙️</span>
           <span>Settings</span>
         </a>
+        {% endif %}
 
         {% if sms_app_url %}
           <div class="sidebar-section">Apps</div>
