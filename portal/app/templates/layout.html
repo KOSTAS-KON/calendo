@@ -6,17 +6,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{{ page_title or "Calendo" }}</title>
 
-  {# Respect reverse-proxy mounting (Render, etc.) #}
   {% set rp = request.scope.root_path or "" %}
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 
-  {# Tailwind CDN is convenient but heavy; keep for now because templates use some tailwind classes. #}
   <script src="https://cdn.tailwindcss.com"></script>
 
-  <link rel="stylesheet" href="{{ rp }}/static/css/app.css?v={{ static_version or '1' }}" />
+  <link rel="stylesheet" href="{{ rp }}/static/css/app.css?v={{ static_version or '20260310-ui' }}" />
   {% block head_extra %}{% endblock %}
 </head>
 
@@ -25,48 +23,52 @@
 
     <aside class="sidebar" id="sidebar" aria-label="Primary navigation">
       <div class="sidebar-inner">
-        <div class="sidebar-title">Workspace</div>
+        <div class="sidebar-mobile-head">
+          <div class="sidebar-title">Workspace</div>
+          <button class="iconbtn sidebar-close" type="button" data-action="close-sidebar" aria-label="Close menu">✕</button>
+        </div>
+
         <a class="sidebar-link {% if active=='dashboard' %}active{% endif %}" href="{{ rp }}/?tenant={{ tenant_slug }}">
-          <span>🏠</span>
+          <span class="icon">🏠</span>
           <span>Overview</span>
         </a>
         <a class="sidebar-link {% if active=='suite' %}active{% endif %}" href="{{ rp }}/t/{{ tenant_slug }}/suite">
-          <span>🧩</span>
+          <span class="icon">🧩</span>
           <span>Suite</span>
         </a>
+        {% if can_access_calendar %}
+        <a class="sidebar-link {% if active=='appointments' %}active{% endif %}" href="{{ rp }}/calendar?tenant={{ tenant_slug }}">
+          <span class="icon">📅</span>
+          <span>Calendar</span>
+        </a>
+        {% endif %}
         {% if can_access_children %}
         <a class="sidebar-link {% if active=='children' %}active{% endif %}" href="{{ rp }}/children?tenant={{ tenant_slug }}">
-          <span>🧒</span>
+          <span class="icon">🧒</span>
           <span>{% if is_therapist %}My Caseload{% else %}Children{% endif %}</span>
         </a>
         {% endif %}
         {% if can_access_therapists %}
         <a class="sidebar-link {% if active=='therapists' %}active{% endif %}" href="{{ rp }}/therapists?tenant={{ tenant_slug }}">
-          <span>👩‍⚕️</span>
+          <span class="icon">👩‍⚕️</span>
           <span>Therapists</span>
-        </a>
-        {% endif %}
-        {% if can_access_calendar %}
-        <a class="sidebar-link {% if active=='appointments' %}active{% endif %}" href="{{ rp }}/appointments?tenant={{ tenant_slug }}">
-          <span>📅</span>
-          <span>Calendar</span>
-        </a>
-        {% endif %}
-        {% if can_access_sms_outbox %}
-        <a class="sidebar-link {% if active=='outbox' %}active{% endif %}" href="{{ rp }}/sms-outbox?tenant={{ tenant_slug }}">
-          <span>📨</span>
-          <span>SMS Outbox</span>
         </a>
         {% endif %}
         {% if can_manage_team %}
         <a class="sidebar-link {% if active=='team' %}active{% endif %}" href="{{ rp }}/team?tenant={{ tenant_slug }}">
-          <span>🔐</span>
+          <span class="icon">🔐</span>
           <span>Team & Access</span>
+        </a>
+        {% endif %}
+        {% if can_access_sms_outbox %}
+        <a class="sidebar-link {% if active=='outbox' %}active{% endif %}" href="{{ rp }}/sms-outbox?tenant={{ tenant_slug }}">
+          <span class="icon">📨</span>
+          <span>SMS Outbox</span>
         </a>
         {% endif %}
         {% if can_access_settings %}
         <a class="sidebar-link {% if active=='settings' %}active{% endif %}" href="{{ rp }}/settings?tenant={{ tenant_slug }}">
-          <span>⚙️</span>
+          <span class="icon">⚙️</span>
           <span>Settings</span>
         </a>
         {% endif %}
@@ -74,20 +76,39 @@
         {% if sms_app_url %}
           <div class="sidebar-section">Apps</div>
           <a class="sidebar-link" href="{{ sms_app_url }}" target="_blank" rel="noopener">
-            <span>🗓️</span>
+            <span class="icon">🗓️</span>
             <span>SMS Calendar</span>
           </a>
         {% endif %}
       </div>
     </aside>
 
-    <div class="sidebar-backdrop" id="sidebarBackdrop" aria-hidden="true"></div>
+    <div class="sidebar-backdrop" id="sidebarBackdrop" aria-hidden="true" data-action="close-sidebar"></div>
 
     <main class="content">
       <div class="topbar">
-        <div class="brand">Calendo</div>
-        <div class="top-actions">
-          <button class="menu-btn" id="sidebarToggle" aria-label="Toggle menu" type="button">☰</button>
+        <div class="topbar-inner">
+          <div class="topbar-left">
+            <button class="menu-btn" type="button" data-action="toggle-sidebar" aria-label="Toggle menu">☰</button>
+            <a class="brand" href="{{ rp }}/t/{{ tenant_slug }}/suite">
+              <div class="brand-logo"></div>
+              <div class="brand-text">
+                <div class="brand-title">Calendo</div>
+                <div class="brand-sub">Simple daily workflow for therapists</div>
+              </div>
+            </a>
+          </div>
+
+          <div class="top-actions">
+            <div class="tenant-chip">
+              <span class="tenant-dot"></span>
+              <span>{{ tenant_slug }}</span>
+              <span class="badge badge-neutral">{{ current_role|replace('_', ' ')|title }}</span>
+            </div>
+            {% if sms_app_url %}
+              <a class="btn btn-sm btn-outline" href="{{ sms_app_url }}" target="_blank" rel="noopener">SMS Calendar</a>
+            {% endif %}
+          </div>
         </div>
       </div>
 
@@ -100,13 +121,13 @@
       <div class="icon">🏠</div>
       <div class="lbl">Home</div>
     </a>
+    <a class="item" href="{{ rp }}/calendar?tenant={{ tenant_slug }}">
+      <div class="icon">📅</div>
+      <div class="lbl">Calendar</div>
+    </a>
     <a class="item" href="{{ rp }}/children?tenant={{ tenant_slug }}">
       <div class="icon">🧒</div>
       <div class="lbl">Children</div>
-    </a>
-    <a class="item" href="{{ rp }}/appointments?tenant={{ tenant_slug }}">
-      <div class="icon">📅</div>
-      <div class="lbl">Appts</div>
     </a>
     <a class="item" href="{{ rp }}/settings?tenant={{ tenant_slug }}">
       <div class="icon">⚙️</div>
@@ -114,7 +135,7 @@
     </a>
   </nav>
 
-  <script src="{{ rp }}/static/js/app.js?v={{ static_version or '1' }}"></script>
+  <script src="{{ rp }}/static/js/app.js?v={{ static_version or '20260310-ui' }}"></script>
   {% block body_extra %}{% endblock %}
 </body>
 

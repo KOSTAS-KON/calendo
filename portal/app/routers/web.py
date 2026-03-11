@@ -2112,12 +2112,41 @@ def appointment_detail(request: Request, appointment_id: int):
             db.commit()
             db.refresh(note)
 
+        previous_appt = (
+            db.query(Appointment)
+            .filter(
+                Appointment.tenant_id == tid,
+                Appointment.child_id == appt.child_id,
+                Appointment.starts_at < appt.starts_at,
+            )
+            .order_by(Appointment.starts_at.desc())
+            .first()
+        )
+        previous_note = None
+        if previous_appt:
+            previous_note = (
+                db.query(SessionNote)
+                .filter(
+                    SessionNote.tenant_id == tid,
+                    SessionNote.appointment_id == previous_appt.id,
+                )
+                .first()
+            )
+
         uploads = db.query(Attachment).filter(Attachment.child_id == appt.child_id).order_by(Attachment.created_at.desc()).all()
 
         ctx = _base_context(db, request, ts, tid)
         return templates.TemplateResponse(
             "pages/session_detail.html",
-            {"request": request, **ctx, "appt": appt, "note": note, "uploads": uploads},
+            {
+                "request": request,
+                **ctx,
+                "appt": appt,
+                "note": note,
+                "uploads": uploads,
+                "previous_appt": previous_appt,
+                "previous_note": previous_note,
+            },
         )
     finally:
         db.close()

@@ -1,160 +1,159 @@
-// Minimal JS (enhancements for the Therapy Archive Portal)
-
-function initTimelineGroups(){
+function initTimelineGroups() {
   const root = document.querySelector('[data-component="timeline-groups"]');
   if (!root) return;
 
-  // Fill group counts
   root.querySelectorAll('.t-group').forEach((group) => {
     const countEl = group.querySelector('[data-role="t-group-count"]');
     const count = group.querySelectorAll('.t-item').length;
     if (countEl) countEl.textContent = String(count);
   });
 
-  // Toolbar actions
   document.querySelectorAll('[data-action="timeline-expand"]').forEach((btn) => {
     btn.addEventListener('click', () => {
-      root.querySelectorAll('.t-group').forEach((d) => { d.open = true; });
+      root.querySelectorAll('.t-group').forEach((group) => {
+        group.open = true;
+      });
     });
   });
+
   document.querySelectorAll('[data-action="timeline-collapse"]').forEach((btn) => {
     btn.addEventListener('click', () => {
-      root.querySelectorAll('.t-group').forEach((d) => { d.open = false; });
+      root.querySelectorAll('.t-group').forEach((group) => {
+        group.open = false;
+      });
     });
   });
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-  initTimelineGroups();
-});
+function initSidebarToggle() {
+  const sidebar = document.getElementById('sidebar');
+  const backdrop = document.getElementById('sidebarBackdrop');
+  const openers = document.querySelectorAll('[data-action="toggle-sidebar"]');
+  const closers = document.querySelectorAll('[data-action="close-sidebar"]');
 
+  if (!sidebar) return;
 
-// Global copy buttons (delegated)
-document.addEventListener("click", async (e) => {
-  const btn = e.target.closest(".copy-btn");
-  if (!btn) return;
-  const text = btn.dataset.copy;
-  if (!text) return;
-
-  try {
-    await navigator.clipboard.writeText(text);
-    const old = btn.innerText;
-    btn.innerText = "✓ Copied";
-    btn.classList.add("success");
-    setTimeout(() => {
-      btn.innerText = old;
-      btn.classList.remove("success");
-    }, 1400);
-  } catch (err) {
-    alert("Copy failed. Please copy manually.");
+  function openSidebar() {
+    document.body.classList.add('sidebar-open');
+    sidebar.classList.add('open');
+    if (backdrop) backdrop.classList.add('open');
   }
-});
 
+  function closeSidebar() {
+    document.body.classList.remove('sidebar-open');
+    sidebar.classList.remove('open');
+    if (backdrop) backdrop.classList.remove('open');
+  }
 
-function initSidebarToggle(){
-  const btns = document.querySelectorAll('[data-action="toggle-sidebar"]');
-  const closeEls = document.querySelectorAll('[data-action="close-sidebar"]');
+  function toggleSidebar() {
+    if (sidebar.classList.contains('open')) {
+      closeSidebar();
+    } else {
+      openSidebar();
+    }
+  }
 
-  function close(){ document.body.classList.remove('sidebar-open'); }
-  function toggle(){ document.body.classList.toggle('sidebar-open'); }
+  openers.forEach((btn) => btn.addEventListener('click', toggleSidebar));
+  closers.forEach((btn) => btn.addEventListener('click', closeSidebar));
 
-  btns.forEach(b => b.addEventListener('click', toggle));
-  closeEls.forEach(el => el.addEventListener('click', close));
-
-  // close on ESC
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') close();
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeSidebar();
   });
 }
 
-function initCopyButtons(){
-  document.querySelectorAll('.copy-btn[data-copy]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const text = btn.getAttribute('data-copy') || '';
-      try{
-        await navigator.clipboard.writeText(text);
-        const old = btn.textContent;
-        btn.textContent = '✅ Copied';
-        setTimeout(() => { btn.textContent = old; }, 1200);
-      }catch(e){
-        // fallback
-        const ta = document.createElement('textarea');
-        ta.value = text;
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        ta.remove();
-      }
-    });
-  });
-}
+function initCopyButtons() {
+  document.addEventListener('click', async (event) => {
+    const btn = event.target.closest('.copy-btn');
+    if (!btn) return;
 
-function initActiveNav(){
-  const path = window.location.pathname;
-  document.querySelectorAll('.sideitem, .bn-item').forEach((a) => {
-    const href = a.getAttribute('href') || '';
-    if (!href || href.startsWith('http')) return;
-    // Basic match (ignores query string)
-    const hrefPath = href.split('?')[0];
-    if (hrefPath !== '/' && path.startsWith(hrefPath)){
-      a.classList.add('is-active');
+    const text = btn.getAttribute('data-copy') || '';
+    if (!text) return;
+
+    try {
+      await navigator.clipboard.writeText(text);
+      const original = btn.textContent;
+      btn.textContent = '✓ Copied';
+      btn.classList.add('success');
+      setTimeout(() => {
+        btn.textContent = original;
+        btn.classList.remove('success');
+      }, 1400);
+    } catch (error) {
+      const fallback = document.createElement('textarea');
+      fallback.value = text;
+      document.body.appendChild(fallback);
+      fallback.select();
+      document.execCommand('copy');
+      fallback.remove();
     }
   });
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-  initSidebarToggle();
-  initCopyButtons();
-  initActiveNav();
-});
-
-
-function initToasts(){
-  document.querySelectorAll('[data-toast]').forEach((el) => {
-    // auto-hide
-    setTimeout(() => { el.style.opacity = '0'; el.style.transform = 'translateY(-6px)'; }, 2600);
-    setTimeout(() => { el.remove(); }, 3200);
+function initActiveNav() {
+  const currentPath = window.location.pathname;
+  document.querySelectorAll('.sidebar-link, .bottom-nav .item').forEach((link) => {
+    const href = link.getAttribute('href') || '';
+    if (!href || href.startsWith('http')) return;
+    const cleanHref = href.split('?')[0];
+    if (cleanHref !== '/' && currentPath.startsWith(cleanHref)) {
+      link.classList.add('is-active');
+    }
   });
 }
 
-// Convert tables to cards on mobile (reads <th> labels)
-function initResponsiveTables(){
+function initToasts() {
+  document.querySelectorAll('[data-toast]').forEach((toast) => {
+    setTimeout(() => {
+      toast.style.opacity = '0';
+      toast.style.transform = 'translateY(-6px)';
+    }, 2600);
+    setTimeout(() => toast.remove(), 3200);
+  });
+}
+
+function initResponsiveTables() {
   const tables = document.querySelectorAll('table.js-responsive-table[data-cards="true"]');
   tables.forEach((table) => {
-    // avoid duplicating
     if (table.dataset.cardsBuilt === '1') return;
-    const heads = Array.from(table.querySelectorAll('thead th')).map(th => (th.textContent || '').trim());
+
+    const heads = Array.from(table.querySelectorAll('thead th')).map((th) => (th.textContent || '').trim());
     const rows = Array.from(table.querySelectorAll('tbody tr'));
     const wrap = document.createElement('div');
     wrap.className = 'table-cards-view';
-    rows.forEach((tr) => {
+
+    rows.forEach((rowEl) => {
       const card = document.createElement('div');
       card.className = 'tcard';
-      const tds = Array.from(tr.children);
-      tds.forEach((td, idx) => {
-        const label = heads[idx] || ('Field ' + (idx+1));
+      const cells = Array.from(rowEl.children);
+      cells.forEach((cell, idx) => {
         const row = document.createElement('div');
         row.className = 'row';
-        const k = document.createElement('div');
-        k.className = 'k';
-        k.textContent = label;
-        const v = document.createElement('div');
-        v.className = 'v';
-        // preserve inner HTML for buttons/forms
-        v.innerHTML = td.innerHTML;
-        row.appendChild(k);
-        row.appendChild(v);
+
+        const key = document.createElement('div');
+        key.className = 'k';
+        key.textContent = heads[idx] || `Field ${idx + 1}`;
+
+        const value = document.createElement('div');
+        value.className = 'v';
+        value.innerHTML = cell.innerHTML;
+
+        row.appendChild(key);
+        row.appendChild(value);
         card.appendChild(row);
       });
       wrap.appendChild(card);
     });
+
     table.insertAdjacentElement('afterend', wrap);
     table.dataset.cardsBuilt = '1';
   });
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  initTimelineGroups();
   initSidebarToggle();
+  initCopyButtons();
+  initActiveNav();
   initToasts();
   initResponsiveTables();
 });
