@@ -1,3 +1,4 @@
+# ===== BEGIN portal/app/routers/admin.py =====
 from __future__ import annotations
 
 import os
@@ -1011,6 +1012,7 @@ def admin_tenant_accounts_create(
             .first()
         )
         if not th:
+            now = datetime.utcnow()
             db.add(
                 Therapist(
                     tenant_id=tenant_id,
@@ -1020,6 +1022,8 @@ def admin_tenant_accounts_create(
                     role="therapist",
                     availability_json="{}",
                     annual_leave_json="[]",
+                    created_at=now,
+                    updated_at=now,
                 )
             )
 
@@ -1110,3 +1114,6 @@ def admin_links(request: Request, db: Session = Depends(get_db)):
             "tenants": rows,
         },
     )
+
+# ===== END portal/app/routers/admin.py =====
+

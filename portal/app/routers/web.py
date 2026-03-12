@@ -1,3 +1,4 @@
+# ===== BEGIN portal/app/routers/web.py =====
 from __future__ import annotations
 
 """Main UI + internal JSON endpoints.
@@ -1015,7 +1016,16 @@ async def therapist_create(request: Request):
         ts, tid = _resolve_tenant_or_404(db, request)
         if (guard := _require_superuser_role(request)):
             return guard
-        t = Therapist(tenant_id=tid, name=name, role=role, phone=phone, email=email)
+        now = datetime.utcnow()
+        t = Therapist(
+            tenant_id=tid,
+            name=name,
+            role=role,
+            phone=phone,
+            email=email,
+            created_at=now,
+            updated_at=now,
+        )
         db.add(t)
         db.commit()
         db.refresh(t)
@@ -1117,6 +1127,7 @@ async def therapist_update(request: Request, therapist_id: int):
         t.phone = phone
         t.email = email
         t.availability_json = json.dumps(avail, ensure_ascii=False)
+        t.updated_at = datetime.utcnow()
         db.add(t)
         db.commit()
         _toast(request, "Therapist saved")
@@ -2944,12 +2955,15 @@ async def api_internal_therapists_create(request: Request):
         if not trow:
             raise HTTPException(status_code=404, detail="Tenant not found")
         _ensure_people_archive_columns(db)
+        now = datetime.utcnow()
         th = Therapist(
             tenant_id=trow.id,
             name=name,
             phone=str(payload.get("phone") or "").strip() or None,
             email=str(payload.get("email") or "").strip() or None,
             role=str(payload.get("role") or "").strip() or "therapist",
+            created_at=now,
+            updated_at=now,
             is_archived=False,
         )
         db.add(th)
@@ -3048,3 +3062,5 @@ async def api_internal_therapist_restore(request: Request, therapist_id: int):
         db.close()
 
 
+
+# ===== END portal/app/routers/web.py ===

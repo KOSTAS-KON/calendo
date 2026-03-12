@@ -1,3 +1,4 @@
+# ===== BEGIN portal/app/models/therapist.py =====
 from __future__ import annotations
 
 from datetime import datetime
@@ -26,6 +27,13 @@ class Therapist(Base):
         server_default=func.now(),
         nullable=False,
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        server_default=func.now(),
+        nullable=False,
+    )
 
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -39,3 +47,5 @@ class Therapist(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+
+# ===== END portal/app/models/therapist.py =====
