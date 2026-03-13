@@ -216,7 +216,7 @@
     <div class="modal-body">
       <div id="pane-appt" class="modal-pane active">
         <form method="post" action="{{ rp }}/calendar/add_appointment" class="stack">
-          <div class="grid grid-3 gap-3">
+          <div class="grid grid-2 gap-3">
             <div>
               <label class="label">Child</label>
               <select id="m_appt_child" name="child_id" class="input" required>
@@ -226,17 +226,8 @@
               </select>
             </div>
             <div>
-              <label class="label">Date</label>
-              <input id="m_appt_date" class="input" type="date" name="starts_at_date" required>
-            </div>
-            <div>
-              <label class="label">Time</label>
-              <select id="m_appt_time" class="input" name="starts_at_time" required>
-                {% for slot in quarter_hour_options %}
-                  <option value="{{ slot }}">{{ slot }}</option>
-                {% endfor %}
-              </select>
-              <div class="hint">15-minute slots only.</div>
+              <label class="label">Start</label>
+              <input id="m_appt_start" class="input" type="datetime-local" name="starts_at" step="900" required>
             </div>
           </div>
           <div class="grid grid-3 gap-3">
@@ -265,38 +256,23 @@
             <div>
               <label class="label">Appointment type</label>
               <select class="input" name="appointment_type">
-                {% for value, label in appointment_type_choices %}
-                  <option value="{{ value }}">{{ label }}</option>
-                {% endfor %}
+                <option value="GOVERNMENT_FUNDED">Government funded</option>
+                <option value="REGULAR_ADDITIONAL">Regular additional</option>
+                <option value="REPLACEMENT">Replacement session</option>
+                <option value="BESPOKE_EXTRA">Bespoke extra support</option>
+                <option value="UNSPECIFIED">Unspecified</option>
               </select>
             </div>
-            <div class="appointment-type-help">
-              <div class="hint"><strong>Approved</strong> = government-funded.</div>
-              <div class="hint"><strong>Regular additional</strong> = extra parent-funded weekly session.</div>
-              <div class="hint"><strong>Replacement</strong> = make-up for a cancelled slot.</div>
-              <div class="hint"><strong>Bespoke extra</strong> = one-off extra support.</div>
-            </div>
-          </div>
-          <div class="recur-panel">
-            <div class="section-heading section-heading--sm">Weekly repeat</div>
-            <p class="section-copy section-copy--compact">Create this slot once, repeat weekly for the next X lessons, or keep adding it until a target date.</p>
-            <div class="grid grid-3 gap-3">
-              <div>
-                <label class="label">Repeat mode</label>
-                <select class="input" name="recurrence_mode" id="m_appt_repeat_mode">
-                  <option value="single" selected>Single appointment only</option>
-                  <option value="count">Repeat weekly for next X lessons</option>
-                  <option value="until">Repeat weekly until date</option>
-                </select>
-              </div>
-              <div>
-                <label class="label">Next X lessons</label>
-                <input class="input" type="number" name="recurrence_count" id="m_appt_repeat_count" min="1" max="52" value="1">
-              </div>
-              <div>
-                <label class="label">Repeat until</label>
-                <input class="input" type="date" name="recurrence_until" id="m_appt_repeat_until">
-              </div>
+            <div>
+              <label class="label">Therapy type</label>
+              <select class="input" name="therapy_type">
+                <option value="SPEECH_THERAPY">Speech therapy</option>
+                <option value="PHYSIOTHERAPY">Physiotherapy</option>
+                <option value="PSYCHOTHERAPY">Psychotherapy</option>
+                <option value="OCCUPATIONAL_THERAPY">Occupational therapy</option>
+                <option value="OTHER">Other</option>
+                <option value="UNSPECIFIED">Unspecified</option>
+              </select>
             </div>
           </div>
           <input type="hidden" name="also_add_timeline" value="YES" />
@@ -523,13 +499,11 @@
   }
   function openModal(startDate, therapistName){
     const dt = roundToQuarter(startDate instanceof Date ? startDate : new Date(startDate));
-    const apptDate = document.getElementById('m_appt_date');
-    const apptTime = document.getElementById('m_appt_time');
+    const apptStart = document.getElementById('m_appt_start');
     const billDue = document.getElementById('m_bill_due');
     const jWhen = document.getElementById('m_j_when');
     const apptTherapist = document.getElementById('m_appt_therapist');
-    if(apptDate) apptDate.value = toLocalDateInput(dt);
-    if(apptTime) apptTime.value = pad(dt.getHours()) + ':' + pad(dt.getMinutes());
+    if(apptStart) apptStart.value = toLocalDateTimeInput(dt);
     if(jWhen) jWhen.value = toLocalDateTimeInput(dt);
     if(billDue) billDue.value = toLocalDateInput(dt);
     if(apptTherapist && therapistName) apptTherapist.value = therapistName;
@@ -580,17 +554,11 @@
       const status = String(props.attendanceStatus || 'UNCONFIRMED').toUpperCase();
       const title = props.childName || event.title || 'Appointment';
       const procedure = props.procedure || '';
-      const appointmentType = props.appointmentType || '';
-      const recurring = !!props.isRecurring;
       return {
         html: `
           <div class="fc-appointment-card ${statusClass(status)}" style="--therapist-color:${color}">
             <div class="fc-appointment-card__title">${title}</div>
             <div class="fc-appointment-card__meta">${procedure ? procedure + ' · ' : ''}${therapistName || 'Therapist'}</div>
-            <div class="fc-appointment-card__tags">
-              ${appointmentType ? `<span class="fc-appointment-tag">${appointmentType}</span>` : ''}
-              ${recurring ? '<span class="fc-appointment-tag fc-appointment-tag--ghost">Weekly</span>' : ''}
-            </div>
           </div>
         `
       };

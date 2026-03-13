@@ -56,6 +56,7 @@
       <a class="tab {{ 'tab-active' if tab=='overview' else '' }}" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=overview">Overview</a>
       <a class="tab {{ 'tab-active' if tab=='timeline' else '' }}" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=timeline">Timeline</a>
       <a class="tab {{ 'tab-active' if tab=='appointments' else '' }}" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=appointments">Appointments</a>
+      <a class="tab {{ 'tab-active' if tab=='hours' else '' }}" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=hours">Hours &amp; claims</a>
       <a class="tab {{ 'tab-active' if tab=='attachments' else '' }}" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=attachments">Attachments</a>
     </div>
 
@@ -99,6 +100,10 @@
                   <th>Therapist</th>
                   <th>Status</th>
                   <th>Procedure</th>
+                  <th>Duration</th>
+                  <th>Appointment type</th>
+                  <th>Therapy type</th>
+                  <th>Counted</th>
                 </tr>
               </thead>
               <tbody>
@@ -109,6 +114,10 @@
                     <td>{{ a.therapist_name or '' }}</td>
                     <td>{{ a.attendance_status or '' }}</td>
                     <td>{{ a.procedure or '' }}</td>
+                    <td>{{ a.duration_minutes or 60 }} min</td>
+                    <td>{{ appointment_type_label(a.appointment_type) }}</td>
+                    <td>{{ therapy_type_label(a.therapy_type) }}</td>
+                    <td>{{ a.hours_counted_label or ('Yes' if a.hours_counted_at else 'No') }}</td>
                   </tr>
                 {% endfor %}
               </tbody>
@@ -116,6 +125,169 @@
           </div>
         {% else %}
           <div class="text-slate-600">No appointments for this customer yet.</div>
+        {% endif %}
+      </div>
+
+    {% elif tab == 'hours' %}
+      <div class="mt-4 stack">
+        <div class="card">
+          <div class="card-head">Hours &amp; claims summary</div>
+          <div class="card-body">
+            <div class="text-slate-600 mb-3">Choose a date window to calculate this child's accumulated hours. Counted appointments are excluded by default so each finalized batch is removed from future calculations.</div>
+            <form method="get" action="{{ rp }}/children/{{ child.id }}" class="stack">
+              <input type="hidden" name="tenant" value="{{ tenant_slug }}">
+              <input type="hidden" name="tab" value="hours">
+              <div class="grid gap-4 md:grid-cols-4">
+                <div>
+                  <label class="label">From date</label>
+                  <input class="input" type="date" name="hours_start" value="{{ hours_start.isoformat() if hours_start else '' }}">
+                </div>
+                <div>
+                  <label class="label">To date</label>
+                  <input class="input" type="date" name="hours_end" value="{{ hours_end.isoformat() if hours_end else '' }}">
+                </div>
+                <div>
+                  <label class="label">Therapy type</label>
+                  <select class="input" name="therapy_type">
+                    {% for value, label in therapy_type_choices %}
+                      <option value="{{ value }}" {% if hours_therapy_filter == value %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div>
+                  <label class="label">Options</label>
+                  <label class="input flex items-center gap-2" style="padding-top:11px;padding-bottom:11px;">
+                    <input type="checkbox" name="include_counted" value="1" {% if hours_include_counted %}checked{% endif %}>
+                    <span>Include already-counted sessions</span>
+                  </label>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <button class="btn btn-primary" type="submit">Calculate hours</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        {% if hours_data %}
+          {% set hs = hours_data.summary %}
+          <div class="grid gap-4 md:grid-cols-4">
+            <div class="card"><div class="card-head">Scheduled hours</div><div class="card-body"><div class="h1">{{ '%.2f'|format(hs.scheduled_hours) }}</div><div class="sub">{{ hs.appointment_count }} appointments in range</div></div></div>
+            <div class="card"><div class="card-head">Delivered hours</div><div class="card-body"><div class="h1">{{ '%.2f'|format(hs.delivered_hours) }}</div><div class="sub">Excludes missed and cancelled</div></div></div>
+            <div class="card"><div class="card-head">Missed hours</div><div class="card-body"><div class="h1">{{ '%.2f'|format(hs.missed_hours) }}</div><div class="sub">Kept separate for reporting</div></div></div>
+            <div class="card"><div class="card-head">Already counted</div><div class="card-body"><div class="h1">{{ '%.2f'|format(hs.excluded_counted_hours) }}</div><div class="sub">{{ hs.excluded_counted_count }} appointment(s) excluded</div></div></div>
+          </div>
+
+          <div class="grid gap-4 md:grid-cols-5">
+            <div class="card"><div class="card-head">Government funded</div><div class="card-body"><div class="h1">{{ '%.2f'|format(hs.by_type.GOVERNMENT_FUNDED) }}</div></div></div>
+            <div class="card"><div class="card-head">Regular additional</div><div class="card-body"><div class="h1">{{ '%.2f'|format(hs.by_type.REGULAR_ADDITIONAL) }}</div></div></div>
+            <div class="card"><div class="card-head">Replacement</div><div class="card-body"><div class="h1">{{ '%.2f'|format(hs.by_type.REPLACEMENT) }}</div></div></div>
+            <div class="card"><div class="card-head">Bespoke extra support</div><div class="card-body"><div class="h1">{{ '%.2f'|format(hs.by_type.BESPOKE_EXTRA) }}</div></div></div>
+            <div class="card"><div class="card-head">Unspecified / legacy</div><div class="card-body"><div class="h1">{{ '%.2f'|format(hs.by_type.UNSPECIFIED) }}</div></div></div>
+          </div>
+
+          {% if is_clinic_superuser and not hours_include_counted and hs.appointment_count %}
+            <div class="card">
+              <div class="card-head">Finalize this calculation</div>
+              <div class="card-body">
+                <div class="text-slate-600 mb-3">Mark the currently visible appointment window as counted so these hours are excluded from future calculations by default.</div>
+                <form method="post" action="{{ rp }}/children/{{ child.id }}/hours/finalize" class="stack">
+                  <input type="hidden" name="hours_start" value="{{ hours_start.isoformat() if hours_start else '' }}">
+                  <input type="hidden" name="hours_end" value="{{ hours_end.isoformat() if hours_end else '' }}">
+                  <input type="hidden" name="therapy_type" value="{{ hours_therapy_filter }}">
+                  <div>
+                    <label class="label">Summary label</label>
+                    <input class="input" name="summary_label" placeholder="e.g. March 2026 government claim">
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <button class="btn btn-primary" type="submit">Finalize and exclude from future calculations</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          {% endif %}
+
+          <div class="card">
+            <div class="card-head">Breakdown by therapy discipline</div>
+            <div class="card-body">
+              {% if hours_data.therapy_rows and hours_data.therapy_rows|length %}
+                <div class="table-wrap">
+                  <table class="table">
+                    <thead>
+                      <tr>
+                        <th>Therapy</th>
+                        <th>Scheduled</th>
+                        <th>Delivered</th>
+                        <th>Missed</th>
+                        <th>Government funded</th>
+                        <th>Regular additional</th>
+                        <th>Replacement</th>
+                        <th>Bespoke</th>
+                        <th>Unspecified</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for row in hours_data.therapy_rows %}
+                        <tr>
+                          <td>{{ row.therapy_label }}</td>
+                          <td>{{ '%.2f'|format(row.scheduled_hours) }}</td>
+                          <td>{{ '%.2f'|format(row.delivered_hours) }}</td>
+                          <td>{{ '%.2f'|format(row.missed_hours) }}</td>
+                          <td>{{ '%.2f'|format(row.by_type.GOVERNMENT_FUNDED) }}</td>
+                          <td>{{ '%.2f'|format(row.by_type.REGULAR_ADDITIONAL) }}</td>
+                          <td>{{ '%.2f'|format(row.by_type.REPLACEMENT) }}</td>
+                          <td>{{ '%.2f'|format(row.by_type.BESPOKE_EXTRA) }}</td>
+                          <td>{{ '%.2f'|format(row.by_type.UNSPECIFIED) }}</td>
+                        </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              {% else %}
+                <div class="text-slate-600">No appointments matched the selected range.</div>
+              {% endif %}
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">Appointment ledger for this calculation window</div>
+            <div class="card-body">
+              {% if hours_data.ledger_rows and hours_data.ledger_rows|length %}
+                <div class="table-wrap">
+                  <table class="table">
+                    <thead>
+                      <tr>
+                        <th>Date / time</th>
+                        <th>Therapist</th>
+                        <th>Procedure</th>
+                        <th>Duration</th>
+                        <th>Status</th>
+                        <th>Appointment type</th>
+                        <th>Therapy type</th>
+                        <th>Counted batch</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for row in hours_data.ledger_rows %}
+                        <tr>
+                          <td><a class="link" href="{{ rp }}/appointments/{{ row.id }}">{{ row.starts_at }}</a></td>
+                          <td>{{ row.therapist_name or '—' }}</td>
+                          <td>{{ row.procedure }}</td>
+                          <td>{{ row.duration_minutes }} min ({{ '%.2f'|format(row.duration_hours) }}h)</td>
+                          <td>{{ row.status|replace('_', ' ')|title }}</td>
+                          <td>{{ row.appointment_type_label }}</td>
+                          <td>{{ row.therapy_type_label }}</td>
+                          <td>{{ row.hours_counted_label or ('Counted' if row.hours_counted_at else 'Not counted') }}</td>
+                        </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              {% else %}
+                <div class="text-slate-600">No appointments matched the selected range.</div>
+              {% endif %}
+            </div>
+          </div>
         {% endif %}
       </div>
 

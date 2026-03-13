@@ -22,10 +22,17 @@ class Appointment(Base):
 
     therapist_name: Mapped[str] = mapped_column(String(200), default="")
     procedure: Mapped[str] = mapped_column(String(200), default="Session")
-    appointment_type: Mapped[str] = mapped_column(String(80), default="APPROVED_GOVERNMENT")
-    recurrence_group_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
-    recurrence_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    replacement_for_appointment_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Scheduling / reporting classification
+    duration_minutes: Mapped[int] = mapped_column(Integer, default=60)
+    appointment_type: Mapped[str] = mapped_column(String(40), default="UNSPECIFIED")
+    therapy_type: Mapped[str] = mapped_column(String(40), default="UNSPECIFIED")
+
+    # Once hours are finalised for a reporting/claim window, we mark them as counted
+    # so future calculations can exclude them by default.
+    hours_counted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    hours_counted_label: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    hours_counted_by_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
 
     attendance_status: Mapped[str] = mapped_column(String(40), default="UNCONFIRMED")
 
