@@ -6,7 +6,7 @@
   <div>
     <div class="eyebrow">Therapist-first note workflow</div>
     <h1 class="hero-title">{{ appt.child.full_name }}</h1>
-    <p class="hero-sub">{{ appt.starts_at }} · {{ appt.therapist_name or 'Therapist not set' }} · {{ appt.procedure or 'Session' }}</p>
+    <p class="hero-sub">{{ appt.starts_at }} · {{ appt.therapist_name or 'Therapist not set' }} · {{ appt.procedure or 'Session' }} · {{ appointment_type_label(appt.appointment_type) }}</p>
   </div>
   <div class="hero-actions">
     <a class="btn btn-outline" href="{{ rp }}/calendar?tenant={{ tenant_slug }}&child_id={{ appt.child_id }}">Back to calendar</a>
@@ -141,6 +141,76 @@
         <div class="session-kv"><span>Start</span><strong>{{ appt.starts_at }}</strong></div>
         <div class="session-kv"><span>Therapist</span><strong>{{ appt.therapist_name or '—' }}</strong></div>
         <div class="session-kv"><span>Procedure</span><strong>{{ appt.procedure or 'Session' }}</strong></div>
+        <div class="session-kv"><span>Type</span><strong>{{ appointment_type_label(appt.appointment_type) }}</strong></div>
+        <div class="session-kv"><span>Series</span><strong>{% if appt.recurrence_group_id %}Weekly recurring{% else %}Single appointment{% endif %}</strong></div>
+      </div>
+    </div>
+
+    <div class="session-card">
+      <div class="session-card__head">
+        <div>
+          <div class="eyebrow">Scheduling</div>
+          <div class="section-heading">Edit this appointment</div>
+          <p class="section-copy">Use this when a therapist is unwell, you need a replacement therapist, or the weekly slot changes.</p>
+        </div>
+      </div>
+      <div class="session-card__body">
+        <form method="post" action="{{ rp }}/appointments/{{ appt.id }}/schedule" class="stack">
+          <div class="grid grid-2 gap-3">
+            <div>
+              <label class="label">Date</label>
+              <input class="input" type="date" name="starts_at_date" value="{{ appt.starts_at.strftime('%Y-%m-%d') }}" required>
+            </div>
+            <div>
+              <label class="label">Time</label>
+              <select class="input" name="starts_at_time" required>
+                {% set appt_time_value = appt.starts_at.strftime('%H:%M') %}
+                {% for slot in quarter_hour_options %}
+                  <option value="{{ slot }}" {% if appt_time_value == slot %}selected{% endif %}>{{ slot }}</option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+          <div class="grid grid-2 gap-3">
+            <div>
+              <label class="label">Therapist / Provider</label>
+              <input class="input" type="text" name="therapist_name" list="therapists" value="{{ appt.therapist_name or '' }}" required>
+            </div>
+            <div>
+              <label class="label">Procedure</label>
+              <input class="input" type="text" name="procedure" value="{{ appt.procedure or '' }}">
+            </div>
+          </div>
+          <div class="grid grid-2 gap-3">
+            <div>
+              <label class="label">Appointment type</label>
+              <select class="input" name="appointment_type">
+                {% for value, label in appointment_type_choices %}
+                  <option value="{{ value }}" {% if (appt.appointment_type or 'APPROVED_GOVERNMENT') == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div>
+              <label class="label">Duration</label>
+              <select class="input" name="duration_minutes">
+                {% for minutes in [15, 30, 45, 60, 75, 90, 120] %}
+                  <option value="{{ minutes }}" {% if appt_duration_minutes == minutes %}selected{% endif %}>{{ minutes }} min</option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+          {% if appt.recurrence_group_id %}
+            <div>
+              <label class="label">Apply change</label>
+              <select class="input" name="series_scope">
+                <option value="THIS_ONLY" selected>This appointment only</option>
+                <option value="THIS_AND_FUTURE">This and future weekly appointments</option>
+              </select>
+              <div class="hint">Use “this and future” if another therapist is replacing the usual therapist for the rest of the series.</div>
+            </div>
+          {% endif %}
+          <button class="btn btn-outline" type="submit">Save scheduling changes</button>
+        </form>
       </div>
     </div>
 
@@ -174,5 +244,11 @@
     </div>
   </aside>
 </div>
+
+<datalist id="therapists">
+  {% for t in therapists %}
+    <option value="{{ t.name }}"></option>
+  {% endfor %}
+</datalist>
 
 {% endblock %}

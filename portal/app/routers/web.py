@@ -105,6 +105,33 @@ def status_chip(status: str | None) -> str:
 templates.env.globals["status_badge"] = status_badge
 templates.env.globals["status_chip"] = status_chip
 
+APPOINTMENT_TYPE_LABELS: dict[str, str] = {
+    "APPROVED_GOVERNMENT": "Approved (government-funded)",
+    "REGULAR_ADDITIONAL": "Regular additional",
+    "MAKEUP_REPLACEMENT": "Replacement session",
+    "BESPOKE_EXTRA": "Bespoke extra support",
+}
+
+
+def appointment_type_label(value: str | None) -> str:
+    key = (value or "APPROVED_GOVERNMENT").strip().upper() or "APPROVED_GOVERNMENT"
+    return APPOINTMENT_TYPE_LABELS.get(key, key.replace("_", " ").title())
+
+
+def appointment_type_choices() -> list[tuple[str, str]]:
+    return list(APPOINTMENT_TYPE_LABELS.items())
+
+
+def quarter_hour_options(start_hour: int = 7, end_hour: int = 21) -> list[str]:
+    values: list[str] = []
+    for hour in range(start_hour, end_hour + 1):
+        for minutes in (0, 15, 30, 45):
+            values.append(f"{hour:02d}:{minutes:02d}")
+    return values
+
+
+templates.env.globals["appointment_type_label"] = appointment_type_label
+
 
 # -----------------------------
 # DB dependency
@@ -567,6 +594,60 @@ def _ensure_people_archive_columns(db: Session) -> None:
                 conn.exec_driver_sql(stmt)
         except Exception:
             pass
+
+
+def _ensure_appointment_planning_columns(db: Session) -> None:
+    """Best-effort schema safety net for richer portal scheduling fields."""
+    bind = db.get_bind()
+    try:
+        insp = sa.inspect(bind)
+        existing = {c.get("name") for c in insp.get_columns("appointments") if c.get("name")}
+    except Exception:
+        return
+
+    stmts: list[str] = []
+    plans = [
+        ("appointment_type", "VARCHAR(80)"),
+        ("recurrence_group_id", "VARCHAR(64)"),
+        ("recurrence_index", "INTEGER"),
+        ("replacement_for_appointment_id", "INTEGER"),
+    ]
+    for col, typ in plans:
+        if col not in existing:
+            stmts.append(f"ALTER TABLE appointments ADD COLUMN {col} {typ}")
+    if "appointment_type" not in existing:
+        stmts.append("UPDATE appointments SET appointment_type = 'APPROVED_GOVERNMENT' WHERE appointment_type IS NULL OR appointment_type = ''")
+    if bind.dialect.name == "postgresql":
+        stmts.append("CREATE INDEX IF NOT EXISTS ix_appointments_recurrence_group_id ON appointments (recurrence_group_id)")
+    for stmt in stmts:
+        try:
+            with bind.begin() as conn:
+                conn.exec_driver_sql(stmt)
+        except Exception:
+            pass
+
+
+def _combine_local_date_time(date_raw: str | None, time_raw: str | None) -> datetime:
+    d = _parse_date(date_raw)
+    s = (time_raw or "").strip()
+    if not s:
+        raise HTTPException(status_code=400, detail="time required")
+    try:
+        hh, mm = [int(part) for part in s.split(":", 1)]
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid time")
+    if hh < 0 or hh > 23 or mm not in {0, 15, 30, 45}:
+        raise HTTPException(status_code=400, detail="time must be a 15-minute slot")
+    return datetime.combine(d, time(hour=hh, minute=mm))
+
+
+def _apply_appointment_schedule_update(appt: Appointment, start_at: datetime, duration_minutes: int, therapist_name: str, procedure: str, appointment_type: str) -> None:
+    appt.starts_at = start_at
+    appt.ends_at = start_at + timedelta(minutes=duration_minutes)
+    appt.therapist_name = therapist_name
+    appt.procedure = procedure
+    if hasattr(appt, "appointment_type"):
+        appt.appointment_type = appointment_type
 
 
 def _is_active_filter(model):
@@ -1262,6 +1343,7 @@ def calendar_page(request: Request):
     db = _db()
     try:
         ts, tid = _resolve_tenant_or_404(db, request)
+        _ensure_appointment_planning_columns(db)
         rolef = _role_flags(request)
         q_children = db.query(Child).filter(Child.tenant_id == tid)
         if rolef["is_therapist"]:
@@ -1322,6 +1404,8 @@ def calendar_page(request: Request):
                 "therapists_payload": therapists_payload,
                 "selected_child_id": selected_child_id,
                 "selected_therapist_ids": selected_therapist_ids,
+                "appointment_type_choices": appointment_type_choices(),
+                "quarter_hour_options": quarter_hour_options(),
             },
         )
     finally:
@@ -1389,6 +1473,7 @@ def api_calendar_events(request: Request):
     try:
         ts, tid = _resolve_tenant_or_404(db, request)
         _ensure_billing_item_columns(db)
+        _ensure_appointment_planning_columns(db)
         rolef = _role_flags(request)
         _ensure_people_archive_columns(db)
         therapist_by_id = {t.id: t for t in db.query(Therapist).filter(Therapist.tenant_id == tid).filter(_is_active_filter(Therapist)).all()}
@@ -1462,6 +1547,8 @@ def api_calendar_events(request: Request):
             tname = (getattr(a, "therapist_name", "") or "").strip()
             procedure = (getattr(a, "procedure", "") or "Session").strip() or "Session"
             attendance = (getattr(a, "attendance_status", None) or "UNCONFIRMED").upper()
+            appt_type = appointment_type_label(getattr(a, "appointment_type", None))
+            recurring = bool(getattr(a, "recurrence_group_id", None))
             events.append(
                 {
                     "id": f"appt-{a.id}",
@@ -1477,6 +1564,8 @@ def api_calendar_events(request: Request):
                         "therapistName": tname,
                         "procedure": procedure,
                         "attendanceStatus": attendance,
+                        "appointmentType": appt_type,
+                        "isRecurring": recurring,
                     },
                 }
             )
@@ -1574,16 +1663,24 @@ async def calendar_add_appointment(request: Request):
     form = await request.form()
 
     child_id_raw = str(form.get("child_id") or "").strip()
-    starts_at_raw = str(form.get("starts_at") or "").strip()
     therapist_name = str(form.get("therapist_name") or "").strip()
     procedure = str(form.get("procedure") or "").strip() or "Session"
+    appointment_type = str(form.get("appointment_type") or "APPROVED_GOVERNMENT").strip().upper() or "APPROVED_GOVERNMENT"
+    if appointment_type not in APPOINTMENT_TYPE_LABELS:
+        appointment_type = "APPROVED_GOVERNMENT"
     also_add_tl = _parse_yes_no(str(form.get("also_add_timeline") or "YES"), default="YES")
 
     try:
         child_id = int(child_id_raw)
     except Exception:
         raise HTTPException(status_code=400, detail="child_id required")
-    starts_at = _parse_dt_local(starts_at_raw)
+
+    starts_at_raw = str(form.get("starts_at") or "").strip()
+    if starts_at_raw:
+        starts_at = _parse_dt_local(starts_at_raw)
+    else:
+        starts_at = _combine_local_date_time(form.get("starts_at_date"), form.get("starts_at_time"))
+
     duration_raw = str(form.get("duration_minutes") or "60").strip()
     try:
         duration_minutes = int(duration_raw)
@@ -1592,42 +1689,74 @@ async def calendar_add_appointment(request: Request):
     duration_minutes = max(15, min(240, duration_minutes))
     if duration_minutes % 15:
         duration_minutes = ((duration_minutes + 14) // 15) * 15
-    ends_at = starts_at + timedelta(minutes=duration_minutes)
+
+    recurrence_mode = str(form.get("recurrence_mode") or "single").strip().lower()
+    recurrence_count_raw = str(form.get("recurrence_count") or "").strip()
+    recurrence_until_raw = str(form.get("recurrence_until") or "").strip()
+
+    series_dates: list[datetime] = [starts_at]
+    if recurrence_mode == "count":
+        try:
+            recurrence_count = int(recurrence_count_raw)
+        except Exception:
+            recurrence_count = 1
+        recurrence_count = max(1, min(52, recurrence_count))
+        for idx in range(1, recurrence_count):
+            series_dates.append(starts_at + timedelta(days=7 * idx))
+    elif recurrence_mode == "until":
+        until_date = _parse_date(recurrence_until_raw)
+        idx = 1
+        next_dt = starts_at + timedelta(days=7)
+        while next_dt.date() <= until_date and idx < 52:
+            series_dates.append(next_dt)
+            idx += 1
+            next_dt = starts_at + timedelta(days=7 * idx)
 
     db = _db()
     try:
         ts, tid = _resolve_tenant_or_404(db, request)
+        _ensure_appointment_planning_columns(db)
         if (guard := _assert_child_access(db, request, tid, child_id)):
             return guard
         child = db.query(Child).filter(Child.tenant_id == tid, Child.id == child_id).first()
         if not child:
             raise HTTPException(status_code=404, detail="Child not found")
 
-        appt = Appointment(
-            tenant_id=tid,
-            child_id=child_id,
-            therapist_name=therapist_name,
-            starts_at=starts_at,
-            ends_at=ends_at,
-            procedure=procedure,
-            attendance_status="UNCONFIRMED",
-        )
-        db.add(appt)
-        db.commit()
-        db.refresh(appt)
-
-        if also_add_tl == "YES":
-            tl = TimelineEvent(
+        recurrence_group_id = str(uuid.uuid4()) if len(series_dates) > 1 else None
+        for idx, start_at in enumerate(series_dates, start=1):
+            appt = Appointment(
+                tenant_id=tid,
                 child_id=child_id,
-                event_type="VISIT",
-                occurred_at=starts_at,
-                title=procedure,
-                details=f"Therapist: {therapist_name}" if therapist_name else None,
+                therapist_name=therapist_name,
+                starts_at=start_at,
+                ends_at=start_at + timedelta(minutes=duration_minutes),
+                procedure=procedure,
+                attendance_status="UNCONFIRMED",
+                appointment_type=appointment_type,
+                recurrence_group_id=recurrence_group_id,
+                recurrence_index=idx if recurrence_group_id else None,
             )
-            db.add(tl)
-            db.commit()
+            db.add(appt)
+            db.flush()
 
-        _toast(request, "Appointment added")
+            if also_add_tl == "YES":
+                details_bits = [
+                    f"Therapist: {therapist_name}" if therapist_name else None,
+                    f"Type: {appointment_type_label(appointment_type)}",
+                ]
+                if recurrence_group_id:
+                    details_bits.append(f"Weekly series #{idx}")
+                tl = TimelineEvent(
+                    child_id=child_id,
+                    event_type="VISIT",
+                    occurred_at=start_at,
+                    title=procedure,
+                    details=" · ".join([bit for bit in details_bits if bit]) or None,
+                )
+                db.add(tl)
+
+        db.commit()
+        _toast(request, f"Appointment{'s' if len(series_dates) > 1 else ''} added")
         return RedirectResponse(url=f"{_rp(request)}/calendar?child_id={child_id}", status_code=303)
     finally:
         db.close()
@@ -2137,6 +2266,7 @@ def appointment_detail(request: Request, appointment_id: int):
     db = _db()
     try:
         ts, tid = _resolve_tenant_or_404(db, request)
+        _ensure_appointment_planning_columns(db)
         if _role_flags(request)["is_calendar_staff"]:
             return _redirect_suite(request, "Calendar staff do not have access to clinical appointment notes.")
         appt = (
@@ -2179,6 +2309,7 @@ def appointment_detail(request: Request, appointment_id: int):
             )
 
         uploads = db.query(Attachment).filter(Attachment.child_id == appt.child_id).order_by(Attachment.created_at.desc()).all()
+        therapists = db.query(Therapist).filter(Therapist.tenant_id == tid).filter(_is_active_filter(Therapist)).order_by(Therapist.name.asc()).all()
 
         ctx = _base_context(db, request, ts, tid)
         return templates.TemplateResponse(
@@ -2191,6 +2322,10 @@ def appointment_detail(request: Request, appointment_id: int):
                 "uploads": uploads,
                 "previous_appt": previous_appt,
                 "previous_note": previous_note,
+                "therapists": therapists,
+                "appointment_type_choices": appointment_type_choices(),
+                "quarter_hour_options": quarter_hour_options(),
+                "appt_duration_minutes": max(15, int(((appt.ends_at - appt.starts_at).total_seconds() // 60) if appt.ends_at and appt.starts_at else 60)),
             },
         )
     finally:
@@ -2258,6 +2393,71 @@ async def appointment_note_save(request: Request, appointment_id: int):
         db.add(note)
         db.commit()
         _toast(request, "Session note saved")
+        return RedirectResponse(url=f"{_rp(request)}/appointments/{appointment_id}", status_code=303)
+    finally:
+        db.close()
+
+
+@router.post("/appointments/{appointment_id}/schedule")
+async def appointment_schedule_save(request: Request, appointment_id: int):
+    if (resp := _require_login(request)):
+        return resp
+    form = await request.form()
+
+    start_date_raw = str(form.get("starts_at_date") or "").strip()
+    start_time_raw = str(form.get("starts_at_time") or "").strip()
+    therapist_name = str(form.get("therapist_name") or "").strip()
+    procedure = str(form.get("procedure") or "").strip() or "Session"
+    appointment_type = str(form.get("appointment_type") or "APPROVED_GOVERNMENT").strip().upper() or "APPROVED_GOVERNMENT"
+    if appointment_type not in APPOINTMENT_TYPE_LABELS:
+        appointment_type = "APPROVED_GOVERNMENT"
+    series_scope = str(form.get("series_scope") or "THIS_ONLY").strip().upper() or "THIS_ONLY"
+
+    duration_raw = str(form.get("duration_minutes") or "60").strip()
+    try:
+        duration_minutes = int(duration_raw)
+    except Exception:
+        duration_minutes = 60
+    duration_minutes = max(15, min(240, duration_minutes))
+    if duration_minutes % 15:
+        duration_minutes = ((duration_minutes + 14) // 15) * 15
+
+    new_start = _combine_local_date_time(start_date_raw, start_time_raw)
+
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        _ensure_appointment_planning_columns(db)
+        appt = db.query(Appointment).filter(Appointment.tenant_id == tid, Appointment.id == appointment_id).first()
+        if not appt:
+            raise HTTPException(status_code=404, detail="Appointment not found")
+        if _role_flags(request)["is_calendar_staff"]:
+            return _redirect_suite(request, "Calendar staff cannot edit therapist scheduling.")
+        if (guard := _assert_child_access(db, request, tid, appt.child_id)):
+            return guard
+
+        if series_scope == "THIS_AND_FUTURE" and getattr(appt, "recurrence_group_id", None):
+            delta = new_start - appt.starts_at
+            future_rows = (
+                db.query(Appointment)
+                .filter(
+                    Appointment.tenant_id == tid,
+                    Appointment.recurrence_group_id == appt.recurrence_group_id,
+                    Appointment.starts_at >= appt.starts_at,
+                )
+                .order_by(Appointment.starts_at.asc())
+                .all()
+            )
+            for row in future_rows:
+                shifted_start = row.starts_at + delta
+                _apply_appointment_schedule_update(row, shifted_start, duration_minutes, therapist_name, procedure, appointment_type)
+                db.add(row)
+        else:
+            _apply_appointment_schedule_update(appt, new_start, duration_minutes, therapist_name, procedure, appointment_type)
+            db.add(appt)
+
+        db.commit()
+        _toast(request, "Appointment schedule updated")
         return RedirectResponse(url=f"{_rp(request)}/appointments/{appointment_id}", status_code=303)
     finally:
         db.close()

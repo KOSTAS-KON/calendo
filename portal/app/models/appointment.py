@@ -22,6 +22,10 @@ class Appointment(Base):
 
     therapist_name: Mapped[str] = mapped_column(String(200), default="")
     procedure: Mapped[str] = mapped_column(String(200), default="Session")
+    appointment_type: Mapped[str] = mapped_column(String(80), default="APPROVED_GOVERNMENT")
+    recurrence_group_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    recurrence_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    replacement_for_appointment_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     attendance_status: Mapped[str] = mapped_column(String(40), default="UNCONFIRMED")
 
