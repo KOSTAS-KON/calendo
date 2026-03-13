@@ -1272,6 +1272,24 @@ def calendar_page(request: Request):
         else:
             children = []
         therapists = db.query(Therapist).filter(Therapist.tenant_id == tid).filter(_is_active_filter(Therapist)).order_by(Therapist.name.asc()).all()
+        therapists_payload: list[dict[str, Any]] = []
+        for therapist in therapists:
+            try:
+                availability = json.loads(getattr(therapist, "availability_json", "") or "{}") or {}
+            except Exception:
+                availability = {}
+            try:
+                leaves = json.loads(getattr(therapist, "annual_leave_json", "") or "[]") or []
+            except Exception:
+                leaves = []
+            therapists_payload.append(
+                {
+                    "id": therapist.id,
+                    "name": therapist.name,
+                    "availability": availability,
+                    "leaves": leaves,
+                }
+            )
         selected_child_id: int | None = None
         raw = (request.query_params.get("child_id") or "").strip()
         if raw:
@@ -1301,6 +1319,7 @@ def calendar_page(request: Request):
                 **ctx,
                 "children": children,
                 "therapists": therapists,
+                "therapists_payload": therapists_payload,
                 "selected_child_id": selected_child_id,
                 "selected_therapist_ids": selected_therapist_ids,
             },
@@ -1436,33 +1455,29 @@ def api_calendar_events(request: Request):
         events: list[dict[str, Any]] = []
         rp = _rp(request)
 
-        def appt_color(a: Appointment) -> str:
-            s = (getattr(a, "attendance_status", None) or "UNCONFIRMED").upper()
-            return {
-                "ATTENDED": "#16a34a",
-                "MISSED": "#dc2626",
-                "CONFIRMED": "#2563eb",
-                "UNCONFIRMED": "#6b7280",
-                "CANCELLED_PROVIDER": "#f59e0b",
-                "CANCELLED_ME": "#f97316",
-            }.get(s, "#6b7280")
-
         for a in appts:
             start = a.starts_at
             end = a.ends_at or (a.starts_at + timedelta(minutes=60))
             child_name = getattr(getattr(a, "child", None), "full_name", "") or ""
             tname = (getattr(a, "therapist_name", "") or "").strip()
-            title = f"{child_name} — {a.procedure}".strip(" —")
-            if tname:
-                title = f"{title} · {tname}"
+            procedure = (getattr(a, "procedure", "") or "Session").strip() or "Session"
+            attendance = (getattr(a, "attendance_status", None) or "UNCONFIRMED").upper()
             events.append(
                 {
                     "id": f"appt-{a.id}",
-                    "title": title,
+                    "title": child_name or procedure,
                     "start": start.isoformat(),
                     "end": end.isoformat(),
-                    "color": appt_color(a),
                     "url": f"{rp}/appointments/{a.id}",
+                    "extendedProps": {
+                        "kind": "appointment",
+                        "appointmentId": a.id,
+                        "childId": a.child_id,
+                        "childName": child_name,
+                        "therapistName": tname,
+                        "procedure": procedure,
+                        "attendanceStatus": attendance,
+                    },
                 }
             )
 
@@ -1497,6 +1512,11 @@ def api_calendar_events(request: Request):
                     "allDay": True,
                     "color": color,
                     "url": f"{rp}/billing?child_id={b.child_id}",
+                    "extendedProps": {
+                        "kind": "billing",
+                        "childId": b.child_id,
+                        "childName": child_name,
+                    },
                 }
             )
 
@@ -1531,6 +1551,12 @@ def api_calendar_events(request: Request):
                     "start": tl.occurred_at.isoformat(),
                     "color": journey_color(tl),
                     "url": f"{rp}/timeline?child_id={tl.child_id}",
+                    "extendedProps": {
+                        "kind": "journey",
+                        "childId": tl.child_id,
+                        "childName": child_name,
+                        "eventType": tl.event_type,
+                    },
                 }
             )
 
@@ -1558,7 +1584,15 @@ async def calendar_add_appointment(request: Request):
     except Exception:
         raise HTTPException(status_code=400, detail="child_id required")
     starts_at = _parse_dt_local(starts_at_raw)
-    ends_at = starts_at + timedelta(minutes=60)
+    duration_raw = str(form.get("duration_minutes") or "60").strip()
+    try:
+        duration_minutes = int(duration_raw)
+    except Exception:
+        duration_minutes = 60
+    duration_minutes = max(15, min(240, duration_minutes))
+    if duration_minutes % 15:
+        duration_minutes = ((duration_minutes + 14) // 15) * 15
+    ends_at = starts_at + timedelta(minutes=duration_minutes)
 
     db = _db()
     try:

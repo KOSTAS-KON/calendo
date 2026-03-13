@@ -5,319 +5,190 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.css">
 <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js"></script>
 
-<section class="page-hero">
+<section class="ops-calendar-hero">
   <div>
-    <div class="eyebrow">Therapist-first workspace</div>
-    <h1 class="hero-title">Calendar & session flow</h1>
-    <p class="hero-sub">Keep the daily workflow simple: focus the calendar, open an appointment, review the previous note, then write today's achievements and the plan for the next session.</p>
+    <div class="eyebrow">Therapist operations board</div>
+    <h1 class="hero-title">Clinic calendar</h1>
+    <p class="hero-sub">See the whole day in one place: who is busy, who has gaps, and when the clinic is fully occupied. Keep the note-writing flow inside the appointment detail.</p>
   </div>
-  <div class="hero-actions">
+  <div class="ops-calendar-hero__actions">
+    <div class="ops-calendar-datepick">
+      <label class="label" for="boardDate">Board date</label>
+      <input id="boardDate" class="input" type="date">
+    </div>
     <button type="button" class="btn btn-primary" id="openQuickCreate">⚡ Quick create</button>
-    {% if selected_child_id %}
-      <a class="btn btn-outline" href="{{ rp }}/children/{{ selected_child_id }}?tenant={{ tenant_slug }}">Open selected child</a>
-    {% endif %}
   </div>
 </section>
 
-<div class="calendar-shell">
-  <section class="calendar-main">
-    <div class="subpanel calendar-filters-panel">
-      <div class="subhead">
+<section class="subpanel ops-calendar-filters-panel">
+  <div class="subhead subhead-flex">
+    <div>
+      <div class="section-heading">Filters</div>
+      <p class="section-copy">Filter to one child, one therapist, or keep the full clinic view. The occupancy board and the calendar both reflect the active filters.</p>
+    </div>
+    <div class="ops-calendar-filter-tags">
+      {% if selected_child_id %}
+        <span class="focus-tag">Child filter active</span>
+      {% else %}
+        <span class="focus-tag">All children</span>
+      {% endif %}
+      {% if is_therapist %}
+        <span class="focus-tag focus-tag--accent">My therapist schedule</span>
+      {% elif selected_therapist_ids and selected_therapist_ids|length %}
+        <span class="focus-tag">{{ selected_therapist_ids|length }} therapist{{ '' if selected_therapist_ids|length == 1 else 's' }}</span>
+      {% else %}
+        <span class="focus-tag">All therapists</span>
+      {% endif %}
+      <span class="focus-tag">15-minute planning</span>
+    </div>
+  </div>
+  <div class="subbody">
+    <form method="get" action="{{ rp }}/calendar" class="ops-calendar-filter-form">
+      <div class="ops-calendar-filter-grid">
         <div>
-          <div class="section-heading">Focus the calendar</div>
-          <p class="section-copy">Choose a child or therapist view first, then work from the calendar instead of jumping around the portal.</p>
+          <label class="label">Child</label>
+          <select name="child_id" class="input">
+            <option value="">All children</option>
+            {% for c in children %}
+              <option value="{{ c.id }}" {% if selected_child_id == c.id %}selected{% endif %}>{{ c.full_name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label class="label">Therapists</label>
+          <select name="therapist_ids" class="input input-multi" multiple size="5" {% if is_therapist %}disabled{% endif %}>
+            {% for t in therapists %}
+              <option value="{{ t.id }}" {% if selected_therapist_ids and t.id in selected_therapist_ids %}selected{% endif %}>{{ t.name }}</option>
+            {% endfor %}
+          </select>
+          <div class="hint">
+            {% if is_calendar_staff %}
+              Reception can focus one or more therapists.
+            {% elif is_therapist %}
+              Your own calendar is selected automatically.
+            {% else %}
+              Keep all therapists selected to see the full clinic picture.
+            {% endif %}
+          </div>
+        </div>
+        <div>
+          <label class="label">Visible event layers</label>
+          <div class="ops-kind-toggle-group" id="eventKindToggles">
+            <button type="button" class="kind-toggle active" data-kind="appointment">Appointments</button>
+            <button type="button" class="kind-toggle" data-kind="billing">Billing</button>
+            <button type="button" class="kind-toggle" data-kind="journey">Journey</button>
+          </div>
         </div>
       </div>
-      <div class="subbody">
-        <form method="get" action="{{ rp }}/calendar" class="calendar-filter-form">
-          <div class="filter-grid">
-            <div>
-              <label class="label">Child</label>
-              <select name="child_id" class="input">
-                <option value="">All children</option>
-                {% for c in children %}
-                  <option value="{{ c.id }}" {% if selected_child_id == c.id %}selected{% endif %}>{{ c.full_name }}</option>
-                {% endfor %}
-              </select>
-            </div>
-            <div>
-              <label class="label">{% if is_therapist %}Therapist{% else %}Therapist view{% endif %}</label>
-              <select name="therapist_ids" class="input input-multi" multiple size="5" {% if is_therapist %}disabled{% endif %}>
-                {% for t in therapists %}
-                  <option value="{{ t.id }}" {% if selected_therapist_ids and t.id in selected_therapist_ids %}selected{% endif %}>{{ t.name }}</option>
-                {% endfor %}
-              </select>
-              <div class="hint">
-                {% if is_calendar_staff %}
-                  Reception can focus one or more therapists.
-                {% elif is_therapist %}
-                  Your own calendar is selected automatically.
-                {% else %}
-                  Select one or more therapists to narrow the calendar.
-                {% endif %}
-              </div>
-            </div>
-            <div class="filter-actions">
-              <button class="btn btn-primary" type="submit">Apply focus</button>
-              <a class="btn btn-outline" href="{{ rp }}/calendar?tenant={{ tenant_slug }}">Reset</a>
-            </div>
-          </div>
-        </form>
+      <div class="ops-calendar-filter-actions">
+        <button class="btn btn-primary" type="submit">Apply filters</button>
+        <a class="btn btn-outline" href="{{ rp }}/calendar?tenant={{ tenant_slug }}">Reset</a>
+        {% if selected_child_id %}
+          <a class="btn btn-outline" href="{{ rp }}/children/{{ selected_child_id }}?tenant={{ tenant_slug }}">Open child</a>
+        {% endif %}
+      </div>
+    </form>
+  </div>
+</section>
 
-        <div class="focus-tags">
-          {% if selected_child_id %}
-            <span class="focus-tag">Focused child selected</span>
-          {% else %}
-            <span class="focus-tag">All children</span>
-          {% endif %}
+<section class="ops-calendar-stats" id="calendarStats">
+  <article class="stat-card">
+    <div class="stat-card__label">Busy right now</div>
+    <div class="stat-card__value" id="statBusyNow">—</div>
+    <div class="stat-card__meta" id="statBusyNowMeta">Choose a day to analyse.</div>
+  </article>
+  <article class="stat-card">
+    <div class="stat-card__label">Free right now</div>
+    <div class="stat-card__value" id="statFreeNow">—</div>
+    <div class="stat-card__meta" id="statFreeNowMeta">Visible therapists only.</div>
+  </article>
+  <article class="stat-card">
+    <div class="stat-card__label">No-free-therapist blocks</div>
+    <div class="stat-card__value" id="statFullBlocks">—</div>
+    <div class="stat-card__meta" id="statFullBlocksMeta">15-minute blocks where no visible therapist has a free working slot.</div>
+  </article>
+  <article class="stat-card stat-card--highlight">
+    <div class="stat-card__label">Next available gap</div>
+    <div class="stat-card__value stat-card__value--small" id="statNextGap">—</div>
+    <div class="stat-card__meta" id="statNextGapMeta">First visible free therapist slot.</div>
+  </article>
+</section>
 
-          {% if is_therapist %}
-            <span class="focus-tag focus-tag--accent">Your therapist calendar only</span>
-          {% elif selected_therapist_ids and selected_therapist_ids|length %}
-            <span class="focus-tag">{{ selected_therapist_ids|length }} therapist{{ '' if selected_therapist_ids|length == 1 else 's' }} selected</span>
-          {% else %}
-            <span class="focus-tag">All therapists</span>
-          {% endif %}
+<div class="ops-clinic-alert" id="clinicAlert" hidden></div>
 
-          <span class="focus-tag">{{ children|length }} visible child{{ '' if children|length == 1 else 'ren' }}</span>
+<div class="ops-calendar-layout">
+  <section class="ops-calendar-main">
+    <div class="subpanel">
+      <div class="subhead subhead-flex">
+        <div>
+          <div class="section-heading">Therapist occupancy board</div>
+          <p class="section-copy">A 15-minute operations board for the selected day. Click a free slot to open quick create. Click a busy slot to open that appointment.</p>
         </div>
+        <div class="ops-calendar-board-legend">
+          <span class="ops-legend-item"><span class="ops-legend-swatch ops-legend-swatch--free"></span> Gap</span>
+          <span class="ops-legend-item"><span class="ops-legend-swatch ops-legend-swatch--busy"></span> Busy</span>
+          <span class="ops-legend-item"><span class="ops-legend-swatch ops-legend-swatch--leave"></span> Leave</span>
+          <span class="ops-legend-item"><span class="ops-legend-swatch ops-legend-swatch--off"></span> Outside hours</span>
+        </div>
+      </div>
+      <div class="subbody ops-board-wrap">
+        <div id="opsBoard" class="ops-board"></div>
       </div>
     </div>
 
-    <div class="subpanel calendar-panel" id="calendarPanel">
+    <div class="subpanel">
       <div class="subhead subhead-flex">
         <div>
-          <div class="section-heading">Calendar</div>
-          <p class="section-copy">Click an event to open the clinical note. Click or drag on an empty slot to create something quickly.</p>
-        </div>
-        <div class="subhead-tabs pillrow pillrow-tight">
-          <button type="button" class="pill active" data-pane="cal-view">🗓️ Calendar</button>
-          <button type="button" class="pill" data-pane="cal-appt">📅 Appointment</button>
-          <button type="button" class="pill" data-pane="cal-billing">💳 Billing</button>
-          <button type="button" class="pill" data-pane="cal-journey">🧭 Journey</button>
+          <div class="section-heading">Weekly / daily calendar</div>
+          <p class="section-copy">15-minute slots, therapist colours, and direct access to the session note screen. Use the calendar for the full context and the board for fast occupancy scanning.</p>
         </div>
       </div>
-
       <div class="subbody">
-        <div id="cal-view" class="tab-pane active">
-          <div id="calendar"></div>
-          <div class="hint mt-4">Tip: after an appointment is created, open it from the calendar so the therapist can review the previous session note and write today's progress.</div>
-        </div>
-
-        <div id="cal-appt" class="tab-pane">
-          <div class="form-panel-head">
-            <div class="section-heading">New appointment</div>
-            <p class="section-copy">Use this for quick scheduling. The clinical write-up still happens inside the appointment detail screen.</p>
-          </div>
-          <form method="post" action="{{ rp }}/calendar/add_appointment" class="stack">
-            <div class="grid grid-2 gap-3">
-              <div>
-                <label class="label">Child</label>
-                <select name="child_id" class="input" required>
-                  {% for c in children %}
-                    <option value="{{ c.id }}" {% if selected_child_id == c.id %}selected{% endif %}>{{ c.full_name }}</option>
-                  {% endfor %}
-                </select>
-              </div>
-              <div>
-                <label class="label">Start</label>
-                <input class="input" type="datetime-local" name="starts_at" required>
-              </div>
-            </div>
-            <div class="grid grid-2 gap-3">
-              <div>
-                <label class="label">Therapist / Provider</label>
-                <input class="input" type="text" name="therapist_name" list="therapists" placeholder="Therapist" required>
-              </div>
-              <div>
-                <label class="label">Procedure</label>
-                <input class="input" type="text" name="procedure" value="Speech Session">
-              </div>
-            </div>
-            <input type="hidden" name="also_add_timeline" value="YES" />
-            <div class="form-actions-inline">
-              <button class="btn btn-primary" type="submit">Create appointment</button>
-            </div>
-            <div class="hint">This creates an appointment and a matching journey visit item.</div>
-          </form>
-        </div>
-
-        <div id="cal-billing" class="tab-pane">
-          <div class="form-panel-head">
-            <div class="section-heading">Billing / invoice item</div>
-            <p class="section-copy">Keep billing available, but secondary to the therapist workflow.</p>
-          </div>
-          <form method="post" action="{{ rp }}/calendar/add_billing" class="stack">
-            <div class="grid grid-2 gap-3">
-              <div>
-                <label class="label">Child</label>
-                <select name="child_id" class="input" required>
-                  {% for c in children %}
-                    <option value="{{ c.id }}" {% if selected_child_id == c.id %}selected{% endif %}>{{ c.full_name }}</option>
-                  {% endfor %}
-                </select>
-              </div>
-              <div>
-                <label class="label">Due date</label>
-                <input class="input" type="date" name="billing_due" required>
-              </div>
-            </div>
-            <div class="grid grid-2 gap-3">
-              <div>
-                <label class="label">Amount (€)</label>
-                <input class="input" type="number" step="0.01" name="amount_eur" placeholder="40.00">
-              </div>
-              <div>
-                <label class="label">Description</label>
-                <input class="input" type="text" name="description" placeholder="Monthly sessions">
-              </div>
-            </div>
-            <div class="grid grid-3 gap-3">
-              <div>
-                <label class="label">Invoice created</label>
-                <select class="input" name="invoice_created">
-                  <option value="NO">NO</option>
-                  <option value="YES">YES</option>
-                </select>
-              </div>
-              <div>
-                <label class="label">Paid</label>
-                <select class="input" name="paid">
-                  <option value="NO">NO</option>
-                  <option value="YES">YES</option>
-                </select>
-              </div>
-              <div>
-                <label class="label">Parent signed off</label>
-                <select class="input" name="parent_signed_off">
-                  <option value="NO">NO</option>
-                  <option value="YES">YES</option>
-                </select>
-              </div>
-            </div>
-            <div class="form-actions-inline">
-              <button class="btn btn-outline" type="submit">Create billing item</button>
-            </div>
-            <div class="hint">Adds the billing row and a matching journey event.</div>
-          </form>
-        </div>
-
-        <div id="cal-journey" class="tab-pane">
-          <div class="form-panel-head">
-            <div class="section-heading">Journey item</div>
-            <p class="section-copy">Use this for parent feedback, exercises, or clinical notes that are not tied to one appointment.</p>
-          </div>
-          <form method="post" action="{{ rp }}/calendar/add_journey" class="stack">
-            <div class="grid grid-2 gap-3">
-              <div>
-                <label class="label">Child</label>
-                <select name="child_id" class="input" required>
-                  {% for c in children %}
-                    <option value="{{ c.id }}" {% if selected_child_id == c.id %}selected{% endif %}>{{ c.full_name }}</option>
-                  {% endfor %}
-                </select>
-              </div>
-              <div>
-                <label class="label">When</label>
-                <input class="input" type="datetime-local" name="occurred_at" required>
-              </div>
-            </div>
-            <div class="grid grid-2 gap-3">
-              <div>
-                <label class="label">Type</label>
-                <select class="input" name="event_type">
-                  <option value="VISIT">VISIT</option>
-                  <option value="PAYMENT">PAYMENT</option>
-                  <option value="INVOICE_ISSUED">INVOICE_ISSUED</option>
-                  <option value="EXERCISE">EXERCISE</option>
-                  <option value="PARENT_FEEDBACK">PARENT_FEEDBACK</option>
-                  <option value="COMMUNICATION">COMMUNICATION</option>
-                  <option value="APPT_CANCELLED">APPT_CANCELLED</option>
-                  <option value="NOTE">NOTE</option>
-                  <option value="OTHER" selected>OTHER</option>
-                </select>
-              </div>
-              <div>
-                <label class="label">Title</label>
-                <input class="input" type="text" name="title" placeholder="e.g. Sent exercise to parents" required>
-              </div>
-            </div>
-            <div>
-              <label class="label">Details</label>
-              <textarea class="input" name="details" rows="4" placeholder="Optional"></textarea>
-            </div>
-            <div class="form-actions-inline">
-              <button class="btn btn-outline" type="submit">Create journey item</button>
-            </div>
-            <div class="hint">Shows in the child journey and on this calendar.</div>
-          </form>
-        </div>
+        <div id="calendar"></div>
       </div>
     </div>
   </section>
 
-  <aside class="calendar-sidebar">
+  <aside class="ops-calendar-side">
     <div class="subpanel">
       <div class="subhead">
         <div>
-          <div class="section-heading">Simple therapist workflow</div>
-          <p class="section-copy">Start from the calendar. Hierarchical child record browsing is still available, but lower priority in the day-to-day flow.</p>
+          <div class="section-heading">Visible therapists</div>
+          <p class="section-copy">Each therapist keeps a fixed colour so superusers, receptionists, and therapists can read the day at a glance.</p>
+        </div>
+      </div>
+      <div class="subbody">
+        <div id="therapistStatusList" class="therapist-status-list"></div>
+      </div>
+    </div>
+
+    <div class="subpanel">
+      <div class="subhead">
+        <div>
+          <div class="section-heading">Simple workflow</div>
+          <p class="section-copy">The portal stays focused on scheduling and clinical notes. SMS functionality is unchanged.</p>
         </div>
       </div>
       <div class="subbody">
         <div class="workflow-step">
           <div class="workflow-index">1</div>
           <div>
-            <strong>Focus the day</strong>
-            <div class="hint">Filter by child or therapist so the calendar only shows what matters right now.</div>
+            <strong>See the full clinic</strong>
+            <div class="hint">Use the board and calendar together to spot gaps, overlaps, and full-clinic saturation.</div>
           </div>
         </div>
         <div class="workflow-step">
           <div class="workflow-index">2</div>
           <div>
-            <strong>Open the appointment</strong>
-            <div class="hint">Click the event to review the previous session note before you start writing today's entry.</div>
+            <strong>Open or create fast</strong>
+            <div class="hint">Click a busy block for the appointment detail, or a free block to create a new one at that exact 15-minute slot.</div>
           </div>
         </div>
         <div class="workflow-step">
           <div class="workflow-index">3</div>
           <div>
-            <strong>Write today, plan next time</strong>
-            <div class="hint">Save achievements, observations, what helped, and what the next session should include.</div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="subpanel legend-card">
-      <div class="subhead">
-        <div>
-          <div class="section-heading">Legend</div>
-          <p class="section-copy">A smaller, clearer view of the calendar colours.</p>
-        </div>
-      </div>
-      <div class="subbody">
-        <div class="legend-group">
-          <div class="legend-title">Appointments</div>
-          <div class="legend-grid legend-grid--compact">
-            <div class="leg"><span class="dot" style="background:#16a34a"></span> Attended</div>
-            <div class="leg"><span class="dot" style="background:#dc2626"></span> Missed</div>
-            <div class="leg"><span class="dot" style="background:#2563eb"></span> Confirmed</div>
-            <div class="leg"><span class="dot" style="background:#6b7280"></span> Unconfirmed</div>
-            <div class="leg"><span class="dot" style="background:#f59e0b"></span> Cancelled by provider</div>
-            <div class="leg"><span class="dot" style="background:#f97316"></span> Cancelled by me</div>
-          </div>
-        </div>
-
-        <div class="legend-group mt-4">
-          <div class="legend-title">Billing & journey</div>
-          <div class="legend-grid legend-grid--compact">
-            <div class="leg"><span class="dot" style="background:#22c55e"></span> Billing paid</div>
-            <div class="leg"><span class="dot" style="background:#eab308"></span> Invoice created</div>
-            <div class="leg"><span class="dot" style="background:#a855f7"></span> No invoice</div>
-            <div class="leg"><span class="dot" style="background:#06b6d4"></span> Parent feedback</div>
-            <div class="leg"><span class="dot" style="background:#64748b"></span> Communication</div>
-            <div class="leg"><span class="dot" style="background:#475569"></span> Note / other</div>
+            <strong>Write the clinical note</strong>
+            <div class="hint">Inside the appointment, review the previous note, record today's achievements, and plan the next session.</div>
           </div>
         </div>
       </div>
@@ -356,17 +227,29 @@
             </div>
             <div>
               <label class="label">Start</label>
-              <input id="m_appt_start" class="input" type="datetime-local" name="starts_at" required>
+              <input id="m_appt_start" class="input" type="datetime-local" name="starts_at" step="900" required>
             </div>
           </div>
-          <div class="grid grid-2 gap-3">
+          <div class="grid grid-3 gap-3">
             <div>
               <label class="label">Therapist / Provider</label>
-              <input class="input" type="text" name="therapist_name" list="therapists" placeholder="Therapist" required>
+              <input id="m_appt_therapist" class="input" type="text" name="therapist_name" list="therapists" placeholder="Therapist" required>
             </div>
             <div>
               <label class="label">Procedure</label>
               <input class="input" type="text" name="procedure" value="Speech Session">
+            </div>
+            <div>
+              <label class="label">Duration</label>
+              <select class="input" name="duration_minutes">
+                <option value="15">15 min</option>
+                <option value="30">30 min</option>
+                <option value="45">45 min</option>
+                <option value="60" selected>60 min</option>
+                <option value="75">75 min</option>
+                <option value="90">90 min</option>
+                <option value="120">120 min</option>
+              </select>
             </div>
           </div>
           <input type="hidden" name="also_add_timeline" value="YES" />
@@ -446,7 +329,7 @@
             </div>
             <div>
               <label class="label">When</label>
-              <input id="m_j_when" class="input" type="datetime-local" name="occurred_at" required>
+              <input id="m_j_when" class="input" type="datetime-local" name="occurred_at" step="900" required>
             </div>
           </div>
           <div class="grid grid-2 gap-3">
@@ -489,43 +372,131 @@
   {% endfor %}
 </datalist>
 
+<script id="calendarContext" type="application/json">{{ {
+  "childId": selected_child_id,
+  "therapistIds": (selected_therapist_ids or []),
+  "therapists": therapists_payload,
+  "tenantSlug": tenant_slug,
+  "isTherapist": is_therapist,
+} | tojson }}</script>
+
 <script>
 (function(){
-  const childId = "{{ selected_child_id if selected_child_id is not none else '' }}";
-  const therapistIds = {{ (selected_therapist_ids or []) | tojson }};
-  const el = document.getElementById("calendar");
-  const modal = document.getElementById("createModal");
+  const contextEl = document.getElementById('calendarContext');
+  const context = contextEl ? JSON.parse(contextEl.textContent) : {};
+  const childId = context.childId ? String(context.childId) : '';
+  const therapistIds = Array.isArray(context.therapistIds) ? context.therapistIds.map((v) => Number(v)) : [];
+  const therapists = Array.isArray(context.therapists) ? context.therapists : [];
+  const isTherapist = !!context.isTherapist;
+
+  const el = document.getElementById('calendar');
+  const modal = document.getElementById('createModal');
+  const boardEl = document.getElementById('opsBoard');
+  const statusListEl = document.getElementById('therapistStatusList');
+  const boardDateInput = document.getElementById('boardDate');
+  const clinicAlert = document.getElementById('clinicAlert');
+
+  let selectedKinds = new Set(['appointment']);
+  let rawEventCache = [];
+  let rawEventKey = '';
+  let calendar = null;
+  let currentBoardDate = new Date();
 
   function pad(n){ return String(n).padStart(2,'0'); }
-  function toLocalDateTimeInput(d){
-    return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  function fmtDateInput(d){ return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()); }
+  function toLocalDateTimeInput(d){ return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes()); }
+  function toLocalDateInput(d){ return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()); }
+  function roundToQuarter(date){
+    const d = new Date(date);
+    d.setSeconds(0, 0);
+    const mins = d.getMinutes();
+    d.setMinutes(Math.ceil(mins / 15) * 15);
+    return d;
   }
-  function toLocalDateInput(d){
-    return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate());
+  function formatClock(date){
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
   }
-  function openModal(startDate){
-    const dt = startDate instanceof Date ? startDate : new Date(startDate);
+  function sameDay(a, b){
+    return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  }
+  function parseDateOnly(value){
+    if(!value) return null;
+    const [y,m,d] = String(value).split('-').map(Number);
+    if(!y || !m || !d) return null;
+    return new Date(y, m - 1, d);
+  }
+  function parseDateTime(value){
+    if(!value) return null;
+    return new Date(value);
+  }
+  function startOfDay(date){
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
+  }
+  function addMinutes(date, minutes){
+    return new Date(date.getTime() + minutes * 60000);
+  }
+  function hashString(value){
+    let hash = 0;
+    const text = String(value || '');
+    for(let i = 0; i < text.length; i += 1){
+      hash = ((hash << 5) - hash) + text.charCodeAt(i);
+      hash |= 0;
+    }
+    return Math.abs(hash);
+  }
+  const palette = ['#5b5bd6', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#14b8a6', '#ec4899', '#84cc16', '#f97316'];
+  function therapistColor(name){
+    const idx = hashString(name) % palette.length;
+    return palette[idx];
+  }
+  function therapistByName(name){
+    return therapists.find((t) => String(t.name || '').trim() === String(name || '').trim()) || null;
+  }
+  function visibleTherapists(){
+    if(isTherapist && therapistIds.length){
+      return therapists.filter((t) => therapistIds.includes(Number(t.id)));
+    }
+    if(therapistIds.length){
+      return therapists.filter((t) => therapistIds.includes(Number(t.id)));
+    }
+    return therapists.slice();
+  }
+  function statusClass(status){
+    const value = String(status || 'UNCONFIRMED').toUpperCase();
+    return 'status-' + value.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+  }
+  function filterEvents(events){
+    return events.filter((ev) => {
+      const kind = String((ev.extendedProps && ev.extendedProps.kind) || ev.kind || 'appointment');
+      return selectedKinds.has(kind);
+    });
+  }
+  function appointmentEventsForBoard(){
+    return rawEventCache.filter((ev) => String((ev.extendedProps && ev.extendedProps.kind) || '') === 'appointment');
+  }
+  function openModal(startDate, therapistName){
+    const dt = roundToQuarter(startDate instanceof Date ? startDate : new Date(startDate));
     const apptStart = document.getElementById('m_appt_start');
     const billDue = document.getElementById('m_bill_due');
     const jWhen = document.getElementById('m_j_when');
+    const apptTherapist = document.getElementById('m_appt_therapist');
     if(apptStart) apptStart.value = toLocalDateTimeInput(dt);
     if(jWhen) jWhen.value = toLocalDateTimeInput(dt);
     if(billDue) billDue.value = toLocalDateInput(dt);
-
+    if(apptTherapist && therapistName) apptTherapist.value = therapistName;
     if(childId){
       ['m_appt_child','m_bill_child','m_j_child'].forEach((id) => {
         const select = document.getElementById(id);
         if(select) select.value = childId;
       });
     }
-
     modal.classList.add('open');
-    modal.setAttribute('aria-hidden','false');
+    modal.setAttribute('aria-hidden', 'false');
     document.body.classList.add('modal-open');
   }
   function closeModal(){
     modal.classList.remove('open');
-    modal.setAttribute('aria-hidden','true');
+    modal.setAttribute('aria-hidden', 'true');
     document.body.classList.remove('modal-open');
   }
 
@@ -543,44 +514,346 @@
     }
   });
 
-  const calendarPanel = document.getElementById('calendarPanel');
-  if(calendarPanel){
-    calendarPanel.querySelectorAll('.subhead-tabs .pill[data-pane^="cal-"]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const pane = btn.getAttribute('data-pane');
-        if(!pane) return;
-        calendarPanel.querySelectorAll('.subhead-tabs .pill[data-pane^="cal-"]').forEach((pill) => pill.classList.remove('active'));
-        btn.classList.add('active');
-        calendarPanel.querySelectorAll('.tab-pane').forEach((paneEl) => paneEl.classList.remove('active'));
-        const next = document.getElementById(pane);
-        if(next) next.classList.add('active');
-      });
-    });
-  }
-
   const openQuickBtn = document.getElementById('openQuickCreate');
   if(openQuickBtn){
-    openQuickBtn.addEventListener('click', () => openModal(new Date()));
+    openQuickBtn.addEventListener('click', () => openModal(new Date(), visibleTherapists().length === 1 ? visibleTherapists()[0].name : ''));
   }
   document.addEventListener('keydown', (event) => {
     if(event.key === 'Escape' && modal.classList.contains('open')) closeModal();
   });
 
-  const cal = new FullCalendar.Calendar(el, {
-    initialView: 'dayGridMonth',
-    height: 'auto',
-    headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,timeGridDay' },
+  function buildEventHtml(event){
+    const props = event.extendedProps || {};
+    const kind = props.kind;
+    if(kind === 'appointment'){
+      const therapistName = String(props.therapistName || '');
+      const color = therapistColor(therapistName);
+      const status = String(props.attendanceStatus || 'UNCONFIRMED').toUpperCase();
+      const title = props.childName || event.title || 'Appointment';
+      const procedure = props.procedure || '';
+      return {
+        html: `
+          <div class="fc-appointment-card ${statusClass(status)}" style="--therapist-color:${color}">
+            <div class="fc-appointment-card__title">${title}</div>
+            <div class="fc-appointment-card__meta">${procedure ? procedure + ' · ' : ''}${therapistName || 'Therapist'}</div>
+          </div>
+        `
+      };
+    }
+    const bg = event.backgroundColor || '#334155';
+    return { html: `<div class="fc-generic-card" style="background:${bg}">${event.title}</div>` };
+  }
+
+  function fetchEvents(fetchInfo, success, failure){
+    const params = new URLSearchParams();
+    params.set('start', fetchInfo.startStr);
+    params.set('end', fetchInfo.endStr);
+    if(childId) params.set('child_id', childId);
+    if(Array.isArray(therapistIds) && therapistIds.length){
+      therapistIds.forEach((id) => params.append('therapist_ids', String(id)));
+    }
+    const key = params.toString();
+    if(rawEventKey === key && rawEventCache.length){
+      success(filterEvents(rawEventCache));
+      requestAnimationFrame(renderBoardAndStats);
+      return;
+    }
+    fetch('{{ rp }}/api/calendar_events?' + key)
+      .then((response) => response.json())
+      .then((events) => {
+        rawEventCache = Array.isArray(events) ? events : [];
+        rawEventKey = key;
+        success(filterEvents(rawEventCache));
+        requestAnimationFrame(renderBoardAndStats);
+      })
+      .catch(failure);
+  }
+
+  function currentBoardSlots(){
+    const base = startOfDay(currentBoardDate);
+    const slots = [];
+    for(let minutes = 7 * 60; minutes < 21 * 60; minutes += 15){
+      slots.push(addMinutes(base, minutes));
+    }
+    return slots;
+  }
+
+  function blocksForDay(therapist, date){
+    const fallback = [{ start: '09:00', end: '18:00' }];
+    const availability = therapist && therapist.availability ? therapist.availability : {};
+    const key = ['sun','mon','tue','wed','thu','fri','sat'][date.getDay()];
+    const blocks = Array.isArray(availability[key]) && availability[key].length ? availability[key] : fallback;
+    return blocks
+      .map((block) => {
+        const [sh, sm] = String(block.start || '09:00').split(':').map(Number);
+        const [eh, em] = String(block.end || '18:00').split(':').map(Number);
+        return {
+          start: new Date(date.getFullYear(), date.getMonth(), date.getDate(), sh || 0, sm || 0),
+          end: new Date(date.getFullYear(), date.getMonth(), date.getDate(), eh || 0, em || 0),
+        };
+      })
+      .filter((block) => block.end > block.start);
+  }
+
+  function isOnLeave(therapist, date){
+    const leaves = therapist && Array.isArray(therapist.leaves) ? therapist.leaves : [];
+    return leaves.some((leave) => {
+      const start = parseDateOnly(leave.start);
+      const end = parseDateOnly(leave.end);
+      if(!start || !end) return false;
+      const day = startOfDay(date);
+      return day >= startOfDay(start) && day <= startOfDay(end);
+    });
+  }
+
+  function appointmentRowsForTherapist(name, date){
+    const dayStart = startOfDay(date);
+    const dayEnd = addMinutes(dayStart, 24 * 60);
+    return appointmentEventsForBoard()
+      .filter((event) => String(event.extendedProps?.therapistName || '').trim() === String(name || '').trim())
+      .filter((event) => {
+        const start = parseDateTime(event.start);
+        const end = parseDateTime(event.end);
+        return start && end && end > dayStart && start < dayEnd;
+      })
+      .map((event) => ({
+        event,
+        start: parseDateTime(event.start),
+        end: parseDateTime(event.end),
+      }))
+      .sort((a, b) => a.start - b.start);
+  }
+
+  function slotState(therapist, slotStart, slotEnd, appointments, workingBlocks, leave){
+    const inWorking = workingBlocks.some((block) => slotStart >= block.start && slotEnd <= block.end);
+    if(!inWorking) return { state: 'off' };
+    if(leave) return { state: 'leave' };
+    const busyRow = appointments.find((row) => row.start < slotEnd && row.end > slotStart);
+    if(busyRow) return { state: 'busy', event: busyRow.event, end: busyRow.end };
+    return { state: 'free' };
+  }
+
+  function firstFutureFreeSlot(summary, fromDate){
+    for(const item of summary){
+      const next = item.timeline.find((slot) => slot.state === 'free' && slot.start >= fromDate);
+      if(next){
+        return { therapist: item.therapist, slot: next };
+      }
+    }
+    return null;
+  }
+
+  function buildTherapistDaySummary(){
+    const day = startOfDay(currentBoardDate);
+    const slots = currentBoardSlots();
+    return visibleTherapists().map((therapist) => {
+      const workingBlocks = blocksForDay(therapist, day);
+      const leave = isOnLeave(therapist, day);
+      const appointments = appointmentRowsForTherapist(therapist.name, day);
+      const timeline = slots.map((slotStart) => {
+        const slotEnd = addMinutes(slotStart, 15);
+        const result = slotState(therapist, slotStart, slotEnd, appointments, workingBlocks, leave);
+        return {
+          start: slotStart,
+          end: slotEnd,
+          state: result.state,
+          event: result.event || null,
+        };
+      });
+      return {
+        therapist,
+        color: therapistColor(therapist.name),
+        workingBlocks,
+        leave,
+        appointments,
+        timeline,
+      };
+    });
+  }
+
+  function renderBoard(summary){
+    if(!boardEl) return;
+    const slots = currentBoardSlots();
+    const timeRail = slots
+      .filter((slot) => slot.getMinutes() === 0)
+      .map((slot) => `<div class="ops-board-hours__label" style="left:${((slot.getHours() - 7) * 4 / (14 * 4)) * 100}%">${formatClock(slot)}</div>`)
+      .join('');
+
+    const rows = summary.map((item) => {
+      const nextBusy = item.appointments.find((row) => row.start >= new Date());
+      const stateText = item.leave
+        ? 'On leave'
+        : item.timeline.some((slot) => slot.state === 'busy' && slot.start <= new Date() && slot.end > new Date() && sameDay(currentBoardDate, new Date()))
+          ? 'Busy now'
+          : item.timeline.some((slot) => slot.state === 'free')
+            ? 'Has gaps'
+            : 'No working gap';
+      const cells = item.timeline.map((slot) => {
+        const title = slot.event
+          ? `${item.therapist.name} · busy · ${formatClock(slot.start)}-${formatClock(slot.end)}`
+          : `${item.therapist.name} · ${slot.state} · ${formatClock(slot.start)}`;
+        const url = slot.event && slot.event.url ? ` data-url="${slot.event.url}"` : '';
+        return `<button type="button" class="ops-slot ops-slot--${slot.state}" data-therapist="${item.therapist.name}" data-start="${slot.start.toISOString()}" title="${title}"${url}></button>`;
+      }).join('');
+      return `
+        <div class="ops-board-row">
+          <div class="ops-board-row__meta">
+            <div class="ops-board-row__name"><span class="therapist-chip" style="--therapist-color:${item.color}"></span>${item.therapist.name}</div>
+            <div class="ops-board-row__status">${stateText}${nextBusy ? ` · next ${formatClock(nextBusy.start)}` : ''}</div>
+          </div>
+          <div class="ops-board-row__grid" style="--therapist-color:${item.color}">${cells}</div>
+        </div>
+      `;
+    }).join('');
+
+    boardEl.innerHTML = `
+      <div class="ops-board-hours">${timeRail}</div>
+      <div class="ops-board-rows">${rows || '<div class="empty-state">No therapists match the current filters.</div>'}</div>
+    `;
+
+    boardEl.querySelectorAll('.ops-slot').forEach((button) => {
+      button.addEventListener('click', () => {
+        const start = button.getAttribute('data-start');
+        const therapistName = button.getAttribute('data-therapist') || '';
+        const url = button.getAttribute('data-url');
+        if(url){
+          window.location.href = url;
+          return;
+        }
+        if(button.classList.contains('ops-slot--free')){
+          openModal(new Date(start), therapistName);
+        }
+      });
+    });
+  }
+
+  function renderStatusList(summary){
+    if(!statusListEl) return;
+    const rows = summary.map((item) => {
+      const freeSlots = item.timeline.filter((slot) => slot.state === 'free');
+      const busySlots = item.timeline.filter((slot) => slot.state === 'busy');
+      let state = 'Free';
+      let detail = freeSlots.length ? `Next gap ${formatClock(freeSlots[0].start)}` : 'No visible gap';
+      if(item.leave){
+        state = 'Leave';
+        detail = 'Marked annual leave';
+      } else if(sameDay(currentBoardDate, new Date()) && busySlots.some((slot) => slot.start <= new Date() && slot.end > new Date())){
+        const active = busySlots.find((slot) => slot.start <= new Date() && slot.end > new Date());
+        state = 'Busy now';
+        detail = active ? `Busy until ${formatClock(active.end)}` : detail;
+      } else if(!freeSlots.length && busySlots.length){
+        state = 'Booked';
+        detail = `Busy blocks ${busySlots.length}`;
+      }
+      return `
+        <div class="therapist-status-card">
+          <div class="therapist-status-card__head">
+            <div class="therapist-status-card__name"><span class="therapist-chip" style="--therapist-color:${item.color}"></span>${item.therapist.name}</div>
+            <span class="therapist-status-card__pill">${state}</span>
+          </div>
+          <div class="therapist-status-card__detail">${detail}</div>
+        </div>
+      `;
+    }).join('');
+    statusListEl.innerHTML = rows || '<div class="empty-state">No therapists in the current view.</div>';
+  }
+
+  function renderStats(summary){
+    const now = new Date();
+    const isToday = sameDay(currentBoardDate, now);
+    const liveBusy = isToday ? summary.filter((item) => item.timeline.some((slot) => slot.state === 'busy' && slot.start <= now && slot.end > now)).length : null;
+    const liveFree = isToday ? summary.filter((item) => item.timeline.some((slot) => slot.state === 'free' && slot.start <= now && slot.end > now)).length : null;
+    const fullBlocks = currentBoardSlots().filter((slot) => summary.length && summary.every((item) => {
+      const match = item.timeline.find((entry) => +entry.start === +slot);
+      return match && match.state !== 'free';
+    })).length;
+    const nextGap = firstFutureFreeSlot(summary, isToday ? now : startOfDay(currentBoardDate));
+
+    document.getElementById('statBusyNow').textContent = liveBusy === null ? '—' : `${liveBusy}/${summary.length}`;
+    document.getElementById('statBusyNowMeta').textContent = isToday ? 'Currently busy therapists.' : 'Live status available when viewing today.';
+    document.getElementById('statFreeNow').textContent = liveFree === null ? '—' : String(liveFree);
+    document.getElementById('statFreeNowMeta').textContent = isToday ? 'Therapists with a free working slot now.' : 'Switch to today for live free/busy status.';
+    document.getElementById('statFullBlocks').textContent = String(fullBlocks);
+    document.getElementById('statFullBlocksMeta').textContent = fullBlocks ? 'No visible therapist gap in these 15-minute blocks.' : 'There is at least one visible therapist gap throughout the day.';
+    document.getElementById('statNextGap').textContent = nextGap ? `${formatClock(nextGap.slot.start)} · ${nextGap.therapist.name}` : 'No visible gap';
+    document.getElementById('statNextGapMeta').textContent = nextGap ? 'First visible free therapist slot.' : 'Adjust filters or set weekly availability.';
+
+    if(isToday && summary.length && liveFree === 0){
+      clinicAlert.hidden = false;
+      clinicAlert.className = 'ops-clinic-alert ops-clinic-alert--danger';
+      clinicAlert.textContent = 'No visible therapist is free right now.';
+    } else if(isToday && summary.length){
+      clinicAlert.hidden = false;
+      clinicAlert.className = 'ops-clinic-alert ops-clinic-alert--ok';
+      clinicAlert.textContent = `${liveFree} therapist${liveFree === 1 ? '' : 's'} currently free.`;
+    } else {
+      clinicAlert.hidden = false;
+      clinicAlert.className = 'ops-clinic-alert';
+      clinicAlert.textContent = 'Board stats reflect the selected day and the active filters.';
+    }
+  }
+
+  function renderBoardAndStats(){
+    const summary = buildTherapistDaySummary();
+    renderBoard(summary);
+    renderStatusList(summary);
+    renderStats(summary);
+  }
+
+  document.getElementById('eventKindToggles').addEventListener('click', (event) => {
+    const button = event.target.closest('.kind-toggle');
+    if(!button) return;
+    const kind = button.getAttribute('data-kind');
+    if(!kind) return;
+    if(selectedKinds.has(kind)){
+      if(selectedKinds.size === 1) return;
+      selectedKinds.delete(kind);
+      button.classList.remove('active');
+    } else {
+      selectedKinds.add(kind);
+      button.classList.add('active');
+    }
+    if(calendar) calendar.refetchEvents();
+  });
+
+  boardDateInput.addEventListener('change', () => {
+    const date = parseDateOnly(boardDateInput.value);
+    if(date){
+      currentBoardDate = date;
+      if(calendar) calendar.gotoDate(date);
+      renderBoardAndStats();
+    }
+  });
+
+  calendar = new FullCalendar.Calendar(el, {
+    initialView: 'timeGridWeek',
+    height: 820,
+    allDaySlot: false,
+    expandRows: true,
+    nowIndicator: true,
+    slotDuration: '00:15:00',
+    snapDuration: '00:15:00',
+    slotLabelInterval: '00:15:00',
+    slotMinTime: '07:00:00',
+    slotMaxTime: '21:00:00',
+    firstDay: 1,
+    headerToolbar: { left: 'prev,next today', center: 'title', right: 'timeGridDay,timeGridWeek,dayGridMonth' },
     navLinks: true,
     selectable: true,
     selectMirror: true,
-    eventTimeFormat: { hour: '2-digit', minute: '2-digit', meridiem: true },
+    eventTimeFormat: { hour: '2-digit', minute: '2-digit', hour12: false },
+    datesSet: function(info){
+      currentBoardDate = calendar.getDate();
+      if(boardDateInput) boardDateInput.value = fmtDateInput(currentBoardDate);
+      requestAnimationFrame(renderBoardAndStats);
+    },
     dateClick: function(info){
       const d = new Date(info.date);
-      if(cal.view.type === 'dayGridMonth') d.setHours(12,0,0,0);
-      openModal(d);
+      if(calendar.view.type === 'dayGridMonth') d.setHours(9, 0, 0, 0);
+      openModal(d, visibleTherapists().length === 1 ? visibleTherapists()[0].name : '');
     },
     select: function(info){
-      openModal(info.start);
+      openModal(info.start, visibleTherapists().length === 1 ? visibleTherapists()[0].name : '');
     },
     eventClick: function(info){
       if(info.event.url){
@@ -588,21 +861,23 @@
         window.location.href = info.event.url;
       }
     },
-    events: function(fetchInfo, success, failure){
-      const params = new URLSearchParams();
-      params.set('start', fetchInfo.startStr);
-      params.set('end', fetchInfo.endStr);
-      if(childId) params.set('child_id', childId);
-      if(Array.isArray(therapistIds) && therapistIds.length){
-        therapistIds.forEach((id) => params.append('therapist_ids', String(id)));
+    eventContent: buildEventHtml,
+    eventDidMount: function(info){
+      const props = info.event.extendedProps || {};
+      if(props.kind === 'appointment'){
+        const color = therapistColor(props.therapistName || '');
+        info.el.style.background = 'transparent';
+        info.el.style.border = '0';
+        info.el.style.boxShadow = 'none';
+        info.el.style.setProperty('--therapist-color', color);
       }
-      fetch('{{ rp }}/api/calendar_events?' + params.toString())
-        .then((response) => response.json())
-        .then(success)
-        .catch(failure);
-    }
+    },
+    events: fetchEvents,
   });
-  cal.render();
+
+  currentBoardDate = new Date();
+  if(boardDateInput) boardDateInput.value = fmtDateInput(currentBoardDate);
+  calendar.render();
 })();
 </script>
 

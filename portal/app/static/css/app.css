@@ -1498,3 +1498,479 @@ body.modal-open {
     display: grid;
   }
 }
+
+/*
+   20260311-calendar-ops-board
+   Portal-only calendar board redesign.
+   SMS functionality intentionally untouched.
+*/
+
+.ops-calendar-hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: end;
+  padding: 22px 22px 20px;
+  border-radius: 26px;
+  background: linear-gradient(135deg, rgba(255,255,255,0.96), rgba(93, 93, 214, 0.08));
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  box-shadow: var(--shadow-sm);
+  margin-bottom: 18px;
+}
+
+.ops-calendar-hero__actions {
+  display: flex;
+  align-items: end;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.ops-calendar-datepick {
+  min-width: 180px;
+}
+
+.ops-calendar-filters-panel {
+  margin-bottom: 18px;
+}
+
+.ops-calendar-filter-form {
+  display: grid;
+  gap: 16px;
+}
+
+.ops-calendar-filter-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(220px, 1fr) minmax(260px, 1.15fr) minmax(240px, 0.9fr);
+  align-items: start;
+}
+
+.ops-calendar-filter-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.ops-calendar-filter-tags {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.ops-kind-toggle-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.kind-toggle {
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(248, 250, 252, 0.95);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 9px 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.kind-toggle.active {
+  background: rgba(37, 99, 235, 0.12);
+  border-color: rgba(37, 99, 235, 0.18);
+  color: #1d4ed8;
+}
+
+.ops-calendar-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.stat-card {
+  border-radius: 22px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255,255,255,0.95);
+  box-shadow: var(--shadow-sm);
+  padding: 16px 18px;
+  display: grid;
+  gap: 8px;
+}
+
+.stat-card--highlight {
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.10), rgba(91, 91, 214, 0.10));
+}
+
+.stat-card__label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted2);
+  font-weight: 800;
+}
+
+.stat-card__value {
+  font-size: 34px;
+  font-weight: 900;
+  letter-spacing: -0.04em;
+}
+
+.stat-card__value--small {
+  font-size: 28px;
+  line-height: 1.15;
+}
+
+.stat-card__meta {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.ops-clinic-alert {
+  border-radius: 18px;
+  padding: 12px 15px;
+  margin-bottom: 18px;
+  border: 1px solid rgba(37, 99, 235, 0.12);
+  background: rgba(37, 99, 235, 0.08);
+  color: #1d4ed8;
+  font-weight: 700;
+}
+
+.ops-clinic-alert--danger {
+  background: rgba(220, 38, 38, 0.08);
+  border-color: rgba(220, 38, 38, 0.14);
+  color: #b91c1c;
+}
+
+.ops-clinic-alert--ok {
+  background: rgba(22, 163, 74, 0.10);
+  border-color: rgba(22, 163, 74, 0.16);
+  color: #166534;
+}
+
+.ops-calendar-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.8fr) minmax(320px, 0.85fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.ops-calendar-main,
+.ops-calendar-side {
+  display: grid;
+  gap: 18px;
+}
+
+.ops-calendar-board-legend {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.ops-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ops-legend-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.ops-legend-swatch--free { background: rgba(22, 163, 74, 0.16); }
+.ops-legend-swatch--busy { background: #5b5bd6; }
+.ops-legend-swatch--leave {
+  background: repeating-linear-gradient(135deg, rgba(239, 68, 68, 0.22), rgba(239, 68, 68, 0.22) 4px, rgba(255,255,255,0.7) 4px, rgba(255,255,255,0.7) 8px);
+}
+.ops-legend-swatch--off { background: rgba(148, 163, 184, 0.18); }
+
+.ops-board-wrap {
+  overflow-x: auto;
+}
+
+.ops-board {
+  min-width: 100%;
+  display: grid;
+  gap: 12px;
+}
+
+.ops-board-hours {
+  position: relative;
+  height: 24px;
+  margin-left: 188px;
+  border-bottom: 1px dashed rgba(15, 23, 42, 0.08);
+}
+
+.ops-board-hours__label {
+  position: absolute;
+  transform: translateX(-50%);
+  top: 0;
+  font-size: 11px;
+  color: var(--muted2);
+  font-weight: 800;
+}
+
+.ops-board-rows {
+  display: grid;
+  gap: 12px;
+}
+
+.ops-board-row {
+  display: grid;
+  grid-template-columns: 180px minmax(720px, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.ops-board-row__meta {
+  display: grid;
+  gap: 6px;
+}
+
+.ops-board-row__name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.ops-board-row__status {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.therapist-chip {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--therapist-color, #5b5bd6);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--therapist-color, #5b5bd6) 12%, white);
+  flex: 0 0 auto;
+}
+
+.ops-board-row__grid {
+  display: grid;
+  grid-template-columns: repeat(56, minmax(12px, 1fr));
+  gap: 2px;
+}
+
+.ops-slot {
+  appearance: none;
+  border: 0;
+  border-radius: 8px;
+  height: 20px;
+  background: rgba(148, 163, 184, 0.18);
+  cursor: default;
+  padding: 0;
+}
+
+.ops-slot--free {
+  background: rgba(22, 163, 74, 0.16);
+  cursor: pointer;
+}
+
+.ops-slot--busy {
+  background: var(--therapist-color, #5b5bd6);
+  cursor: pointer;
+}
+
+.ops-slot--leave {
+  background: repeating-linear-gradient(135deg, rgba(239, 68, 68, 0.22), rgba(239, 68, 68, 0.22) 4px, rgba(255,255,255,0.7) 4px, rgba(255,255,255,0.7) 8px);
+}
+
+.ops-slot--off {
+  background: rgba(148, 163, 184, 0.14);
+}
+
+.therapist-status-list {
+  display: grid;
+  gap: 12px;
+}
+
+.therapist-status-card {
+  border-radius: 18px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(248,250,252,0.88);
+  padding: 14px;
+  display: grid;
+  gap: 8px;
+}
+
+.therapist-status-card__head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.therapist-status-card__name {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-weight: 800;
+}
+
+.therapist-status-card__pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.8);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.therapist-status-card__detail {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+#calendar {
+  min-height: 860px;
+}
+
+.fc {
+  --fc-border-color: rgba(15, 23, 42, 0.08);
+  --fc-page-bg-color: transparent;
+  --fc-now-indicator-color: #ef4444;
+}
+
+.fc .fc-toolbar.fc-header-toolbar {
+  margin-bottom: 16px;
+  gap: 12px;
+}
+
+.fc .fc-toolbar-title {
+  font-size: 24px;
+  font-weight: 900;
+  letter-spacing: -0.03em;
+}
+
+.fc .fc-button {
+  border-radius: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.1) !important;
+  background: rgba(255, 255, 255, 0.98) !important;
+  color: var(--text) !important;
+  box-shadow: var(--shadow-sm);
+  text-transform: capitalize;
+}
+
+.fc .fc-button-primary:not(:disabled).fc-button-active,
+.fc .fc-button-primary:not(:disabled):active,
+.fc .fc-button:hover {
+  background: rgba(37, 99, 235, 0.12) !important;
+  border-color: rgba(37, 99, 235, 0.2) !important;
+}
+
+.fc .fc-scrollgrid,
+.fc .fc-theme-standard td,
+.fc .fc-theme-standard th {
+  border-color: rgba(15, 23, 42, 0.08) !important;
+}
+
+.fc .fc-timegrid-slot,
+.fc .fc-col-header-cell,
+.fc .fc-daygrid-day {
+  background: rgba(255,255,255,0.94);
+}
+
+.fc .fc-timegrid-slot-label {
+  color: var(--muted2);
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.fc .fc-day-today {
+  background: rgba(37, 99, 235, 0.05) !important;
+}
+
+.fc .fc-event {
+  border: 0 !important;
+  border-radius: 14px !important;
+  padding: 0 !important;
+  box-shadow: none !important;
+  background: transparent !important;
+}
+
+.fc-appointment-card {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--therapist-color) 88%, white), color-mix(in srgb, var(--therapist-color) 70%, white));
+  color: #fff;
+  border-radius: 14px;
+  padding: 8px 10px;
+  box-shadow: 0 12px 24px color-mix(in srgb, var(--therapist-color) 22%, rgba(15,23,42,0.12));
+  min-height: 100%;
+}
+
+.fc-appointment-card__title {
+  font-weight: 800;
+  line-height: 1.2;
+  margin-bottom: 2px;
+}
+
+.fc-appointment-card__meta {
+  font-size: 11px;
+  opacity: 0.92;
+}
+
+.fc-appointment-card.status-missed,
+.fc-appointment-card.status-cancelled-provider,
+.fc-appointment-card.status-cancelled-me {
+  filter: saturate(0.78);
+}
+
+.fc-generic-card {
+  border-radius: 12px;
+  padding: 7px 10px;
+  background: rgba(15, 23, 42, 0.74);
+  color: #fff;
+  font-weight: 700;
+}
+
+@media (max-width: 1180px) {
+  .ops-calendar-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .ops-calendar-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 920px) {
+  .ops-calendar-hero {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ops-calendar-filter-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ops-calendar-hero__actions {
+    justify-content: flex-start;
+  }
+
+  .ops-board-hours {
+    margin-left: 0;
+  }
+
+  .ops-board-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .ops-calendar-stats {
+    grid-template-columns: 1fr;
+  }
+}
