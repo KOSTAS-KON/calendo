@@ -1,4 +1,3 @@
-# ===== BEGIN portal/app/routers/admin.py =====
 from __future__ import annotations
 
 import os
@@ -1114,6 +1113,3 @@ def admin_links(request: Request, db: Session = Depends(get_db)):
             "tenants": rows,
         },
     )
-
-# ===== END portal/app/routers/admin.py =====
-

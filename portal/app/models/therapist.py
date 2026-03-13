@@ -1,4 +1,3 @@
-# ===== BEGIN portal/app/models/therapist.py =====
 from __future__ import annotations
 
 from datetime import datetime
@@ -47,5 +46,3 @@ class Therapist(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
-
-# ===== END portal/app/models/therapist.py =====
