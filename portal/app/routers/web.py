@@ -571,6 +571,38 @@ def _ensure_people_archive_columns(db: Session) -> None:
 def _is_active_filter(model):
     return sa.or_(getattr(model, "is_archived").is_(False), getattr(model, "is_archived").is_(None))
 
+
+
+def _ensure_session_notes_tenant_column(db: Session) -> None:
+    """Best-effort schema safety net for older databases missing session_notes.tenant_id."""
+    bind = db.get_bind()
+    try:
+        insp = sa.inspect(bind)
+        existing = {c.get("name") for c in insp.get_columns("session_notes") if c.get("name")}
+    except Exception:
+        return
+    if "tenant_id" in existing:
+        return
+
+    stmts = [
+        "ALTER TABLE session_notes ADD COLUMN tenant_id VARCHAR(36)",
+    ]
+    if bind.dialect.name == "postgresql":
+        stmts.append(
+            "UPDATE session_notes sn SET tenant_id = a.tenant_id FROM appointments a WHERE a.id = sn.appointment_id AND sn.tenant_id IS NULL"
+        )
+    else:
+        stmts.append(
+            "UPDATE session_notes SET tenant_id = (SELECT tenant_id FROM appointments WHERE appointments.id = session_notes.appointment_id) WHERE tenant_id IS NULL"
+        )
+    stmts.append("CREATE INDEX IF NOT EXISTS ix_session_notes_tenant_id ON session_notes (tenant_id)")
+    for stmt in stmts:
+        try:
+            with bind.begin() as conn:
+                conn.exec_driver_sql(stmt)
+        except Exception:
+            pass
+
 # -----------------------------
 # UI: Suite & Dashboard
 # -----------------------------
@@ -1354,6 +1386,7 @@ async def calendar_seed_demo(request: Request):
         ts, tid = _resolve_tenant_or_404(db, request)
         monday = _demo_week_monday()
         seed_now = datetime.utcnow()
+        _ensure_session_notes_tenant_column(db)
 
         therapists_specs = [
             {
@@ -2398,6 +2431,7 @@ def appointment_detail(request: Request, appointment_id: int):
         if (guard := _assert_child_access(db, request, tid, appt.child_id)):
             return guard
 
+        _ensure_session_notes_tenant_column(db)
         note = db.query(SessionNote).filter(SessionNote.tenant_id == tid, SessionNote.appointment_id == appt.id).first()
         if not note:
             note = SessionNote(tenant_id=tid, appointment_id=appt.id)
@@ -2496,6 +2530,7 @@ async def appointment_note_save(request: Request, appointment_id: int):
             return _redirect_suite(request, "Calendar staff do not have access to session notes.")
         if (guard := _assert_child_access(db, request, tid, appt.child_id)):
             return guard
+        _ensure_session_notes_tenant_column(db)
         note = db.query(SessionNote).filter(SessionNote.tenant_id == tid, SessionNote.appointment_id == appt.id).first()
         if not note:
             note = SessionNote(tenant_id=tid, appointment_id=appt.id)
