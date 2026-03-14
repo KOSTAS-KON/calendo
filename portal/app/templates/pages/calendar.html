@@ -396,11 +396,11 @@
 </datalist>
 
 <script id="calendarContext" type="application/json">{{ {
-  "childId": selected_child_id,
-  "therapistIds": (selected_therapist_ids or []),
-  "therapists": therapists_payload,
-  "tenantSlug": tenant_slug,
-  "isTherapist": is_therapist,
+  "childId": (selected_child_id | default(None, true)),
+  "therapistIds": (selected_therapist_ids | default([], true)),
+  "therapists": (therapists_payload | default([], true)),
+  "tenantSlug": (tenant_slug | default("", true)),
+  "isTherapist": (is_therapist | default(false, true)),
 } | tojson }}</script>
 
 <script>

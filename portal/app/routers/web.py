@@ -1271,6 +1271,28 @@ def calendar_page(request: Request):
         else:
             children = []
         therapists = db.query(Therapist).filter(Therapist.tenant_id == tid).filter(_is_active_filter(Therapist)).order_by(Therapist.name.asc()).all()
+        therapists_payload: list[dict[str, Any]] = []
+        for t in therapists:
+            try:
+                availability = json.loads(getattr(t, "availability_json", "") or "{}") or {}
+            except Exception:
+                availability = {}
+            if not isinstance(availability, dict):
+                availability = {}
+            try:
+                leaves = json.loads(getattr(t, "annual_leave_json", "") or "[]") or []
+            except Exception:
+                leaves = []
+            if not isinstance(leaves, list):
+                leaves = []
+            therapists_payload.append(
+                {
+                    "id": t.id,
+                    "name": t.name,
+                    "availability": availability,
+                    "leaves": leaves,
+                }
+            )
         selected_child_id: int | None = None
         raw = (request.query_params.get("child_id") or "").strip()
         if raw:
@@ -1300,6 +1322,7 @@ def calendar_page(request: Request):
                 **ctx,
                 "children": children,
                 "therapists": therapists,
+                "therapists_payload": therapists_payload,
                 "selected_child_id": selected_child_id,
                 "selected_therapist_ids": selected_therapist_ids,
             },
