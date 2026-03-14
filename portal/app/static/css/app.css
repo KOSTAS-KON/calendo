@@ -1499,6 +1499,33 @@ body.modal-open {
   }
 }
 
+
+.inline-form {
+  display: inline-flex;
+  margin: 0;
+}
+
+.ops-howto-panel {
+  margin-bottom: 18px;
+}
+
+.ops-howto-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.ops-calendar-empty {
+  margin-top: 14px;
+}
+
+.ops-calendar-empty__actions {
+  margin-top: 12px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 /*
    20260311-calendar-ops-board
    Portal-only calendar board redesign.

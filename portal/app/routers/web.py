@@ -1271,28 +1271,6 @@ def calendar_page(request: Request):
         else:
             children = []
         therapists = db.query(Therapist).filter(Therapist.tenant_id == tid).filter(_is_active_filter(Therapist)).order_by(Therapist.name.asc()).all()
-        therapists_payload: list[dict[str, Any]] = []
-        for t in therapists:
-            try:
-                availability = json.loads(getattr(t, "availability_json", "") or "{}") or {}
-            except Exception:
-                availability = {}
-            if not isinstance(availability, dict):
-                availability = {}
-            try:
-                leaves = json.loads(getattr(t, "annual_leave_json", "") or "[]") or []
-            except Exception:
-                leaves = []
-            if not isinstance(leaves, list):
-                leaves = []
-            therapists_payload.append(
-                {
-                    "id": t.id,
-                    "name": t.name,
-                    "availability": availability,
-                    "leaves": leaves,
-                }
-            )
         selected_child_id: int | None = None
         raw = (request.query_params.get("child_id") or "").strip()
         if raw:
@@ -1314,6 +1292,33 @@ def calendar_page(request: Request):
         if rolef["is_therapist"]:
             therapist_self = _therapist_for_current_user(db, request, tid)
             selected_therapist_ids = [therapist_self.id] if therapist_self else []
+
+        initial_board_date = (request.query_params.get("board_date") or "").strip()
+        therapists_payload: list[dict[str, Any]] = []
+        for t in therapists:
+            try:
+                availability = json.loads(getattr(t, "availability_json", "") or "{}") or {}
+                if not isinstance(availability, dict):
+                    availability = {}
+            except Exception:
+                availability = {}
+            try:
+                leaves = json.loads(getattr(t, "annual_leave_json", "") or "[]") or []
+                if not isinstance(leaves, list):
+                    leaves = []
+            except Exception:
+                leaves = []
+            therapists_payload.append(
+                {
+                    "id": t.id,
+                    "name": t.name,
+                    "role": getattr(t, "role", None),
+                    "phone": getattr(t, "phone", None),
+                    "email": getattr(t, "email", None),
+                    "availability": availability,
+                    "leaves": leaves,
+                }
+            )
         ctx = _base_context(db, request, ts, tid)
         return templates.TemplateResponse(
             "pages/calendar.html",
@@ -1325,8 +1330,235 @@ def calendar_page(request: Request):
                 "therapists_payload": therapists_payload,
                 "selected_child_id": selected_child_id,
                 "selected_therapist_ids": selected_therapist_ids,
+                "initial_board_date": initial_board_date,
+                "allow_demo_seed": rolef["is_clinic_superuser"],
             },
         )
+    finally:
+        db.close()
+
+
+def _demo_week_monday(base: date | None = None) -> date:
+    d = base or date.today()
+    return d - timedelta(days=d.weekday())
+
+
+@router.post("/calendar/seed_demo")
+async def calendar_seed_demo(request: Request):
+    if (resp := _require_login(request)):
+        return resp
+    if (guard := _require_superuser_role(request)):
+        return guard
+    db = _db()
+    try:
+        ts, tid = _resolve_tenant_or_404(db, request)
+        monday = _demo_week_monday()
+        seed_now = datetime.utcnow()
+
+        therapists_specs = [
+            {
+                "name": "Maria Bella",
+                "role": "Speech therapist",
+                "email": "demo.maria.bella@calendo.local",
+                "phone": "+306900000001",
+                "availability": {
+                    "mon": [{"start": "09:00", "end": "17:00"}],
+                    "tue": [{"start": "09:00", "end": "17:00"}],
+                    "wed": [{"start": "09:00", "end": "17:00"}],
+                    "thu": [{"start": "09:00", "end": "17:00"}],
+                    "fri": [{"start": "09:00", "end": "15:00"}],
+                },
+                "leaves": [],
+            },
+            {
+                "name": "Konstantinos Konstantinou",
+                "role": "Physiotherapist",
+                "email": "demo.konstantinos@calendo.local",
+                "phone": "+306900000002",
+                "availability": {
+                    "mon": [{"start": "08:30", "end": "16:30"}],
+                    "tue": [{"start": "08:30", "end": "16:30"}],
+                    "wed": [{"start": "08:30", "end": "16:30"}],
+                    "thu": [{"start": "08:30", "end": "16:30"}],
+                    "fri": [{"start": "08:30", "end": "14:30"}],
+                },
+                "leaves": [],
+            },
+            {
+                "name": "Eleni Papadaki",
+                "role": "Psychotherapist",
+                "email": "demo.eleni.papadaki@calendo.local",
+                "phone": "+306900000003",
+                "availability": {
+                    "mon": [{"start": "10:00", "end": "18:00"}],
+                    "tue": [{"start": "10:00", "end": "18:00"}],
+                    "wed": [{"start": "10:00", "end": "18:00"}],
+                    "thu": [{"start": "10:00", "end": "18:00"}],
+                    "fri": [{"start": "10:00", "end": "16:00"}],
+                },
+                "leaves": [{"start": (monday + timedelta(days=2)).isoformat(), "end": (monday + timedelta(days=2)).isoformat(), "label": "Conference day"}],
+            },
+        ]
+        therapists_by_name: dict[str, Therapist] = {}
+        existing_therapists = {t.name: t for t in db.query(Therapist).filter(Therapist.tenant_id == tid).all()}
+        for spec in therapists_specs:
+            t = existing_therapists.get(spec["name"])
+            if not t:
+                t = Therapist(
+                    tenant_id=tid,
+                    name=spec["name"],
+                    role=spec["role"],
+                    email=spec["email"],
+                    phone=spec["phone"],
+                    created_at=seed_now,
+                    updated_at=seed_now,
+                    availability_json=json.dumps(spec["availability"], ensure_ascii=False),
+                    annual_leave_json=json.dumps(spec["leaves"], ensure_ascii=False),
+                )
+                db.add(t)
+                db.flush()
+            elif not (getattr(t, "availability_json", "") or "").strip():
+                t.availability_json = json.dumps(spec["availability"], ensure_ascii=False)
+                t.annual_leave_json = json.dumps(spec["leaves"], ensure_ascii=False)
+                t.updated_at = seed_now
+                db.add(t)
+                db.flush()
+            therapists_by_name[spec["name"]] = t
+
+        children_specs = [
+            {"full_name": "K Konstantinou 3", "parent1_name": "Parent K", "parent1_phone": "+306900010001", "notes": "Speech articulation goals"},
+            {"full_name": "N Papadopoulos", "parent1_name": "Parent N", "parent1_phone": "+306900010002", "notes": "Lower limb strengthening"},
+            {"full_name": "A Georgiou", "parent1_name": "Parent A", "parent1_phone": "+306900010003", "notes": "Anxiety regulation support"},
+            {"full_name": "M Stavrou", "parent1_name": "Parent M", "parent1_phone": "+306900010004", "notes": "Language expansion and pacing"},
+        ]
+        children_by_name: dict[str, Child] = {}
+        existing_children = {c.full_name: c for c in db.query(Child).filter(Child.tenant_id == tid).all()}
+        for spec in children_specs:
+            c = existing_children.get(spec["full_name"])
+            if not c:
+                c = Child(
+                    tenant_id=tid,
+                    full_name=spec["full_name"],
+                    notes=spec["notes"],
+                    parent1_name=spec["parent1_name"],
+                    parent1_phone=spec["parent1_phone"],
+                )
+                db.add(c)
+                db.flush()
+            children_by_name[spec["full_name"]] = c
+
+        assignment_specs = [
+            ("K Konstantinou 3", "Maria Bella"),
+            ("N Papadopoulos", "Konstantinos Konstantinou"),
+            ("A Georgiou", "Eleni Papadaki"),
+            ("M Stavrou", "Maria Bella"),
+        ]
+        _ensure_assignment_table(db)
+        for child_name, therapist_name in assignment_specs:
+            child = children_by_name[child_name]
+            therapist = therapists_by_name[therapist_name]
+            exists = db.query(ChildTherapistAssignment).filter(
+                ChildTherapistAssignment.tenant_id == tid,
+                ChildTherapistAssignment.child_id == child.id,
+                ChildTherapistAssignment.therapist_id == therapist.id,
+            ).first()
+            if not exists:
+                db.add(ChildTherapistAssignment(
+                    tenant_id=tid,
+                    child_id=child.id,
+                    therapist_id=therapist.id,
+                    is_active=True,
+                ))
+
+        appointment_specs = [
+            {"child": "K Konstantinou 3", "therapist": "Maria Bella", "procedure": "Speech Session", "therapy": "SPEECH_THERAPY", "appt_type": "GOVERNMENT_FUNDED", "day": 0, "time": (9, 0), "duration": 60, "status": "ATTENDED", "note": {"summary": "Produced /s/ clearly in initial word position with picture prompts.", "what_went_wrong": "Lost focus after 35 minutes and needed a movement break.", "improvements": "Visual cue cards and short repetition sets helped attention.", "next_steps": "Move from words to short phrases and practise /s/ in final position."}},
+            {"child": "N Papadopoulos", "therapist": "Konstantinos Konstantinou", "procedure": "Physiotherapy", "therapy": "PHYSIOTHERAPY", "appt_type": "REGULAR_ADDITIONAL", "day": 0, "time": (9, 15), "duration": 45, "status": "CONFIRMED"},
+            {"child": "A Georgiou", "therapist": "Eleni Papadaki", "procedure": "Psychotherapy", "therapy": "PSYCHOTHERAPY", "appt_type": "BESPOKE_EXTRA", "day": 0, "time": (10, 0), "duration": 60, "status": "CONFIRMED"},
+            {"child": "K Konstantinou 3", "therapist": "Maria Bella", "procedure": "Speech Session", "therapy": "SPEECH_THERAPY", "appt_type": "GOVERNMENT_FUNDED", "day": 2, "time": (11, 0), "duration": 60, "status": "CONFIRMED"},
+            {"child": "M Stavrou", "therapist": "Maria Bella", "procedure": "Speech Session", "therapy": "SPEECH_THERAPY", "appt_type": "REPLACEMENT", "day": 3, "time": (12, 15), "duration": 45, "status": "CONFIRMED"},
+            {"child": "N Papadopoulos", "therapist": "Konstantinos Konstantinou", "procedure": "Physiotherapy", "therapy": "PHYSIOTHERAPY", "appt_type": "REGULAR_ADDITIONAL", "day": 3, "time": (13, 0), "duration": 60, "status": "CONFIRMED"},
+            {"child": "A Georgiou", "therapist": "Eleni Papadaki", "procedure": "Psychotherapy", "therapy": "PSYCHOTHERAPY", "appt_type": "BESPOKE_EXTRA", "day": 4, "time": (14, 0), "duration": 60, "status": "UNCONFIRMED"},
+            {"child": "K Konstantinou 3", "therapist": "Maria Bella", "procedure": "Speech Session", "therapy": "SPEECH_THERAPY", "appt_type": "GOVERNMENT_FUNDED", "day": 4, "time": (15, 0), "duration": 60, "status": "UNCONFIRMED"},
+        ]
+        for spec in appointment_specs:
+            child = children_by_name[spec["child"]]
+            starts_at = datetime.combine(monday + timedelta(days=spec["day"]), time(spec["time"][0], spec["time"][1]))
+            ends_at = starts_at + timedelta(minutes=spec["duration"])
+            existing = db.query(Appointment).filter(
+                Appointment.tenant_id == tid,
+                Appointment.child_id == child.id,
+                Appointment.therapist_name == spec["therapist"],
+                Appointment.starts_at == starts_at,
+                Appointment.procedure == spec["procedure"],
+            ).first()
+            if existing:
+                appt = existing
+            else:
+                appt = Appointment(
+                    tenant_id=tid,
+                    child_id=child.id,
+                    therapist_name=spec["therapist"],
+                    starts_at=starts_at,
+                    ends_at=ends_at,
+                    procedure=spec["procedure"],
+                    duration_minutes=spec["duration"],
+                    appointment_type=spec["appt_type"],
+                    therapy_type=spec["therapy"],
+                    attendance_status=spec["status"],
+                )
+                db.add(appt)
+                db.flush()
+            note_spec = spec.get("note")
+            if note_spec and not db.query(SessionNote).filter(SessionNote.appointment_id == appt.id).first():
+                db.add(SessionNote(
+                    tenant_id=tid,
+                    appointment_id=appt.id,
+                    summary=note_spec["summary"],
+                    what_went_wrong=note_spec["what_went_wrong"],
+                    improvements=note_spec["improvements"],
+                    next_steps=note_spec["next_steps"],
+                ))
+
+        billing_child = children_by_name["K Konstantinou 3"]
+        billing_due = monday + timedelta(days=4)
+        has_bill = db.query(BillingItem).filter(
+            BillingItem.tenant_id == tid,
+            BillingItem.child_id == billing_child.id,
+            BillingItem.billing_due == billing_due,
+            BillingItem.description == "Demo weekly billing",
+        ).first()
+        if not has_bill:
+            db.add(BillingItem(
+                tenant_id=tid,
+                child_id=billing_child.id,
+                billing_due=billing_due,
+                amount_cents=16000,
+                currency="EUR",
+                description="Demo weekly billing",
+                paid="NO",
+                invoice_created="YES",
+                parent_signed_off="NO",
+            ))
+
+        journey_child = children_by_name["A Georgiou"]
+        journey_at = datetime.combine(monday + timedelta(days=1), time(16, 0))
+        has_tl = db.query(TimelineEvent).filter(
+            TimelineEvent.child_id == journey_child.id,
+            TimelineEvent.title == "Parent feedback on home practice",
+            TimelineEvent.occurred_at == journey_at,
+        ).first()
+        if not has_tl:
+            db.add(TimelineEvent(
+                child_id=journey_child.id,
+                event_type="PARENT_FEEDBACK",
+                title="Parent feedback on home practice",
+                details="Family reported improved confidence after the bespoke support week.",
+                occurred_at=journey_at,
+            ))
+
+        db.commit()
+        _toast(request, "Demo clinic week loaded. Use the filters, board, and calendar to explore a realistic busy schedule.")
+        return RedirectResponse(url=f"{_rp(request)}/calendar?tenant={ts}&board_date={monday.isoformat()}&demo=1", status_code=303)
     finally:
         db.close()
 
@@ -1471,7 +1703,7 @@ def api_calendar_events(request: Request):
 
         for a in appts:
             start = a.starts_at
-            end = a.ends_at or (a.starts_at + timedelta(minutes=60))
+            end = a.ends_at or (a.starts_at + timedelta(minutes=getattr(a, "duration_minutes", 60) or 60))
             child_name = getattr(getattr(a, "child", None), "full_name", "") or ""
             tname = (getattr(a, "therapist_name", "") or "").strip()
             title = f"{child_name} — {a.procedure}".strip(" —")
@@ -1485,6 +1717,14 @@ def api_calendar_events(request: Request):
                     "end": end.isoformat(),
                     "color": appt_color(a),
                     "url": f"{rp}/appointments/{a.id}",
+                    "kind": "appointment",
+                    "childName": child_name,
+                    "therapistName": tname,
+                    "procedure": a.procedure,
+                    "attendanceStatus": getattr(a, "attendance_status", None),
+                    "appointmentType": getattr(a, "appointment_type", "UNSPECIFIED"),
+                    "therapyType": getattr(a, "therapy_type", "UNSPECIFIED"),
+                    "durationMinutes": getattr(a, "duration_minutes", int((end - start).total_seconds() // 60)),
                 }
             )
 
@@ -1519,6 +1759,10 @@ def api_calendar_events(request: Request):
                     "allDay": True,
                     "color": color,
                     "url": f"{rp}/billing?child_id={b.child_id}",
+                    "kind": "billing",
+                    "childName": child_name,
+                    "billingState": state,
+                    "amountLabel": amt,
                 }
             )
 
@@ -1553,6 +1797,9 @@ def api_calendar_events(request: Request):
                     "start": tl.occurred_at.isoformat(),
                     "color": journey_color(tl),
                     "url": f"{rp}/timeline?child_id={tl.child_id}",
+                    "kind": "journey",
+                    "childName": child_name,
+                    "journeyType": tl.event_type,
                 }
             )
 
@@ -1573,6 +1820,9 @@ async def calendar_add_appointment(request: Request):
     starts_at_raw = str(form.get("starts_at") or "").strip()
     therapist_name = str(form.get("therapist_name") or "").strip()
     procedure = str(form.get("procedure") or "").strip() or "Session"
+    duration_minutes_raw = str(form.get("duration_minutes") or "60").strip()
+    appointment_type = str(form.get("appointment_type") or "UNSPECIFIED").strip().upper() or "UNSPECIFIED"
+    therapy_type = str(form.get("therapy_type") or "UNSPECIFIED").strip().upper() or "UNSPECIFIED"
     also_add_tl = _parse_yes_no(str(form.get("also_add_timeline") or "YES"), default="YES")
 
     try:
@@ -1580,7 +1830,14 @@ async def calendar_add_appointment(request: Request):
     except Exception:
         raise HTTPException(status_code=400, detail="child_id required")
     starts_at = _parse_dt_local(starts_at_raw)
-    ends_at = starts_at + timedelta(minutes=60)
+    try:
+        duration_minutes = int(duration_minutes_raw or "60")
+    except Exception:
+        duration_minutes = 60
+    duration_minutes = max(15, min(240, duration_minutes))
+    if duration_minutes % 15:
+        duration_minutes = ((duration_minutes + 14) // 15) * 15
+    ends_at = starts_at + timedelta(minutes=duration_minutes)
 
     db = _db()
     try:
@@ -1598,6 +1855,9 @@ async def calendar_add_appointment(request: Request):
             starts_at=starts_at,
             ends_at=ends_at,
             procedure=procedure,
+            duration_minutes=duration_minutes,
+            appointment_type=appointment_type,
+            therapy_type=therapy_type,
             attendance_status="UNCONFIRMED",
         )
         db.add(appt)

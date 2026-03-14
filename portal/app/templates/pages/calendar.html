@@ -16,6 +16,11 @@
       <label class="label" for="boardDate">Board date</label>
       <input id="boardDate" class="input" type="date">
     </div>
+    {% if allow_demo_seed %}
+      <form method="post" action="{{ rp }}/calendar/seed_demo" class="inline-form">
+        <button type="submit" class="btn btn-outline">Load demo clinic week</button>
+      </form>
+    {% endif %}
     <button type="button" class="btn btn-primary" id="openQuickCreate">⚡ Quick create</button>
   </div>
 </section>
@@ -91,6 +96,34 @@
   </div>
 </section>
 
+<section class="subpanel ops-howto-panel">
+  <div class="subhead subhead-flex">
+    <div>
+      <div class="section-heading">How to use this screen</div>
+      <p class="section-copy">This page is meant to be used from left to right: filter, scan the board, then open the appointment note.</p>
+    </div>
+    <div class="ops-calendar-filter-tags">
+      <span class="focus-tag">1 · Choose child / therapist</span>
+      <span class="focus-tag">2 · Scan gaps and busy slots</span>
+      <span class="focus-tag">3 · Open the appointment note</span>
+    </div>
+  </div>
+  <div class="subbody ops-howto-grid">
+    <div class="empty-state">
+      <strong>Therapist workflow</strong>
+      <div class="hint">Open an appointment, review the previous note, write today’s achievements, then save the plan for the next session.</div>
+    </div>
+    <div class="empty-state">
+      <strong>Reception / superuser workflow</strong>
+      <div class="hint">Keep all therapists visible for the full clinic picture. Use the board to spot free 15-minute gaps and open Quick create directly from a free slot.</div>
+    </div>
+    <div class="empty-state">
+      <strong>Need a live example?</strong>
+      <div class="hint">If the calendar is empty, use <em>Load demo clinic week</em> to seed mock therapists, children, appointments, billing, and one previous session note.</div>
+    </div>
+  </div>
+</section>
+
 <section class="ops-calendar-stats" id="calendarStats">
   <article class="stat-card">
     <div class="stat-card__label">Busy right now</div>
@@ -145,6 +178,17 @@
       </div>
       <div class="subbody">
         <div id="calendar"></div>
+        <div id="calendarEmpty" class="empty-state ops-calendar-empty" hidden>
+          <strong>No calendar items match this view yet.</strong>
+          <div class="hint">Use Quick create to add an appointment, or change the active filters. {% if allow_demo_seed %}You can also load the demo clinic week to see a realistic busy schedule immediately.{% endif %}</div>
+          {% if allow_demo_seed %}
+            <div class="ops-calendar-empty__actions">
+              <form method="post" action="{{ rp }}/calendar/seed_demo" class="inline-form">
+                <button type="submit" class="btn btn-outline">Load demo clinic week</button>
+              </form>
+            </div>
+          {% endif %}
+        </div>
       </div>
     </div>
   </section>
@@ -396,11 +440,14 @@
 </datalist>
 
 <script id="calendarContext" type="application/json">{{ {
-  "childId": (selected_child_id | default(None, true)),
-  "therapistIds": (selected_therapist_ids | default([], true)),
-  "therapists": (therapists_payload | default([], true)),
-  "tenantSlug": (tenant_slug | default("", true)),
-  "isTherapist": (is_therapist | default(false, true)),
+  "childId": selected_child_id,
+  "therapistIds": (selected_therapist_ids or []),
+  "therapists": therapists_payload | default([], true),
+  "tenantSlug": tenant_slug,
+  "isTherapist": is_therapist,
+  "initialBoardDate": initial_board_date | default('', true),
+  "allowDemoSeed": allow_demo_seed | default(false, true),
+  "demoActive": (request.query_params.get('demo') or '') == '1',
 } | tojson }}</script>
 
 <script>
@@ -411,6 +458,7 @@
   const therapistIds = Array.isArray(context.therapistIds) ? context.therapistIds.map((v) => Number(v)) : [];
   const therapists = Array.isArray(context.therapists) ? context.therapists : [];
   const isTherapist = !!context.isTherapist;
+  const initialBoardDate = context.initialBoardDate || '';
 
   const el = document.getElementById('calendar');
   const modal = document.getElementById('createModal');
@@ -418,6 +466,7 @@
   const statusListEl = document.getElementById('therapistStatusList');
   const boardDateInput = document.getElementById('boardDate');
   const clinicAlert = document.getElementById('clinicAlert');
+  const calendarEmpty = document.getElementById('calendarEmpty');
 
   let selectedKinds = new Set(['appointment']);
   let rawEventCache = [];
@@ -495,7 +544,7 @@
     });
   }
   function appointmentEventsForBoard(){
-    return rawEventCache.filter((ev) => String((ev.extendedProps && ev.extendedProps.kind) || '') === 'appointment');
+    return rawEventCache.filter((ev) => String((ev.extendedProps && ev.extendedProps.kind) || ev.kind || '') === 'appointment');
   }
   function openModal(startDate, therapistName){
     const dt = roundToQuarter(startDate instanceof Date ? startDate : new Date(startDate));
@@ -633,7 +682,7 @@
     const dayStart = startOfDay(date);
     const dayEnd = addMinutes(dayStart, 24 * 60);
     return appointmentEventsForBoard()
-      .filter((event) => String(event.extendedProps?.therapistName || '').trim() === String(name || '').trim())
+      .filter((event) => String(event.therapistName || event.extendedProps?.therapistName || '').trim() === String(name || '').trim())
       .filter((event) => {
         const start = parseDateTime(event.start);
         const end = parseDateTime(event.end);
@@ -781,6 +830,12 @@
     statusListEl.innerHTML = rows || '<div class="empty-state">No therapists in the current view.</div>';
   }
 
+  function renderCalendarEmptyState(){
+    if(!calendarEmpty) return;
+    const activeEvents = filterEvents(rawEventCache);
+    calendarEmpty.hidden = activeEvents.length > 0;
+  }
+
   function renderStats(summary){
     const now = new Date();
     const isToday = sameDay(currentBoardDate, now);
@@ -821,6 +876,7 @@
     renderBoard(summary);
     renderStatusList(summary);
     renderStats(summary);
+    renderCalendarEmptyState();
   }
 
   document.getElementById('eventKindToggles').addEventListener('click', (event) => {
@@ -850,6 +906,7 @@
 
   calendar = new FullCalendar.Calendar(el, {
     initialView: 'timeGridWeek',
+    initialDate: initialBoardDate || new Date(),
     height: 820,
     allDaySlot: false,
     expandRows: true,
@@ -898,7 +955,7 @@
     events: fetchEvents,
   });
 
-  currentBoardDate = new Date();
+  currentBoardDate = parseDateOnly(initialBoardDate) || new Date();
   if(boardDateInput) boardDateInput.value = fmtDateInput(currentBoardDate);
   calendar.render();
 })();
