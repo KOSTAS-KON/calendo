@@ -1,12 +1,16 @@
+{% set _req = request if request is defined else none %}
+{% set _lang = ui_lang(_req) if _req is not none and ui_lang is defined else 'el' %}
+{% set _rp = _req.scope.root_path if _req is not none else '' %}
+{% set _tenant_slug = tenant_slug if tenant_slug is defined else '' %}
+{% set _current_role = current_role if current_role is defined else '' %}
+{% set _is_therapist = is_therapist if is_therapist is defined else false %}
 <!doctype html>
-<html lang="{{ ui_lang(request) if request is defined else 'el' }}">
+<html lang="{{ _lang }}">
 
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>{{ page_title or tr(request, 'Calendo Θεραπευτικό Portal', 'Calendo Therapy Portal') }}</title>
-
-  {% set rp = request.scope.root_path or "" %}
+  <title>{{ page_title or "Calendo" }}</title>
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -14,70 +18,85 @@
 
   <script src="https://cdn.tailwindcss.com"></script>
 
-  <link rel="stylesheet" href="{{ rp }}/static/css/app.css?v={{ static_version or '20260313-recurring-calendar' }}" />
+  <link rel="stylesheet" href="{{ _rp }}/static/css/app.css?v={{ static_version or '20260313-recurring-calendar' }}" />
   {% block head_extra %}{% endblock %}
 </head>
 
 <body class="bg-slate-100 text-slate-900">
   <div class="page">
 
-    <aside class="sidebar" id="sidebar" aria-label="{{ tr(request, 'Κύρια πλοήγηση', 'Primary navigation') }}">
+    <aside class="sidebar" id="sidebar" aria-label="{{ tr(_req, 'Κύρια πλοήγηση', 'Primary navigation') if _req is not none and tr is defined else 'Primary navigation' }}">
       <div class="sidebar-inner">
         <div class="sidebar-mobile-head">
-          <div class="sidebar-title">{{ tr(request, 'Χώρος εργασίας', 'Workspace') }}</div>
-          <button class="iconbtn sidebar-close" type="button" data-action="close-sidebar" aria-label="{{ tr(request, 'Κλείσιμο μενού', 'Close menu') }}">✕</button>
+          <div class="sidebar-title">{{ tr(_req, 'Χώρος εργασίας', 'Workspace') if _req is not none and tr is defined else 'Workspace' }}</div>
+          <button class="iconbtn sidebar-close" type="button" data-action="close-sidebar" aria-label="{{ tr(_req, 'Κλείσιμο μενού', 'Close menu') if _req is not none and tr is defined else 'Close menu' }}">✕</button>
         </div>
 
-        <a class="sidebar-link {% if active=='dashboard' %}active{% endif %}" href="{{ rp }}/?tenant={{ tenant_slug }}">
+        <a class="sidebar-link {% if active=='dashboard' %}active{% endif %}" href="{{ _rp }}/{% if _tenant_slug %}?tenant={{ _tenant_slug }}{% endif %}">
           <span class="icon">🏠</span>
-          <span>{{ tr(request, 'Επισκόπηση', 'Overview') }}</span>
+          <span>{{ tr(_req, 'Επισκόπηση', 'Overview') if _req is not none and tr is defined else 'Overview' }}</span>
         </a>
-        <a class="sidebar-link {% if active=='suite' %}active{% endif %}" href="{{ rp }}/t/{{ tenant_slug }}/suite">
+
+        {% if _tenant_slug %}
+        <a class="sidebar-link {% if active=='suite' %}active{% endif %}" href="{{ _rp }}/t/{{ _tenant_slug }}/suite">
           <span class="icon">🧩</span>
-          <span>{{ tr(request, 'Κεντρική σελίδα', 'Suite') }}</span>
+          <span>{{ tr(_req, 'Κέντρο', 'Suite') if _req is not none and tr is defined else 'Suite' }}</span>
         </a>
-        {% if can_access_calendar %}
-        <a class="sidebar-link {% if active=='appointments' %}active{% endif %}" href="{{ rp }}/calendar?tenant={{ tenant_slug }}">
+        {% endif %}
+
+        {% if can_access_calendar is defined and can_access_calendar and _tenant_slug %}
+        <a class="sidebar-link {% if active=='appointments' %}active{% endif %}" href="{{ _rp }}/calendar?tenant={{ _tenant_slug }}">
           <span class="icon">📅</span>
-          <span>{{ tr(request, 'Ημερολόγιο', 'Calendar') }}</span>
+          <span>{{ tr(_req, 'Ημερολόγιο', 'Calendar') if _req is not none and tr is defined else 'Calendar' }}</span>
         </a>
         {% endif %}
-        {% if can_access_children %}
-        <a class="sidebar-link {% if active=='children' %}active{% endif %}" href="{{ rp }}/children?tenant={{ tenant_slug }}">
+
+        {% if can_access_children is defined and can_access_children and _tenant_slug %}
+        <a class="sidebar-link {% if active=='children' %}active{% endif %}" href="{{ _rp }}/children?tenant={{ _tenant_slug }}">
           <span class="icon">🧒</span>
-          <span>{% if is_therapist %}{{ tr(request, 'Το πελατολόγιό μου', 'My Caseload') }}{% else %}{{ tr(request, 'Παιδιά', 'Children') }}{% endif %}</span>
+          <span>
+            {% if _is_therapist %}
+              {{ tr(_req, 'Τα παιδιά μου', 'My Caseload') if _req is not none and tr is defined else 'My Caseload' }}
+            {% else %}
+              {{ tr(_req, 'Παιδιά', 'Children') if _req is not none and tr is defined else 'Children' }}
+            {% endif %}
+          </span>
         </a>
         {% endif %}
-        {% if can_access_therapists %}
-        <a class="sidebar-link {% if active=='therapists' %}active{% endif %}" href="{{ rp }}/therapists?tenant={{ tenant_slug }}">
+
+        {% if can_access_therapists is defined and can_access_therapists and _tenant_slug %}
+        <a class="sidebar-link {% if active=='therapists' %}active{% endif %}" href="{{ _rp }}/therapists?tenant={{ _tenant_slug }}">
           <span class="icon">👩‍⚕️</span>
-          <span>{{ tr(request, 'Θεραπευτές', 'Therapists') }}</span>
+          <span>{{ tr(_req, 'Θεραπευτές', 'Therapists') if _req is not none and tr is defined else 'Therapists' }}</span>
         </a>
         {% endif %}
-        {% if can_manage_team %}
-        <a class="sidebar-link {% if active=='team' %}active{% endif %}" href="{{ rp }}/team?tenant={{ tenant_slug }}">
+
+        {% if can_manage_team is defined and can_manage_team and _tenant_slug %}
+        <a class="sidebar-link {% if active=='team' %}active{% endif %}" href="{{ _rp }}/team?tenant={{ _tenant_slug }}">
           <span class="icon">🔐</span>
-          <span>{{ tr(request, 'Ομάδα & Πρόσβαση', 'Team & Access') }}</span>
+          <span>{{ tr(_req, 'Ομάδα & Πρόσβαση', 'Team & Access') if _req is not none and tr is defined else 'Team & Access' }}</span>
         </a>
         {% endif %}
-        {% if can_access_sms_outbox %}
-        <a class="sidebar-link {% if active=='outbox' %}active{% endif %}" href="{{ rp }}/sms-outbox?tenant={{ tenant_slug }}">
+
+        {% if can_access_sms_outbox is defined and can_access_sms_outbox and _tenant_slug %}
+        <a class="sidebar-link {% if active=='outbox' %}active{% endif %}" href="{{ _rp }}/sms-outbox?tenant={{ _tenant_slug }}">
           <span class="icon">📨</span>
-          <span>{{ tr(request, 'Εξερχόμενα SMS', 'SMS Outbox') }}</span>
+          <span>{{ tr(_req, 'Εξερχόμενα SMS', 'SMS Outbox') if _req is not none and tr is defined else 'SMS Outbox' }}</span>
         </a>
         {% endif %}
-        {% if can_access_settings %}
-        <a class="sidebar-link {% if active=='settings' %}active{% endif %}" href="{{ rp }}/settings?tenant={{ tenant_slug }}">
+
+        {% if can_access_settings is defined and can_access_settings and _tenant_slug %}
+        <a class="sidebar-link {% if active=='settings' %}active{% endif %}" href="{{ _rp }}/settings?tenant={{ _tenant_slug }}">
           <span class="icon">⚙️</span>
-          <span>{{ tr(request, 'Ρυθμίσεις', 'Settings') }}</span>
+          <span>{{ tr(_req, 'Ρυθμίσεις', 'Settings') if _req is not none and tr is defined else 'Settings' }}</span>
         </a>
         {% endif %}
 
         {% if sms_app_url %}
-          <div class="sidebar-section">{{ tr(request, 'Εφαρμογές', 'Apps') }}</div>
+          <div class="sidebar-section">{{ tr(_req, 'Εφαρμογές', 'Apps') if _req is not none and tr is defined else 'Apps' }}</div>
           <a class="sidebar-link" href="{{ sms_app_url }}" target="_blank" rel="noopener">
             <span class="icon">🗓️</span>
-            <span>{{ tr(request, 'Ημερολόγιο SMS', 'SMS Calendar') }}</span>
+            <span>{{ tr(_req, 'Ημερολόγιο SMS', 'SMS Calendar') if _req is not none and tr is defined else 'SMS Calendar' }}</span>
           </a>
         {% endif %}
       </div>
@@ -89,28 +108,40 @@
       <div class="topbar">
         <div class="topbar-inner">
           <div class="topbar-left">
-            <button class="menu-btn" type="button" data-action="toggle-sidebar" aria-label="{{ tr(request, 'Εναλλαγή μενού', 'Toggle menu') }}">☰</button>
-            <a class="brand" href="{{ rp }}/t/{{ tenant_slug }}/suite">
+            <button class="menu-btn" type="button" data-action="toggle-sidebar" aria-label="{{ tr(_req, 'Εναλλαγή μενού', 'Toggle menu') if _req is not none and tr is defined else 'Toggle menu' }}">☰</button>
+            {% if _tenant_slug %}
+            <a class="brand" href="{{ _rp }}/t/{{ _tenant_slug }}/suite">
+            {% else %}
+            <a class="brand" href="{{ _rp }}/">
+            {% endif %}
               <div class="brand-logo"></div>
               <div class="brand-text">
                 <div class="brand-title">Calendo</div>
-                <div class="brand-sub">{{ tr(request, 'Απλή καθημερινή ροή για θεραπευτές', 'Simple daily workflow for therapists') }}</div>
+                <div class="brand-sub">{{ tr(_req, 'Απλή καθημερινή ροή για θεραπευτές', 'Simple daily workflow for therapists') if _req is not none and tr is defined else 'Simple daily workflow for therapists' }}</div>
               </div>
             </a>
           </div>
 
           <div class="top-actions">
+            {% if _req is not none and lang_switch_url is defined %}
+            <div style="display:flex; gap:6px; align-items:center;">
+              <a class="btn btn-sm {% if _lang == 'el' %}btn-primary{% else %}btn-outline{% endif %}" href="{{ lang_switch_url(_req, 'el') }}">EL</a>
+              <a class="btn btn-sm {% if _lang == 'en' %}btn-primary{% else %}btn-outline{% endif %}" href="{{ lang_switch_url(_req, 'en') }}">EN</a>
+            </div>
+            {% endif %}
+
+            {% if _tenant_slug %}
             <div class="tenant-chip">
               <span class="tenant-dot"></span>
-              <span>{{ tenant_slug }}</span>
-              <span class="badge badge-neutral">{{ current_role|replace('_', ' ')|title }}</span>
+              <span>{{ _tenant_slug }}</span>
+              {% if _current_role %}
+              <span class="badge badge-neutral">{{ _current_role|replace('_', ' ')|title }}</span>
+              {% endif %}
             </div>
-            <div class="flex items-center gap-2">
-              <a class="btn btn-sm btn-outline {% if ui_lang(request) == 'el' %}btn-primary{% endif %}" href="{{ lang_switch_url(request, 'el') }}">ΕΛ</a>
-              <a class="btn btn-sm btn-outline {% if ui_lang(request) == 'en' %}btn-primary{% endif %}" href="{{ lang_switch_url(request, 'en') }}">EN</a>
-            </div>
+            {% endif %}
+
             {% if sms_app_url %}
-              <a class="btn btn-sm btn-outline" href="{{ sms_app_url }}" target="_blank" rel="noopener">{{ tr(request, 'Ημερολόγιο SMS', 'SMS Calendar') }}</a>
+              <a class="btn btn-sm btn-outline" href="{{ sms_app_url }}" target="_blank" rel="noopener">{{ tr(_req, 'Ημερολόγιο SMS', 'SMS Calendar') if _req is not none and tr is defined else 'SMS Calendar' }}</a>
             {% endif %}
           </div>
         </div>
@@ -120,26 +151,28 @@
     </main>
   </div>
 
-  <nav class="bottom-nav" aria-label="{{ tr(request, 'Κάτω πλοήγηση', 'Bottom navigation') }}">
-    <a class="item" href="{{ rp }}/?tenant={{ tenant_slug }}">
+  <nav class="bottom-nav" aria-label="{{ tr(_req, 'Κάτω πλοήγηση', 'Bottom navigation') if _req is not none and tr is defined else 'Bottom navigation' }}">
+    <a class="item" href="{{ _rp }}/{% if _tenant_slug %}?tenant={{ _tenant_slug }}{% endif %}">
       <div class="icon">🏠</div>
-      <div class="lbl">{{ tr(request, 'Αρχική', 'Home') }}</div>
+      <div class="lbl">{{ tr(_req, 'Αρχική', 'Home') if _req is not none and tr is defined else 'Home' }}</div>
     </a>
-    <a class="item" href="{{ rp }}/calendar?tenant={{ tenant_slug }}">
+    {% if _tenant_slug %}
+    <a class="item" href="{{ _rp }}/calendar?tenant={{ _tenant_slug }}">
       <div class="icon">📅</div>
-      <div class="lbl">{{ tr(request, 'Ημερολόγιο', 'Calendar') }}</div>
+      <div class="lbl">{{ tr(_req, 'Ημερολόγιο', 'Calendar') if _req is not none and tr is defined else 'Calendar' }}</div>
     </a>
-    <a class="item" href="{{ rp }}/children?tenant={{ tenant_slug }}">
+    <a class="item" href="{{ _rp }}/children?tenant={{ _tenant_slug }}">
       <div class="icon">🧒</div>
-      <div class="lbl">{{ tr(request, 'Παιδιά', 'Children') }}</div>
+      <div class="lbl">{{ tr(_req, 'Παιδιά', 'Children') if _req is not none and tr is defined else 'Children' }}</div>
     </a>
-    <a class="item" href="{{ rp }}/settings?tenant={{ tenant_slug }}">
+    <a class="item" href="{{ _rp }}/settings?tenant={{ _tenant_slug }}">
       <div class="icon">⚙️</div>
-      <div class="lbl">{{ tr(request, 'Ρυθμίσεις', 'Settings') }}</div>
+      <div class="lbl">{{ tr(_req, 'Ρυθμίσεις', 'Settings') if _req is not none and tr is defined else 'Settings' }}</div>
     </a>
+    {% endif %}
   </nav>
 
-  <script src="{{ rp }}/static/js/app.js?v={{ static_version or '20260313-recurring-calendar' }}"></script>
+  <script src="{{ _rp }}/static/js/app.js?v={{ static_version or '20260313-recurring-calendar' }}"></script>
   {% block body_extra %}{% endblock %}
 </body>
 

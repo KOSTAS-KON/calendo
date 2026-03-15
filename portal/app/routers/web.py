@@ -53,10 +53,12 @@ from app.services.license_tokens import verify_activation_code
 from app.services.storage import delete_file, save_upload
 from app.utils.paths import TEMPLATES_DIR
 from app.utils.security import generate_temp_password
+from app.utils.ui_i18n import register_template_helpers
 
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+register_template_helpers(templates)
 
 
 # -----------------------------
@@ -103,105 +105,6 @@ def status_chip(status: str | None) -> str:
 
 templates.env.globals["status_badge"] = status_badge
 templates.env.globals["status_chip"] = status_chip
-
-APPOINTMENT_TYPE_CHOICES: list[tuple[str, str]] = [
-    ("GOVERNMENT_FUNDED", "Prescribed / government funded"),
-    ("REGULAR_ADDITIONAL", "Private scheduled"),
-    ("BESPOKE_EXTRA", "Private unscheduled / bespoke"),
-    ("REPLACEMENT", "Covered from older cancellations"),
-    ("UNSPECIFIED", "Unspecified / legacy"),
-]
-
-THERAPY_TYPE_CHOICES: list[tuple[str, str]] = [
-    ("", "All therapy types"),
-    ("SPEECH_THERAPY", "Speech therapy"),
-    ("PHYSIOTHERAPY", "Physiotherapy"),
-    ("PSYCHOTHERAPY", "Psychotherapy"),
-    ("OCCUPATIONAL_THERAPY", "Occupational therapy"),
-    ("OTHER", "Other"),
-    ("UNSPECIFIED", "Unspecified / legacy"),
-]
-
-APPOINTMENT_TYPE_LABELS: dict[str, str] = {value: label for value, label in APPOINTMENT_TYPE_CHOICES}
-THERAPY_TYPE_LABELS: dict[str, str] = {value: label for value, label in THERAPY_TYPE_CHOICES if value}
-THERAPY_TYPE_LABELS.setdefault("UNSPECIFIED", "Unspecified / legacy")
-
-
-def _normalize_appointment_type(value: str | None) -> str:
-    key = (value or "UNSPECIFIED").strip().upper() or "UNSPECIFIED"
-    aliases = {
-        "APPROVED_GOVERNMENT": "GOVERNMENT_FUNDED",
-        "PRESCRIBED": "GOVERNMENT_FUNDED",
-        "PRIVATE_SCHEDULED": "REGULAR_ADDITIONAL",
-        "PRIVATE_UNSCHEDULED": "BESPOKE_EXTRA",
-        "COVERED_FROM_CANCELLATION": "REPLACEMENT",
-        "COVERED_OLDER_CANCELLATIONS": "REPLACEMENT",
-    }
-    key = aliases.get(key, key)
-    if key not in APPOINTMENT_TYPE_LABELS:
-        key = "UNSPECIFIED"
-    return key
-
-
-def _normalize_therapy_type(value: str | None) -> str:
-    key = (value or "UNSPECIFIED").strip().upper() or "UNSPECIFIED"
-    if key not in THERAPY_TYPE_LABELS:
-        key = "UNSPECIFIED"
-    return key
-
-
-def appointment_type_label(value: str | None) -> str:
-    key = _normalize_appointment_type(value)
-    return APPOINTMENT_TYPE_LABELS.get(key, key.replace("_", " ").title())
-
-
-def therapy_type_label(value: str | None) -> str:
-    key = _normalize_therapy_type(value)
-    return THERAPY_TYPE_LABELS.get(key, key.replace("_", " ").title())
-
-
-def quarter_hour_options() -> list[str]:
-    return [f"{hour:02d}:{minute:02d}" for hour in range(24) for minute in (0, 15, 30, 45)]
-
-
-def _appointment_duration_minutes(appt: Appointment) -> int:
-    raw = getattr(appt, "duration_minutes", None)
-    try:
-        minutes = int(raw) if raw is not None else 0
-    except Exception:
-        minutes = 0
-    if minutes <= 0 and getattr(appt, "starts_at", None) and getattr(appt, "ends_at", None):
-        try:
-            minutes = int((appt.ends_at - appt.starts_at).total_seconds() // 60)
-        except Exception:
-            minutes = 0
-    if minutes <= 0:
-        minutes = 60
-    if minutes % 15:
-        minutes = ((minutes + 14) // 15) * 15
-    return max(15, minutes)
-
-
-def _is_cancelled_status(status: str | None) -> bool:
-    return str(status or "").strip().upper() in {"CANCELLED_PROVIDER", "CANCELLED_ME"}
-
-
-def _hours(value_minutes: int) -> float:
-    return round(float(value_minutes) / 60.0, 2)
-
-
-def _parse_ui_date(v: str | None, default: date) -> date:
-    raw = str(v or "").strip()
-    if not raw:
-        return default
-    try:
-        return date.fromisoformat(raw)
-    except Exception:
-        return default
-
-
-templates.env.globals["appointment_type_label"] = appointment_type_label
-templates.env.globals["therapy_type_label"] = therapy_type_label
 
 
 # -----------------------------
@@ -269,8 +172,6 @@ def _resolve_tenant_or_404(db: Session, request: Request, requested_slug: str | 
         raise HTTPException(status_code=404, detail="Tenant not found")
     if (t.status or "active") != "active":
         raise HTTPException(status_code=403, detail="Tenant suspended")
-
-    _ensure_appointment_analytics_columns(db)
 
     # Keep session consistent.
     request.session["tenant_slug"] = tenant_slug
@@ -704,226 +605,6 @@ def _ensure_session_notes_tenant_column(db: Session) -> None:
         except Exception:
             pass
 
-
-
-def _ensure_appointment_analytics_columns(db: Session) -> None:
-    """Best-effort schema drift fixer for appointment analytics / claims columns."""
-    bind = db.get_bind()
-    try:
-        Appointment.__table__.create(bind, checkfirst=True)
-    except Exception:
-        pass
-
-    try:
-        insp = sa.inspect(bind)
-        col_info = insp.get_columns("appointments")
-    except Exception:
-        return
-
-    cols = {c.get("name"): c for c in col_info if c.get("name")}
-    stmts: list[str] = []
-
-    if "duration_minutes" not in cols:
-        stmts.append("ALTER TABLE appointments ADD COLUMN duration_minutes INTEGER")
-        if bind.dialect.name == "postgresql":
-            stmts.append(
-                "UPDATE appointments SET duration_minutes = "
-                "GREATEST(15, COALESCE(ROUND(EXTRACT(EPOCH FROM (ends_at - starts_at)) / 60.0)::integer, 60)) "
-                "WHERE duration_minutes IS NULL"
-            )
-        else:
-            stmts.append(
-                "UPDATE appointments SET duration_minutes = "
-                "CASE WHEN starts_at IS NOT NULL AND ends_at IS NOT NULL THEN "
-                "MAX(15, CAST((strftime('%s', ends_at) - strftime('%s', starts_at)) / 60 AS INTEGER)) "
-                "ELSE 60 END WHERE duration_minutes IS NULL"
-            )
-
-    if "appointment_type" not in cols:
-        stmts.append("ALTER TABLE appointments ADD COLUMN appointment_type VARCHAR(40)")
-    if "therapy_type" not in cols:
-        stmts.append("ALTER TABLE appointments ADD COLUMN therapy_type VARCHAR(40)")
-    if "hours_counted_at" not in cols:
-        stmts.append("ALTER TABLE appointments ADD COLUMN hours_counted_at TIMESTAMP")
-    if "hours_counted_label" not in cols:
-        stmts.append("ALTER TABLE appointments ADD COLUMN hours_counted_label VARCHAR(200)")
-    if "hours_counted_by_user_id" not in cols:
-        stmts.append("ALTER TABLE appointments ADD COLUMN hours_counted_by_user_id VARCHAR(36)")
-
-    if "appointment_type" not in cols:
-        stmts.append("UPDATE appointments SET appointment_type = 'UNSPECIFIED' WHERE appointment_type IS NULL OR appointment_type = ''")
-    if "therapy_type" not in cols:
-        stmts.append("UPDATE appointments SET therapy_type = 'UNSPECIFIED' WHERE therapy_type IS NULL OR therapy_type = ''")
-
-    for stmt in stmts:
-        try:
-            with bind.begin() as conn:
-                conn.exec_driver_sql(stmt)
-        except Exception:
-            pass
-
-
-
-def _hours_summary_for_child(
-    db: Session,
-    tenant_id: str,
-    child_id: int,
-    start_d: date,
-    end_d: date,
-    include_counted: bool = False,
-    therapy_filter: str = "",
-) -> dict[str, Any]:
-    start_dt = datetime.combine(start_d, time.min)
-    end_dt = datetime.combine(end_d + timedelta(days=1), time.min)
-    therapy_filter = _normalize_therapy_type(therapy_filter) if therapy_filter else ""
-
-    base_q = db.query(Appointment).filter(
-        Appointment.tenant_id == tenant_id,
-        Appointment.child_id == child_id,
-        Appointment.starts_at >= start_dt,
-        Appointment.starts_at < end_dt,
-    )
-    if therapy_filter:
-        base_q = base_q.filter(Appointment.therapy_type == therapy_filter)
-
-    visible_q = base_q
-    if not include_counted:
-        visible_q = visible_q.filter(Appointment.hours_counted_at.is_(None))
-
-    appts = visible_q.order_by(Appointment.starts_at.asc()).all()
-
-    counted_rows = []
-    if not include_counted:
-        counted_rows = base_q.filter(Appointment.hours_counted_at.is_not(None)).all()
-
-    excluded_count = sum(1 for a in counted_rows if not _is_cancelled_status(a.attendance_status))
-    excluded_hours = round(
-        sum(_appointment_duration_minutes(a) for a in counted_rows if not _is_cancelled_status(a.attendance_status)) / 60.0,
-        2,
-    )
-
-    summary = {
-        "appointment_count": len(appts),
-        "scheduled_sessions": 0,
-        "delivered_sessions": 0,
-        "missed_sessions": 0,
-        "cancelled_sessions": 0,
-        "scheduled_hours": 0.0,
-        "delivered_hours": 0.0,
-        "missed_hours": 0.0,
-        "cancelled_hours": 0.0,
-        "excluded_counted_count": excluded_count,
-        "excluded_counted_hours": excluded_hours,
-        "by_type": {k: 0.0 for k in APPOINTMENT_TYPE_LABELS},
-        "by_type_count": {k: 0 for k in APPOINTMENT_TYPE_LABELS},
-    }
-    therapy_rows: dict[str, dict[str, Any]] = {}
-    session_type_rows: dict[str, dict[str, Any]] = {
-        code: {
-            "appointment_type": code,
-            "appointment_type_label": appointment_type_label(code),
-            "count": 0,
-            "delivered_count": 0,
-            "missed_count": 0,
-            "cancelled_count": 0,
-            "scheduled_hours": 0.0,
-            "delivered_hours": 0.0,
-            "missed_hours": 0.0,
-            "cancelled_hours": 0.0,
-        }
-        for code in APPOINTMENT_TYPE_LABELS
-    }
-    ledger_rows: list[dict[str, Any]] = []
-
-    for a in appts:
-        duration_minutes = _appointment_duration_minutes(a)
-        duration_hours = _hours(duration_minutes)
-        status_key = str(a.attendance_status or "UNCONFIRMED").strip().upper() or "UNCONFIRMED"
-        appt_type = _normalize_appointment_type(getattr(a, "appointment_type", None))
-        therapy_type = _normalize_therapy_type(getattr(a, "therapy_type", None))
-
-        row = therapy_rows.setdefault(
-            therapy_type,
-            {
-                "therapy_type": therapy_type,
-                "therapy_label": therapy_type_label(therapy_type),
-                "count": 0,
-                "delivered_count": 0,
-                "missed_count": 0,
-                "cancelled_count": 0,
-                "scheduled_hours": 0.0,
-                "delivered_hours": 0.0,
-                "missed_hours": 0.0,
-                "cancelled_hours": 0.0,
-                "by_type": {k: 0.0 for k in APPOINTMENT_TYPE_LABELS},
-                "by_type_count": {k: 0 for k in APPOINTMENT_TYPE_LABELS},
-            },
-        )
-        type_row = session_type_rows[appt_type]
-
-        row["count"] += 1
-        row["by_type_count"][appt_type] += 1
-        type_row["count"] += 1
-
-        if _is_cancelled_status(status_key):
-            summary["cancelled_sessions"] += 1
-            summary["cancelled_hours"] = round(summary["cancelled_hours"] + duration_hours, 2)
-            row["cancelled_count"] += 1
-            row["cancelled_hours"] = round(row["cancelled_hours"] + duration_hours, 2)
-            type_row["cancelled_count"] += 1
-            type_row["cancelled_hours"] = round(type_row["cancelled_hours"] + duration_hours, 2)
-        else:
-            summary["scheduled_sessions"] += 1
-            summary["scheduled_hours"] = round(summary["scheduled_hours"] + duration_hours, 2)
-            summary["by_type"][appt_type] = round(summary["by_type"][appt_type] + duration_hours, 2)
-            summary["by_type_count"][appt_type] += 1
-            row["scheduled_hours"] = round(row["scheduled_hours"] + duration_hours, 2)
-            row["by_type"][appt_type] = round(row["by_type"][appt_type] + duration_hours, 2)
-            type_row["scheduled_hours"] = round(type_row["scheduled_hours"] + duration_hours, 2)
-            if status_key == "MISSED":
-                summary["missed_sessions"] += 1
-                summary["missed_hours"] = round(summary["missed_hours"] + duration_hours, 2)
-                row["missed_count"] += 1
-                row["missed_hours"] = round(row["missed_hours"] + duration_hours, 2)
-                type_row["missed_count"] += 1
-                type_row["missed_hours"] = round(type_row["missed_hours"] + duration_hours, 2)
-            else:
-                summary["delivered_sessions"] += 1
-                summary["delivered_hours"] = round(summary["delivered_hours"] + duration_hours, 2)
-                row["delivered_count"] += 1
-                row["delivered_hours"] = round(row["delivered_hours"] + duration_hours, 2)
-                type_row["delivered_count"] += 1
-                type_row["delivered_hours"] = round(type_row["delivered_hours"] + duration_hours, 2)
-
-        ledger_rows.append(
-            {
-                "id": a.id,
-                "starts_at": a.starts_at,
-                "therapist_name": a.therapist_name or "",
-                "procedure": a.procedure or "Session",
-                "status": status_key,
-                "duration_minutes": duration_minutes,
-                "duration_hours": duration_hours,
-                "appointment_type": appt_type,
-                "appointment_type_label": appointment_type_label(appt_type),
-                "therapy_type": therapy_type,
-                "therapy_type_label": therapy_type_label(therapy_type),
-                "hours_counted_at": getattr(a, "hours_counted_at", None),
-                "hours_counted_label": getattr(a, "hours_counted_label", None),
-            }
-        )
-
-    return {
-        "summary": summary,
-        "therapy_rows": sorted(therapy_rows.values(), key=lambda r: r["therapy_label"]),
-        "session_type_rows": [session_type_rows[k] for k, _ in APPOINTMENT_TYPE_CHOICES],
-        "ledger_rows": ledger_rows,
-        "start_date": start_d,
-        "end_date": end_d,
-        "therapy_filter": therapy_filter,
-        "include_counted": include_counted,
-    }
-
 # -----------------------------
 # UI: Suite & Dashboard
 # -----------------------------
@@ -1220,28 +901,6 @@ def child_detail(request: Request, child_id: int):
             .order_by(Attachment.created_at.desc())
             .all()
         )
-        default_start = date.today().replace(day=1)
-        default_end = date.today()
-        hours_start = _parse_ui_date(request.query_params.get("hours_start"), default_start)
-        hours_end = _parse_ui_date(request.query_params.get("hours_end"), default_end)
-        if hours_end < hours_start:
-            hours_end = hours_start
-        hours_include_counted = str(request.query_params.get("include_counted") or "").strip().lower() in {"1", "true", "yes", "on"}
-        hours_therapy_filter_raw = (request.query_params.get("therapy_type") or "").strip().upper()
-        hours_therapy_filter = "" if not hours_therapy_filter_raw or hours_therapy_filter_raw == "ALL" else _normalize_therapy_type(hours_therapy_filter_raw)
-
-        hours_data = None
-        if tab == "hours":
-            hours_data = _hours_summary_for_child(
-                db,
-                tid,
-                child_id,
-                hours_start,
-                hours_end,
-                include_counted=hours_include_counted,
-                therapy_filter=hours_therapy_filter,
-            )
-
         ctx = _base_context(db, request, ts, tid)
         return templates.TemplateResponse(
             "pages/child_detail.html",
@@ -1255,80 +914,11 @@ def child_detail(request: Request, child_id: int):
                 "tab": tab,
                 "edit_mode": (request.query_params.get("edit") or "").strip() in ("1", "true", "yes"),
                 "can_edit_child": _role_flags(request)["is_clinic_superuser"],
-                "therapy_type_choices": THERAPY_TYPE_CHOICES,
-                "hours_start": hours_start,
-                "hours_end": hours_end,
-                "hours_therapy_filter": hours_therapy_filter,
-                "hours_include_counted": hours_include_counted,
-                "hours_data": hours_data,
             },
         )
     finally:
         db.close()
 
-
-@router.post("/children/{child_id}/hours/finalize")
-async def child_hours_finalize(request: Request, child_id: int):
-    if (resp := _require_login(request)):
-        return resp
-    if (guard := _require_superuser_role(request)):
-        return guard
-
-    form = await request.form()
-    start_d = _parse_ui_date(str(form.get("hours_start") or ""), date.today().replace(day=1))
-    end_d = _parse_ui_date(str(form.get("hours_end") or ""), date.today())
-    if end_d < start_d:
-        end_d = start_d
-    therapy_filter_raw = (str(form.get("therapy_type") or "").strip().upper())
-    therapy_filter = "" if not therapy_filter_raw or therapy_filter_raw == "ALL" else _normalize_therapy_type(therapy_filter_raw)
-    label = str(form.get("summary_label") or "").strip() or f"Hours summary {start_d.isoformat()} to {end_d.isoformat()}"
-
-    db = _db()
-    try:
-        ts, tid = _resolve_tenant_or_404(db, request)
-        if (guard := _assert_child_access(db, request, tid, child_id)):
-            return guard
-
-        start_dt = datetime.combine(start_d, time.min)
-        end_dt = datetime.combine(end_d + timedelta(days=1), time.min)
-        q = db.query(Appointment).filter(
-            Appointment.tenant_id == tid,
-            Appointment.child_id == child_id,
-            Appointment.starts_at >= start_dt,
-            Appointment.starts_at < end_dt,
-            Appointment.hours_counted_at.is_(None),
-        )
-        if therapy_filter:
-            q = q.filter(Appointment.therapy_type == therapy_filter)
-        rows = q.order_by(Appointment.starts_at.asc()).all()
-        if not rows:
-            _toast(request, "No uncounted appointments found in that range.", "danger")
-            filter_qs = f"&therapy_type={therapy_filter}" if therapy_filter else ""
-            return RedirectResponse(
-                url=f"{_rp(request)}/children/{child_id}?tab=hours&hours_start={start_d.isoformat()}&hours_end={end_d.isoformat()}{filter_qs}",
-                status_code=303,
-            )
-
-        now = datetime.utcnow()
-        counted = 0
-        actor = str(request.session.get("user_id") or "").strip() or None
-        for a in rows:
-            if _is_cancelled_status(a.attendance_status):
-                continue
-            a.hours_counted_at = now
-            a.hours_counted_label = label
-            a.hours_counted_by_user_id = actor
-            db.add(a)
-            counted += 1
-        db.commit()
-        _toast(request, f"Marked {counted} appointment(s) as counted for future calculations.")
-        filter_qs = f"&therapy_type={therapy_filter}" if therapy_filter else ""
-        return RedirectResponse(
-            url=f"{_rp(request)}/children/{child_id}?tab=hours&hours_start={start_d.isoformat()}&hours_end={end_d.isoformat()}{filter_qs}",
-            status_code=303,
-        )
-    finally:
-        db.close()
 
 
 @router.post("/children/{child_id}/archive")
@@ -2873,11 +2463,6 @@ def appointment_detail(request: Request, appointment_id: int):
             )
 
         uploads = db.query(Attachment).filter(Attachment.child_id == appt.child_id).order_by(Attachment.created_at.desc()).all()
-        therapists = db.query(Therapist).filter(Therapist.tenant_id == tid).filter(_is_active_filter(Therapist)).order_by(Therapist.name.asc()).all()
-        try:
-            appt_duration_minutes = int(getattr(appt, "duration_minutes", 60) or 60)
-        except Exception:
-            appt_duration_minutes = 60
 
         ctx = _base_context(db, request, ts, tid)
         return templates.TemplateResponse(
@@ -2890,10 +2475,6 @@ def appointment_detail(request: Request, appointment_id: int):
                 "uploads": uploads,
                 "previous_appt": previous_appt,
                 "previous_note": previous_note,
-                "therapists": therapists,
-                "appt_duration_minutes": appt_duration_minutes,
-                "quarter_hour_options": quarter_hour_options(),
-                "appointment_type_choices": APPOINTMENT_TYPE_CHOICES,
             },
         )
     finally:
