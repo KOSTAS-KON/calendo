@@ -1,19 +1,20 @@
 {% extends "layout.html" %}
+{% set header = tr(request, 'Μηνύματα', 'Messages') %}
 {% block content %}
 <div style="display:grid; grid-template-columns: 360px 1fr; gap:14px; align-items:start;">
   <div class="card" style="padding:14px;">
-    <div style="font-weight:800; margin-bottom:8px;">Quick message</div>
+    <div style="font-weight:800; margin-bottom:8px;">{{ tr(request, 'Γρήγορο μήνυμα', 'Quick message') }}</div>
     <div class="text-sm" style="color:#64748b; margin-bottom:12px;">
-      Message composer. This screen can send via the SMS service when configured.
+      {{ tr(request, 'Συντάκτης μηνυμάτων. Αυτή η οθόνη μπορεί να στείλει μέσω της υπηρεσίας SMS όταν είναι ρυθμισμένη.', 'Message composer. This screen can send via the SMS service when configured.') }}
     </div>
 
     <div style="display:grid; gap:10px;">
       <div>
-        <div class="text-xs" style="color:#64748b; margin-bottom:6px;">To</div>
-        <input class="input" style="width:100%;" placeholder="Parent of Maria K." />
+        <div class="text-xs" style="color:#64748b; margin-bottom:6px;">{{ tr(request, 'Προς', 'To') }}</div>
+        <input class="input" style="width:100%;" placeholder="{{ tr(request, 'Γονέας της Μαρίας Κ.', 'Parent of Maria K.') }}" />
       </div>
       <div>
-        <div class="text-xs" style="color:#64748b; margin-bottom:6px;">Channel</div>
+        <div class="text-xs" style="color:#64748b; margin-bottom:6px;">{{ tr(request, 'Κανάλι', 'Channel') }}</div>
         <select class="input" style="width:100%;">
           <option>SMS</option>
           <option>Email</option>
@@ -21,29 +22,29 @@
         </select>
       </div>
       <div>
-        <div class="text-xs" style="color:#64748b; margin-bottom:6px;">Message</div>
-        <textarea class="input" style="width:100%; min-height:120px;" placeholder="Reminder: session tomorrow at 18:10."></textarea>
+        <div class="text-xs" style="color:#64748b; margin-bottom:6px;">{{ tr(request, 'Μήνυμα', 'Message') }}</div>
+        <textarea class="input" style="width:100%; min-height:120px;" placeholder="{{ tr(request, 'Υπενθύμιση: συνεδρία αύριο στις 18:10.', 'Reminder: session tomorrow at 18:10.') }}"></textarea>
       </div>
-      <button type="button" class="btn" style="width:100%;">Send</button>
+      <button type="button" class="btn" style="width:100%;">{{ tr(request, 'Αποστολή', 'Send') }}</button>
     </div>
   </div>
 
   <div class="card" style="padding:14px;">
     <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px;">
-      <div style="font-weight:800;">Recent messages</div>
-      <div class="text-sm" style="color:#64748b;">Mock data</div>
+      <div style="font-weight:800;">{{ tr(request, 'Πρόσφατα μηνύματα', 'Recent messages') }}</div>
+      <div class="text-sm" style="color:#64748b;">{{ tr(request, 'Δοκιμαστικά δεδομένα', 'Mock data') }}</div>
     </div>
 
     <div style="overflow:auto; border-radius:12px; border:1px solid rgba(15,23,42,.08);">
       <table class="table" style="width:100%;">
         <thead>
           <tr>
-            <th style="width:72px;">Dir</th>
-            <th>To / From</th>
-            <th style="width:90px;">Channel</th>
-            <th>Subject</th>
-            <th style="width:120px;">Status</th>
-            <th style="width:140px;">When</th>
+            <th style="width:72px;">{{ tr(request, 'Κατεύθυνση', 'Dir') }}</th>
+            <th>{{ tr(request, 'Προς / Από', 'To / From') }}</th>
+            <th style="width:90px;">{{ tr(request, 'Κανάλι', 'Channel') }}</th>
+            <th>{{ tr(request, 'Θέμα', 'Subject') }}</th>
+            <th style="width:120px;">{{ tr(request, 'Κατάσταση', 'Status') }}</th>
+            <th style="width:140px;">{{ tr(request, 'Πότε', 'When') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -51,9 +52,9 @@
           <tr>
             <td>
               {% if r.direction == 'OUT' %}
-                <span class="badge b-confirmed" title="Outgoing">OUT</span>
+                <span class="badge b-confirmed" title="{{ tr(request, 'Εξερχόμενο', 'Outgoing') }}">{{ tr(request, 'ΕΞ', 'OUT') }}</span>
               {% else %}
-                <span class="badge b-unconfirmed" title="Incoming">IN</span>
+                <span class="badge b-unconfirmed" title="{{ tr(request, 'Εισερχόμενο', 'Incoming') }}">{{ tr(request, 'ΕΙΣ', 'IN') }}</span>
               {% endif %}
             </td>
             <td>{{ r.to }}</td>
@@ -63,7 +64,7 @@
               {% if r.status in ['DELIVERED','SENT'] %}
                 <span class="pill ok">{{ r.status }}</span>
               {% elif r.status in ['RECEIVED'] %}
-                <span class="pill warn">{{ r.status }}</span>
+                <span class="pill warn">{{ tr(request, 'ΛΗΦΘΗΚΕ', 'RECEIVED') }}</span>
               {% else %}
                 <span class="pill">{{ r.status }}</span>
               {% endif %}

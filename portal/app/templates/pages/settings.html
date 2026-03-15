@@ -2,55 +2,55 @@
 {% block content %}
 
 <div class="tabs" style="margin-bottom:14px;">
-  <button class="tab is-active" data-tab="clinic">🏥 Clinic</button>
+  <button class="tab is-active" data-tab="clinic">🏥 {{ tr(request, 'Κλινική', 'Clinic') }}</button>
   <button class="tab" data-tab="infobip">📣 Infobip SMS</button>
-  <button class="tab" data-tab="license">🔑 License</button>
+  <button class="tab" data-tab="license">🔑 {{ tr(request, 'Άδεια', 'License') }}</button>
 </div>
 
 <div id="tab-clinic" class="tabpanel">
   <div class="card">
-    <div class="card-title">Clinic Details</div>
-    <div class="card-sub">These values are stored locally in the database (per client installation).</div>
+    <div class="card-title">{{ tr(request, 'Στοιχεία κλινικής', 'Clinic Details') }}</div>
+    <div class="card-sub">{{ tr(request, 'Οι τιμές αυτές αποθηκεύονται τοπικά στη βάση δεδομένων (ανά εγκατάσταση πελάτη).', 'These values are stored locally in the database (per client installation).') }}</div>
 
     {% set rp = request.scope.get("root_path", "") %}
     <form method="post" action="{{ rp }}/settings/clinic" class="grid2">
       <div>
-        <label class="lbl">Clinic name</label>
-        <input class="inp" name="clinic_name" value="{{ clinic.clinic_name }}" placeholder="e.g. 1st Providers Choice" />
+        <label class="lbl">{{ tr(request, 'Όνομα κλινικής', 'Clinic name') }}</label>
+        <input class="inp" name="clinic_name" value="{{ clinic.clinic_name }}" placeholder="{{ tr(request, 'π.χ. 1st Providers Choice', 'e.g. 1st Providers Choice') }}" />
       </div>
       <div>
-        <label class="lbl">Address</label>
-        <input class="inp" name="address" value="{{ clinic.address }}" placeholder="Street, City, Postcode" />
+        <label class="lbl">{{ tr(request, 'Διεύθυνση', 'Address') }}</label>
+        <input class="inp" name="address" value="{{ clinic.address }}" placeholder="{{ tr(request, 'Οδός, Πόλη, ΤΚ', 'Street, City, Postcode') }}" />
       </div>
       <div>
-        <label class="lbl">Latitude</label>
+        <label class="lbl">{{ tr(request, 'Γεωγραφικό πλάτος', 'Latitude') }}</label>
         <input class="inp" name="lat" value="{{ clinic.lat if clinic.lat is not none else '' }}" placeholder="40.523" />
       </div>
       <div>
-        <label class="lbl">Longitude</label>
+        <label class="lbl">{{ tr(request, 'Γεωγραφικό μήκος', 'Longitude') }}</label>
         <input class="inp" name="lng" value="{{ clinic.lng if clinic.lng is not none else '' }}" placeholder="22.202" />
       </div>
       <div style="grid-column:1 / -1; display:flex; gap:10px; align-items:center;">
-        <button class="btn" type="submit">Save clinic settings</button>
-        <span class="muted">Updated: {{ clinic.updated_at.strftime('%Y-%m-%d %H:%M') if clinic.updated_at else '-' }}</span>
+        <button class="btn" type="submit">{{ tr(request, 'Αποθήκευση ρυθμίσεων κλινικής', 'Save clinic settings') }}</button>
+        <span class="muted">{{ tr(request, 'Ενημερώθηκε', 'Updated') }}: {{ clinic.updated_at.strftime('%Y-%m-%d %H:%M') if clinic.updated_at else '-' }}</span>
       </div>
     </form>
   </div>
 
   <div class="card" style="margin-top:12px;">
     <div class="card-title">Google Maps</div>
-    <div class="card-sub">We generate a safe Maps link from either the address or the coordinates.</div>
+    <div class="card-sub">{{ tr(request, 'Δημιουργούμε ασφαλή σύνδεσμο χαρτών είτε από τη διεύθυνση είτε από τις συντεταγμένες.', 'We generate a safe Maps link from either the address or the coordinates.') }}</div>
     {% if google_maps_link %}
-      <a class="btn" href="{{ google_maps_link }}" target="_blank" rel="noopener" style="width:fit-content;">🗺️ Open clinic location</a>
+      <a class="btn" href="{{ google_maps_link }}" target="_blank" rel="noopener" style="width:fit-content;">🗺️ {{ tr(request, 'Άνοιγμα τοποθεσίας κλινικής', 'Open clinic location') }}</a>
     {% else %}
-      <div class="muted">Add either an Address or both Latitude/Longitude to enable the link.</div>
+      <div class="muted">{{ tr(request, 'Πρόσθεσε είτε Διεύθυνση είτε και Γεωγραφικό πλάτος/μήκος για να ενεργοποιηθεί ο σύνδεσμος.', 'Add either an Address or both Latitude/Longitude to enable the link.') }}</div>
     {% endif %}
   </div>
 
   {% if clinic.lat is not none and clinic.lng is not none %}
   <div class="card" style="margin-top:12px;">
-    <div class="card-title">Map Coordinates</div>
-    <div class="card-sub">Use these coordinates for navigation and documentation.</div>
+    <div class="card-title">{{ tr(request, 'Συντεταγμένες χάρτη', 'Map Coordinates') }}</div>
+    <div class="card-sub">{{ tr(request, 'Χρησιμοποίησε αυτές τις συντεταγμένες για πλοήγηση και τεκμηρίωση.', 'Use these coordinates for navigation and documentation.') }}</div>
     <div class="chip" style="display:inline-flex;">
       <span>📍 {{ clinic.lat }}, {{ clinic.lng }}</span>
     </div>
@@ -60,8 +60,8 @@
 
 <div id="tab-infobip" class="tabpanel" style="display:none;">
   <div class="card">
-    <div class="card-title">Infobip Credentials</div>
-    <div class="card-sub">Per client: base URL, API key, sender ID. API key is stored locally and not displayed via API.</div>
+    <div class="card-title">{{ tr(request, 'Στοιχεία Infobip', 'Infobip Credentials') }}</div>
+    <div class="card-sub">{{ tr(request, 'Ανά πελάτη: base URL, API key, sender ID. Το API key αποθηκεύεται τοπικά και δεν εμφανίζεται μέσω API.', 'Per client: base URL, API key, sender ID. API key is stored locally and not displayed via API.') }}</div>
 
     {% set rp = request.scope.get("root_path", "") %}
     <form method="post" action="{{ rp }}/settings/infobip" class="grid2">
@@ -70,94 +70,94 @@
         <input class="inp" name="infobip_base_url" value="{{ clinic.infobip_base_url }}" placeholder="https://api.infobip.com" />
       </div>
       <div>
-        <label class="lbl">Sender ID</label>
+        <label class="lbl">{{ tr(request, 'Αναγνωριστικό αποστολέα', 'Sender ID') }}</label>
         <input class="inp" name="infobip_sender" value="{{ clinic.infobip_sender }}" placeholder="YourSender" />
       </div>
       <div>
         <label class="lbl">API Key</label>
-        <input class="inp" name="infobip_api_key" value="{{ clinic.infobip_api_key }}" placeholder="(paste API key)" />
+        <input class="inp" name="infobip_api_key" value="{{ clinic.infobip_api_key }}" placeholder="{{ tr(request, '(επικόλληση API key)', '(paste API key)') }}" />
       </div>
       <div>
-        <label class="lbl">Username (optional)</label>
+        <label class="lbl">{{ tr(request, 'Username (προαιρετικό)', 'Username (optional)') }}</label>
         <input class="inp" name="infobip_username" value="{{ clinic.infobip_username if clinic.infobip_username is defined else '' }}" placeholder="e.g. user@domain" />
       </div>
       <div>
-        <label class="lbl">User key (optional)</label>
-        <input class="inp" name="infobip_userkey" value="{{ clinic.infobip_userkey if clinic.infobip_userkey is defined else '' }}" placeholder="(optional)" />
+        <label class="lbl">{{ tr(request, 'User key (προαιρετικό)', 'User key (optional)') }}</label>
+        <input class="inp" name="infobip_userkey" value="{{ clinic.infobip_userkey if clinic.infobip_userkey is defined else '' }}" placeholder="{{ tr(request, '(προαιρετικό)', '(optional)') }}" />
       </div>
       <div style="grid-column:1 / -1; display:flex; gap:10px; align-items:center;">
-        <button class="btn" type="submit">Save Infobip settings</button>
-        <span class="muted">Keep API key private</span>
+        <button class="btn" type="submit">{{ tr(request, 'Αποθήκευση ρυθμίσεων Infobip', 'Save Infobip settings') }}</button>
+        <span class="muted">{{ tr(request, 'Κράτησε το API key ιδιωτικό', 'Keep API key private') }}</span>
       </div>
     </form>
   </div>
 
   <div class="card" style="margin-top:12px;">
-    <div class="card-title">Export .env for the client</div>
-    <div class="card-sub">Copy/paste this into a <b>.env</b> file in the product folder (or click download).</div>
+    <div class="card-title">{{ tr(request, 'Εξαγωγή .env για τον πελάτη', 'Export .env for the client') }}</div>
+    <div class="card-sub">{{ tr(request, 'Αντέγραψε/επικόλλησε αυτό σε αρχείο .env στον φάκελο του προϊόντος (ή πάτησε λήψη).', 'Copy/paste this into a .env file in the product folder (or click download).') }}</div>
     <textarea class="inp" style="width:100%;min-height:190px;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;" readonly>{{ env_preview }}</textarea>
     <div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
-      <a class="btn" href="{{ rp }}/settings/env" style="width:fit-content;">⬇️ Download client.env</a>
-      <span class="muted">Rename to <b>.env</b> in the product folder if you want Compose to pick it up.</span>
+      <a class="btn" href="{{ rp }}/settings/env" style="width:fit-content;">⬇️ {{ tr(request, 'Λήψη client.env', 'Download client.env') }}</a>
+      <span class="muted">{{ tr(request, 'Μετονόμασέ το σε .env στον φάκελο του προϊόντος αν θέλεις το Compose να το διαβάσει αυτόματα.', 'Rename to .env in the product folder if you want Compose to pick it up.') }}</span>
     </div>
   </div>
 </div>
 
 <div id="tab-license" class="tabpanel" style="display:none;">
   <div class="card">
-    <div class="card-title">License / Trial</div>
-    <div class="card-sub">Enter your **License Activation Code** (this is NOT your login password). Codes are issued by the vendor/admin to renew/extend your subscription. Manual trial controls are still available for demos.</div>
+    <div class="card-title">{{ tr(request, 'Άδεια / Δοκιμή', 'License / Trial') }}</div>
+    <div class="card-sub">{{ tr(request, 'Εισήγαγε τον κωδικό ενεργοποίησης άδειας (δεν είναι ο κωδικός σύνδεσής σου). Οι κωδικοί εκδίδονται από τον προμηθευτή/διαχειριστή για ανανέωση ή επέκταση της συνδρομής. Οι χειροκίνητοι έλεγχοι δοκιμής παραμένουν διαθέσιμοι για demos.', 'Enter your License Activation Code (this is NOT your login password). Codes are issued by the vendor/admin to renew/extend your subscription. Manual trial controls are still available for demos.') }}</div>
 
     {% if request.query_params.get('ok') == 'activated' %}
-      <div class="pill good" style="margin-top:10px; width:fit-content;">✅ Activated successfully</div>
+      <div class="pill good" style="margin-top:10px; width:fit-content;">✅ {{ tr(request, 'Η ενεργοποίηση ολοκληρώθηκε', 'Activated successfully') }}</div>
     {% endif %}
     {% if request.query_params.get('err') == 'invalid_code' %}
-      <div class="pill bad" style="margin-top:10px; width:fit-content;">⛔ Invalid or expired activation code</div>
+      <div class="pill bad" style="margin-top:10px; width:fit-content;">⛔ {{ tr(request, 'Μη έγκυρος ή ληγμένος κωδικός ενεργοποίησης', 'Invalid or expired activation code') }}</div>
     {% endif %}
     {% if request.query_params.get('err') == 'missing_code' %}
-      <div class="pill bad" style="margin-top:10px; width:fit-content;">⛔ Please paste an activation code</div>
+      <div class="pill bad" style="margin-top:10px; width:fit-content;">⛔ {{ tr(request, 'Παρακαλώ επικόλλησε έναν κωδικό ενεργοποίησης', 'Please paste an activation code') }}</div>
     {% endif %}
 
     {% set rp = request.scope.get("root_path", "") %}
     <form method="post" action="{{ rp }}/settings/activate" style="margin-top:12px;">
-      <label class="lbl">Activation code</label>
+      <label class="lbl">{{ tr(request, 'Κωδικός ενεργοποίησης', 'Activation code') }}</label>
       <input class="inp" name="activation_code" placeholder="e.g. TSL1.<payload>.<signature>" />
       <div style="margin-top:10px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-        <button class="btn" type="submit">Activate</button>
-        <span class="muted">Current: <b>{{ 'activation' if license.activation_token else 'manual' }}</b>{% if license.client_id %} · Client ID: <b>{{ license.client_id }}</b>{% endif %}</span>
+        <button class="btn" type="submit">{{ tr(request, 'Ενεργοποίηση', 'Activate') }}</button>
+        <span class="muted">{{ tr(request, 'Τρέχον', 'Current') }}: <b>{{ 'activation' if license.activation_token else 'manual' }}</b>{% if license.client_id %} · Client ID: <b>{{ license.client_id }}</b>{% endif %}</span>
       </div>
-      <div class="muted" style="margin-top:8px; font-size:12px;">Plan mapping: 1 = 1 week trial, 2 = 1 month trial, 3 = 1 year license.</div>
+      <div class="muted" style="margin-top:8px; font-size:12px;">{{ tr(request, 'Αντιστοίχιση προγραμμάτων: 1 = δοκιμή 1 εβδομάδας, 2 = δοκιμή 1 μήνα, 3 = άδεια 1 έτους.', 'Plan mapping: 1 = 1 week trial, 2 = 1 month trial, 3 = 1 year license.') }}</div>
     </form>
   </div>
 
   <div class="card" style="margin-top:12px;">
-    <div class="card-title">Manual controls</div>
-    <div class="card-sub">Use this only for internal demos. For real clients use Activation codes.</div>
+    <div class="card-title">{{ tr(request, 'Χειροκίνητοι έλεγχοι', 'Manual controls') }}</div>
+    <div class="card-sub">{{ tr(request, 'Χρησιμοποίησέ το μόνο για εσωτερικά demos. Για πραγματικούς πελάτες χρησιμοποίησε κωδικούς ενεργοποίησης.', 'Use this only for internal demos. For real clients use Activation codes.') }}</div>
 
     <form method="post" action="{{ rp }}/settings/license" class="grid2">
       <div>
-        <label class="lbl">Product mode</label>
+        <label class="lbl">{{ tr(request, 'Λειτουργία προϊόντος', 'Product mode') }}</label>
         <select class="inp" name="product_mode">
-          <option value="BOTH" {% if license.product_mode == 'BOTH' %}selected{% endif %}>Therapy Portal + SMS Calendar</option>
-          <option value="PORTAL" {% if license.product_mode == 'PORTAL' %}selected{% endif %}>Therapy Portal only</option>
-          <option value="SMS" {% if license.product_mode == 'SMS' %}selected{% endif %}>SMS Calendar only</option>
+          <option value="BOTH" {% if license.product_mode == 'BOTH' %}selected{% endif %}>{{ tr(request, 'Therapy Portal + Ημερολόγιο SMS', 'Therapy Portal + SMS Calendar') }}</option>
+          <option value="PORTAL" {% if license.product_mode == 'PORTAL' %}selected{% endif %}>{{ tr(request, 'Μόνο Therapy Portal', 'Therapy Portal only') }}</option>
+          <option value="SMS" {% if license.product_mode == 'SMS' %}selected{% endif %}>{{ tr(request, 'Μόνο Ημερολόγιο SMS', 'SMS Calendar only') }}</option>
         </select>
       </div>
       <div>
-        <label class="lbl">Action</label>
+        <label class="lbl">{{ tr(request, 'Ενέργεια', 'Action') }}</label>
         <select class="inp" name="action">
-          <option value="TRIAL">Start / Extend trial (weeks)</option>
-          <option value="RENEW_WEEKS">Renew license (weeks)</option>
-          <option value="RENEW_YEAR">Renew license (1 year)</option>
+          <option value="TRIAL">{{ tr(request, 'Έναρξη / επέκταση δοκιμής (σε εβδομάδες)', 'Start / Extend trial (weeks)') }}</option>
+          <option value="RENEW_WEEKS">{{ tr(request, 'Ανανέωση άδειας (σε εβδομάδες)', 'Renew license (weeks)') }}</option>
+          <option value="RENEW_YEAR">{{ tr(request, 'Ανανέωση άδειας (1 έτος)', 'Renew license (1 year)') }}</option>
         </select>
       </div>
       <div>
-        <label class="lbl">Weeks</label>
+        <label class="lbl">{{ tr(request, 'Εβδομάδες', 'Weeks') }}</label>
         <input class="inp" name="weeks" type="number" min="1" value="4" />
       </div>
       <div style="grid-column:1 / -1; display:flex; gap:10px; align-items:center;">
-        <button class="btn" type="submit">Apply</button>
-        <span class="muted">Trial end: {{ license.trial_end.strftime('%Y-%m-%d') if license.trial_end else '-' }} · License end: {{ license.license_end.strftime('%Y-%m-%d') if license.license_end else '-' }}</span>
+        <button class="btn" type="submit">{{ tr(request, 'Εφαρμογή', 'Apply') }}</button>
+        <span class="muted">{{ tr(request, 'Λήξη δοκιμής', 'Trial end') }}: {{ license.trial_end.strftime('%Y-%m-%d') if license.trial_end else '-' }} · {{ tr(request, 'Λήξη άδειας', 'License end') }}: {{ license.license_end.strftime('%Y-%m-%d') if license.license_end else '-' }}</span>
       </div>
     </form>
   </div>

@@ -1,46 +1,46 @@
 {% extends "layout.html" %}
-{% set header = "Billing" %}
+{% set header = tr(request, 'Χρεώσεις', 'Billing') %}
 {% block content %}
 
 <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
   <div class="text-sm text-slate-600">
-    Billing rows (also shown in Calendar with colors).
+    {{ tr(request, 'Γραμμές χρέωσης (εμφανίζονται επίσης στο Ημερολόγιο με χρώματα).', 'Billing rows (also shown in Calendar with colors).') }}
   </div>
-  <a class="btn" href="{{ rp }}/billing/inputs">Billing inputs (recurring)</a>
+  <a class="btn" href="{{ rp }}/billing/inputs">{{ tr(request, 'Παράμετροι χρέωσης (επαναλαμβανόμενες)', 'Billing inputs (recurring)') }}</a>
 </div>
 
 <div class="tabs mb-4">
-  <a class="tab {% if mode != 'edit' %}active{% endif %}" href="{{ rp }}/billing?{% if selected_child_id %}child_id={{ selected_child_id }}&{% endif %}mode=display">Display</a>
-  <a class="tab {% if mode == 'edit' %}active{% endif %}" href="{{ rp }}/billing?{% if selected_child_id %}child_id={{ selected_child_id }}&{% endif %}mode=edit">Edit</a>
+  <a class="tab {% if mode != 'edit' %}active{% endif %}" href="{{ rp }}/billing?{% if selected_child_id %}child_id={{ selected_child_id }}&{% endif %}mode=display">{{ tr(request, 'Προβολή', 'Display') }}</a>
+  <a class="tab {% if mode == 'edit' %}active{% endif %}" href="{{ rp }}/billing?{% if selected_child_id %}child_id={{ selected_child_id }}&{% endif %}mode=edit">{{ tr(request, 'Επεξεργασία', 'Edit') }}</a>
 </div>
 
 <form method="get" action="{{ rp }}/billing" class="flex flex-wrap items-end gap-3 mb-4">
   <input type="hidden" name="mode" value="{{ mode }}" />
   <div>
-    <label class="label">Filter by child</label>
+    <label class="label">{{ tr(request, 'Φίλτρο ανά παιδί', 'Filter by child') }}</label>
     <select name="child_id" class="input" onchange="this.form.submit()">
-      <option value="">All</option>
+      <option value="">{{ tr(request, 'Όλα', 'All') }}</option>
       {% for c in children %}
         <option value="{{ c.id }}" {% if selected_child_id == c.id %}selected{% endif %}>{{ c.full_name }}</option>
       {% endfor %}
     </select>
   </div>
-  <noscript><button class="btn" type="submit">Apply</button></noscript>
+  <noscript><button class="btn" type="submit">{{ tr(request, 'Εφαρμογή', 'Apply') }}</button></noscript>
 </form>
 
 <div class="tablewrap">
   <table class="apptable">
     <thead>
       <tr>
-        <th>child name</th>
-        <th>billing due</th>
-        <th>amount</th>
-        <th>description</th>
-        <th>paid</th>
-        <th>invoice created</th>
-        <th>parent signed off</th>
+        <th>{{ tr(request, 'όνομα παιδιού', 'child name') }}</th>
+        <th>{{ tr(request, 'ημερομηνία χρέωσης', 'billing due') }}</th>
+        <th>{{ tr(request, 'ποσό', 'amount') }}</th>
+        <th>{{ tr(request, 'περιγραφή', 'description') }}</th>
+        <th>{{ tr(request, 'πληρώθηκε', 'paid') }}</th>
+        <th>{{ tr(request, 'εκδόθηκε τιμολόγιο', 'invoice created') }}</th>
+        <th>{{ tr(request, 'υπογραφή γονέα', 'parent signed off') }}</th>
         {% if mode == 'edit' %}
-          <th style="width:120px;">actions</th>
+          <th style="width:120px;">{{ tr(request, 'ενέργειες', 'actions') }}</th>
         {% endif %}
       </tr>
     </thead>
@@ -66,68 +66,68 @@
               <input type="hidden" name="child_id" value="{{ selected_child_id or '' }}">
               <input type="hidden" name="redirect" value="/billing?{% if selected_child_id %}child_id={{ selected_child_id }}&{% endif %}mode=edit">
               <select name="paid" class="input input-sm">
-                <option value="NO" {% if (b.paid or '').upper() != 'YES' %}selected{% endif %}>NO</option>
-                <option value="YES" {% if (b.paid or '').upper() == 'YES' %}selected{% endif %}>YES</option>
+                <option value="NO" {% if (b.paid or '').upper() != 'YES' %}selected{% endif %}>{{ tr(request, 'ΟΧΙ', 'NO') }}</option>
+                <option value="YES" {% if (b.paid or '').upper() == 'YES' %}selected{% endif %}>{{ tr(request, 'ΝΑΙ', 'YES') }}</option>
               </select>
           </td>
 
           <td>
               <select name="invoice_created" class="input input-sm">
-                <option value="NO" {% if (b.invoice_created or '').upper() != 'YES' %}selected{% endif %}>NO</option>
-                <option value="YES" {% if (b.invoice_created or '').upper() == 'YES' %}selected{% endif %}>YES</option>
+                <option value="NO" {% if (b.invoice_created or '').upper() != 'YES' %}selected{% endif %}>{{ tr(request, 'ΟΧΙ', 'NO') }}</option>
+                <option value="YES" {% if (b.invoice_created or '').upper() == 'YES' %}selected{% endif %}>{{ tr(request, 'ΝΑΙ', 'YES') }}</option>
               </select>
           </td>
 
           <td>
               <select name="parent_signed_off" class="input input-sm">
-                <option value="NO" {% if (b.parent_signed_off or '').upper() != 'YES' %}selected{% endif %}>NO</option>
-                <option value="YES" {% if (b.parent_signed_off or '').upper() == 'YES' %}selected{% endif %}>YES</option>
+                <option value="NO" {% if (b.parent_signed_off or '').upper() != 'YES' %}selected{% endif %}>{{ tr(request, 'ΟΧΙ', 'NO') }}</option>
+                <option value="YES" {% if (b.parent_signed_off or '').upper() == 'YES' %}selected{% endif %}>{{ tr(request, 'ΝΑΙ', 'YES') }}</option>
               </select>
           </td>
 
           <td>
-              <button class="btn btn-sm" type="submit">Save</button>
+              <button class="btn btn-sm" type="submit">{{ tr(request, 'Αποθήκευση', 'Save') }}</button>
             </form>
           </td>
         {% else %}
           <td>
             {% if (b.paid or '').upper() == 'YES' %}
-              <span class="pill p-green">YES</span>
+              <span class="pill p-green">{{ tr(request, 'ΝΑΙ', 'YES') }}</span>
             {% else %}
-              <span class="pill p-red">NO</span>
+              <span class="pill p-red">{{ tr(request, 'ΟΧΙ', 'NO') }}</span>
             {% endif %}
           </td>
 
           <td>
             {% if (b.invoice_created or '').upper() == 'YES' %}
-              <span class="pill p-blue">YES</span>
+              <span class="pill p-blue">{{ tr(request, 'ΝΑΙ', 'YES') }}</span>
             {% else %}
-              <span class="pill p-gray">NO</span>
+              <span class="pill p-gray">{{ tr(request, 'ΟΧΙ', 'NO') }}</span>
             {% endif %}
           </td>
 
           <td>
             {% if (b.parent_signed_off or '').upper() == 'YES' %}
-              <span class="pill p-green">YES</span>
+              <span class="pill p-green">{{ tr(request, 'ΝΑΙ', 'YES') }}</span>
             {% else %}
-              <span class="pill p-red">NO</span>
+              <span class="pill p-red">{{ tr(request, 'ΟΧΙ', 'NO') }}</span>
             {% endif %}
           </td>
         {% endif %}
       </tr>
       {% else %}
-      <tr><td colspan="{% if mode == 'edit' %}8{% else %}7{% endif %}" class="text-sm text-slate-500">No billing rows.</td></tr>
+      <tr><td colspan="{% if mode == 'edit' %}8{% else %}7{% endif %}" class="text-sm text-slate-500">{{ tr(request, 'Δεν υπάρχουν γραμμές χρέωσης.', 'No billing rows.') }}</td></tr>
       {% endfor %}
     </tbody>
   </table>
 </div>
 
 <div class="mt-3 text-xs text-slate-500">
-  Calendar colors:
-  <span class="pill p-green">Paid</span>,
-  <span class="pill p-yellow">Invoice created (unpaid)</span>,
-  <span class="pill p-purple">No invoice</span>.
-  Attendance is also color-coded.
+  {{ tr(request, 'Χρώματα ημερολογίου', 'Calendar colors') }}:
+  <span class="pill p-green">{{ tr(request, 'Πληρωμένο', 'Paid') }}</span>,
+  <span class="pill p-yellow">{{ tr(request, 'Εκδόθηκε τιμολόγιο (ανεξόφλητο)', 'Invoice created (unpaid)') }}</span>,
+  <span class="pill p-purple">{{ tr(request, 'Χωρίς τιμολόγιο', 'No invoice') }}</span>.
+  {{ tr(request, 'Η παρουσία είναι επίσης χρωματικά κωδικοποιημένη.', 'Attendance is also color-coded.') }}
 </div>
 
 {% endblock %}
