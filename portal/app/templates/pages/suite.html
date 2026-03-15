@@ -5,22 +5,22 @@
   <div style="width:980px;max-width:100%;background:#fff;border:1px solid #e5e7eb;border-radius:18px;box-shadow:0 10px 30px rgba(0,0,0,.06);padding:28px;">
     <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;">
       <div>
-        <div style="font-size:12px;letter-spacing:.08em;color:#6b7280;font-weight:800;">PROJECT</div>
-        <div style="font-size:34px;font-weight:900;line-height:1.1;margin-top:4px;">Clinic Suite</div>
-        <div style="color:#6b7280;margin-top:6px;">Choose your workspace.</div>
+        <div style="font-size:12px;letter-spacing:.08em;color:#6b7280;font-weight:800;">{{ tr(request, "ΕΡΓΟ", "PROJECT") }}</div>
+        <div style="font-size:34px;font-weight:900;line-height:1.1;margin-top:4px;">{{ tr(request, "Κεντρικός χώρος κλινικής", "Clinic Suite") }}</div>
+        <div style="color:#6b7280;margin-top:6px;">{{ tr(request, "Επιλέξτε τον χώρο εργασίας σας.", "Choose your workspace.") }}</div>
       </div>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end;">
         {% if license %}
           {% if license.is_active() %}
-            <span style="display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46;font-weight:800;font-size:13px;">✅ License active</span>
+            <span style="display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46;font-weight:800;font-size:13px;">✅ {{ tr(request, "Η άδεια είναι ενεργή", "License active") }}</span>
           {% else %}
-            <span style="display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;background:#fffbeb;border:1px solid #fde68a;color:#92400e;font-weight:800;font-size:13px;">⏳ Trial / License needed</span>
+            <span style="display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;background:#fffbeb;border:1px solid #fde68a;color:#92400e;font-weight:800;font-size:13px;">⏳ {{ tr(request, "Απαιτείται δοκιμή / άδεια", "Trial / License needed") }}</span>
           {% endif %}
-          <span style="display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;background:#eef2ff;border:1px solid #c7d2fe;color:#3730a3;font-weight:800;font-size:13px;">🧩 Mode: {{ license.product_mode }}</span>
+          <span style="display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;background:#eef2ff;border:1px solid #c7d2fe;color:#3730a3;font-weight:800;font-size:13px;">🧩 {{ tr(request, "Λειτουργία", "Mode") }}: {{ license.product_mode }}</span>
         {% endif %}
         {% if request.session.get("subscription_until") %}
           <span style="display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;background:#f1f5f9;border:1px solid #e5e7eb;color:#111827;font-weight:800;font-size:13px;">
-            ⏰ Subscription valid until: {{ request.session.get("subscription_until") }}
+            ⏰ {{ tr(request, "Συνδρομή έως", "Subscription valid until") }}: {{ request.session.get("subscription_until") }}
           </span>
         {% endif %}
       </div>
@@ -29,19 +29,19 @@
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:18px;">
       <a href="{{ rp }}/children?tenant={{ tenant_slug }}" style="text-decoration:none;">
         <div style="display:flex;align-items:center;justify-content:center;gap:10px;padding:18px 16px;border-radius:16px;background:#111827;color:#fff;font-size:18px;font-weight:900;border:1px solid #111827;">
-          <span style="font-size:20px;">🗂️</span> Therapy Portal
+          <span style="font-size:20px;">🗂️</span> {{ tr(request, "Θεραπευτική Πύλη", "Therapy Portal") }}
         </div>
       </a>
       <a href="{{ sms_app_url }}" style="text-decoration:none;" target="_self">
         <div style="display:flex;align-items:center;justify-content:center;gap:10px;padding:18px 16px;border-radius:16px;background:#fff;color:#111827;font-size:18px;font-weight:900;border:1px solid #111827;">
-          <span style="font-size:20px;">📣</span> SMS Calendar
+          <span style="font-size:20px;">📣</span> {{ tr(request, "Ημερολόγιο SMS", "SMS Calendar") }}
         </div>
       </a>
 
 {% if can_manage_team %}
 <a href="{{ rp }}/team?tenant={{ tenant_slug }}" style="text-decoration:none;">
   <div style="display:flex;align-items:center;justify-content:center;gap:10px;padding:18px 16px;border-radius:16px;background:#eef2ff;color:#111827;font-size:18px;font-weight:900;border:1px solid #c7d2fe;">
-    <span style="font-size:20px;">🔐</span> Team & Access
+    <span style="font-size:20px;">🔐</span> {{ tr(request, "Ομάδα & Πρόσβαση", "Team & Access") }}
   </div>
 </a>
 {% endif %}
@@ -51,50 +51,50 @@
 
     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
       <div style="display:flex;align-items:center;gap:10px;">
-        <div style="font-weight:900;">Clinic details</div>
-        <span style="font-size:12px;color:#6b7280;">These settings are stored per clinic and used by the SMS Calendar automatically.</span>
+        <div style="font-weight:900;">{{ tr(request, "Στοιχεία κλινικής", "Clinic details") }}</div>
+        <span style="font-size:12px;color:#6b7280;">{{ tr(request, "Αυτές οι ρυθμίσεις αποθηκεύονται ανά κλινική και χρησιμοποιούνται αυτόματα από το Ημερολόγιο SMS.", "These settings are stored per clinic and used by the SMS Calendar automatically.") }}</span>
       </div>
-      <div style="font-size:12px;color:#6b7280;">(click Settings to edit)</div>
+      <div style="font-size:12px;color:#6b7280;">{{ tr(request, "(πατήστε Ρυθμίσεις για επεξεργασία)", "(click Settings to edit)") }}</div>
     </div>
 
     <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;">
       <a class="chiplink" href="{{ rp }}/children?tenant={{ tenant_slug }}" style="text-decoration:none;">
-        <span style="display:inline-flex;align-items:center;gap:8px;padding:10px 12px;border-radius:999px;background:#111827;color:#fff;font-weight:900;">📌 Overview</span>
+        <span style="display:inline-flex;align-items:center;gap:8px;padding:10px 12px;border-radius:999px;background:#111827;color:#fff;font-weight:900;">📌 {{ tr(request, "Επισκόπηση", "Overview") }}</span>
       </a>
       <a class="chiplink" href="{{ rp }}/settings?tenant={{ tenant_slug }}" style="text-decoration:none;">
-        <span style="display:inline-flex;align-items:center;gap:8px;padding:10px 12px;border-radius:999px;background:#f3f4f6;color:#111827;border:1px solid #e5e7eb;font-weight:900;">🏥 Clinic</span>
+        <span style="display:inline-flex;align-items:center;gap:8px;padding:10px 12px;border-radius:999px;background:#f3f4f6;color:#111827;border:1px solid #e5e7eb;font-weight:900;">🏥 {{ tr(request, "Κλινική", "Clinic") }}</span>
       </a>
       <a class="chiplink" href="{{ rp }}/settings?tenant={{ tenant_slug }}" style="text-decoration:none;">
         <span style="display:inline-flex;align-items:center;gap:8px;padding:10px 12px;border-radius:999px;background:#f3f4f6;color:#111827;border:1px solid #e5e7eb;font-weight:900;">🔑 Infobip</span>
       </a>
       <a class="chiplink" href="{{ rp }}/settings?tenant={{ tenant_slug }}" style="text-decoration:none;">
-        <span style="display:inline-flex;align-items:center;gap:8px;padding:10px 12px;border-radius:999px;background:#f3f4f6;color:#111827;border:1px solid #e5e7eb;font-weight:900;">🪪 License</span>
+        <span style="display:inline-flex;align-items:center;gap:8px;padding:10px 12px;border-radius:999px;background:#f3f4f6;color:#111827;border:1px solid #e5e7eb;font-weight:900;">🪪 {{ tr(request, "Άδεια", "License") }}</span>
       </a>
-	      <a class="chiplink" href="{{ rp }}/sms-outbox?tenant={{ tenant_slug }}" style="text-decoration:none;">
-	        <span style="display:inline-flex;align-items:center;gap:8px;padding:10px 12px;border-radius:999px;background:#f3f4f6;color:#111827;border:1px solid #e5e7eb;font-weight:900;">📨 SMS Outbox</span>
-	      </a>
+      <a class="chiplink" href="{{ rp }}/sms-outbox?tenant={{ tenant_slug }}" style="text-decoration:none;">
+        <span style="display:inline-flex;align-items:center;gap:8px;padding:10px 12px;border-radius:999px;background:#f3f4f6;color:#111827;border:1px solid #e5e7eb;font-weight:900;">📨 {{ tr(request, "Εξερχόμενα SMS", "SMS Outbox") }}</span>
+      </a>
     </div>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px;">
       <div style="border:1px solid #e5e7eb;border-radius:16px;padding:16px;">
-        <div style="color:#6b7280;font-size:12px;font-weight:900;">Clinic</div>
+        <div style="color:#6b7280;font-size:12px;font-weight:900;">{{ tr(request, "Κλινική", "Clinic") }}</div>
         <div style="font-size:20px;font-weight:900;margin-top:4px;">{{ clinic.name or "—" }}</div>
         <div style="color:#6b7280;margin-top:6px;">{{ clinic.address or "—" }}</div>
         {% if clinic.map_url %}
-          <div style="margin-top:8px;"><a href="{{ clinic.map_url }}" target="_blank" style="font-weight:800;">📍 Open Google Maps</a></div>
+          <div style="margin-top:8px;"><a href="{{ clinic.map_url }}" target="_blank" style="font-weight:800;">📍 {{ tr(request, "Άνοιγμα στους Χάρτες Google", "Open Google Maps") }}</a></div>
         {% endif %}
       </div>
 
       <div style="border:1px solid #e5e7eb;border-radius:16px;padding:16px;">
-        <div style="color:#6b7280;font-size:12px;font-weight:900;">SMS Provider</div>
+        <div style="color:#6b7280;font-size:12px;font-weight:900;">{{ tr(request, "Πάροχος SMS", "SMS Provider") }}</div>
         <div style="font-size:20px;font-weight:900;margin-top:4px;">{{ clinic.sms_provider or "infobip" }}</div>
-        <div style="color:#6b7280;margin-top:6px;">Sender: {{ clinic.infobip_sender or "—" }}</div>
-        <div style="margin-top:10px;color:#6b7280;font-size:12px;">Tip: Configure clinic details and SMS credentials in Settings. No .env edits per clinic.</div>
+        <div style="color:#6b7280;margin-top:6px;">{{ tr(request, "Αποστολέας", "Sender") }}: {{ clinic.infobip_sender or "—" }}</div>
+        <div style="margin-top:10px;color:#6b7280;font-size:12px;">{{ tr(request, "Συμβουλή: Ρυθμίστε τα στοιχεία κλινικής και τα διαπιστευτήρια SMS στις Ρυθμίσεις. Δεν χρειάζονται αλλαγές .env ανά κλινική.", "Tip: Configure clinic details and SMS credentials in Settings. No .env edits per clinic.") }}</div>
       </div>
     </div>
 
     <div style="margin-top:14px;color:#6b7280;font-size:12px;">
-      Tip: Use Clinic details only when you need to configure the installation.
+      {{ tr(request, "Συμβουλή: Χρησιμοποιήστε τα στοιχεία κλινικής μόνο όταν χρειάζεται να ρυθμίσετε την εγκατάσταση.", "Tip: Use Clinic details only when you need to configure the installation.") }}
     </div>
   </div>
 </div>

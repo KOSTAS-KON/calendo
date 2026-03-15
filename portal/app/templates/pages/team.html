@@ -10,15 +10,15 @@
   <section class="card-soft team-admin-hero">
     <div class="team-admin-hero__text">
       <span class="pill p-blue">{{ tr(request, "Χώρος διαχείρισης", "Admin workspace") }}</span>
-      <h2 class="team-admin-hero__title">{{ tr(request, "Κρατήστε πρόσβαση, συνδέσεις θεραπευτών και αναθέσεις παιδιών σε ένα μέρος", "Keep access, therapist links, and child assignments in one place") }}</h2>
+      <h2 class="team-admin-hero__title">{{ tr(request, "Κρατήστε την πρόσβαση, τους συνδέσμους θεραπευτών και τις αναθέσεις παιδιών σε ένα σημείο", "Keep access, therapist links, and child assignments in one place") }}</h2>
       <p class="team-admin-hero__sub">
-        {{ tr(request, "Χρησιμοποιήστε αυτή τη σελίδα για να δημιουργείτε συνδέσεις χρηστών, να συνδέετε θεραπευτές με λογαριασμούς και να ελέγχετε ποια παιδιά εμφανίζονται στη λίστα εργασίας κάθε θεραπευτή.", "Use this page to create logins, connect therapists to users, and control which children appear in each therapist's working list.") }}
+        {{ tr(request, "Χρησιμοποιήστε αυτή τη σελίδα για να δημιουργείτε λογαριασμούς, να συνδέετε θεραπευτές με χρήστες και να ελέγχετε ποια παιδιά εμφανίζονται στη λίστα εργασίας κάθε θεραπευτή.", "Use this page to create logins, connect therapists to users, and control which children appear in each therapist's working list.") }}
       </p>
     </div>
     <div class="team-admin-hero__meta">
       <div class="team-admin-meta-card">
         <div class="team-admin-meta-card__label">{{ tr(request, "Σημερινή εστίαση", "Today's focus") }}</div>
-        <div class="team-admin-meta-card__value">{{ tr(request, "Ρύθμιση πρόσβασης + προγραμματισμού", "Access + scheduling setup") }}</div>
+        <div class="team-admin-meta-card__value">{{ tr(request, "Πρόσβαση + οργάνωση προγραμματισμού", "Access + scheduling setup") }}</div>
       </div>
       <div class="team-admin-meta-card">
         <div class="team-admin-meta-card__label">{{ tr(request, "Προτεινόμενη σειρά", "Recommended order") }}</div>
@@ -31,8 +31,8 @@
   <section class="team-admin-credential card-soft">
     <div class="team-admin-credential__head">
       <div>
-        <div class="team-admin-section-eyebrow">{{ tr(request, "Προσωρινά στοιχεία σύνδεσης", "Temporary credentials") }}</div>
-        <div class="team-admin-section-title">{{ tr(request, "Κοινοποιήστε τα μία φορά και μετά ζητήστε από τον χρήστη να αλλάξει τον κωδικό", "Share these once, then ask the user to change the password") }}</div>
+        <div class="team-admin-section-eyebrow">{{ tr(request, "Προσωρινά στοιχεία", "Temporary credentials") }}</div>
+        <div class="team-admin-section-title">{{ tr(request, "Μοιραστείτε τα μία φορά και μετά ζητήστε από τον χρήστη να αλλάξει κωδικό", "Share these once, then ask the user to change the password") }}</div>
       </div>
       <span class="pill p-green">{{ tr(request, "Έτοιμο", "Ready") }}</span>
     </div>
@@ -53,7 +53,7 @@
     <article class="stat-card">
       <div class="stat-card__label">{{ tr(request, "Χρήστες", "Users") }}</div>
       <div class="stat-card__value">{{ total_users }}</div>
-      <div class="stat-card__meta">{{ active_users }} {{ tr(request, "ενεργοί", "active") }} · {{ total_users - active_users }} {{ tr(request, "ανακλημένοι", "revoked") }}</div>
+      <div class="stat-card__meta">{{ active_users }} {{ tr(request, "ενεργοί", "active") }} · {{ total_users - active_users }} {{ tr(request, "ανενεργοί", "revoked") }}</div>
     </article>
     <article class="stat-card">
       <div class="stat-card__label">{{ tr(request, "Θεραπευτές", "Therapists") }}</div>
@@ -82,7 +82,7 @@
         <span class="pill p-gray">{{ tr(request, "Πρόσβαση", "Access") }}</span>
       </div>
       <p class="team-admin-panel__copy">
-        {{ tr(request, "Δώστε σε γραμματεία, διαχειριστές και θεραπευτές τον δικό τους λογαριασμό. Η σύνδεση ενός θεραπευτή κρατά συνεπές το ημερολόγιο και τη λίστα παιδιών του.", "Give receptionists, superusers, and therapists their own login. Linking a therapist keeps their calendar and child list consistent.") }}
+        {{ tr(request, "Δώστε σε γραμματεία, διαχειριστές και θεραπευτές τον δικό τους λογαριασμό. Η σύνδεση θεραπευτή κρατά συνεπές το ημερολόγιο και τη λίστα παιδιών του.", "Give receptionists, superusers, and therapists their own login. Linking a therapist keeps their calendar and child list consistent.") }}
       </p>
       <form method="post" action="{{ rp }}/team/users/create" class="team-admin-form-grid">
         <div>
@@ -92,26 +92,26 @@
         <div>
           <label class="label">{{ tr(request, "Ρόλος", "Role") }}</label>
           <select class="input" name="role">
-            <option value="clinic_superuser">{{ tr(request, "Διαχειριστής κλινικής", "Clinic superuser") }}</option>
-            <option value="calendar_staff">{{ tr(request, "Ημερολόγιο / γραμματεία", "Calendar staff / receptionist") }}</option>
+            <option value="clinic_superuser">{{ tr(request, "Κύριος διαχειριστής κλινικής", "Clinic superuser") }}</option>
+            <option value="calendar_staff">{{ tr(request, "Γραμματεία / προσωπικό ημερολογίου", "Calendar staff / receptionist") }}</option>
             <option value="therapist">{{ tr(request, "Θεραπευτής", "Therapist") }}</option>
           </select>
         </div>
         <div>
-          <label class="label">{{ tr(request, "Ιδιότητα / τίτλος", "Job title") }}</label>
-          <input class="input" name="job_title" placeholder="{{ tr(request, 'Γραμματεία / Υποδοχή / Θεραπευτής', 'Receptionist / Secretary / Therapist') }}">
+          <label class="label">{{ tr(request, "Ιδιότητα εργασίας", "Job title") }}</label>
+          <input class="input" name="job_title" placeholder="{{ tr(request, 'Γραμματέας / Υποδοχή / Θεραπευτής', 'Receptionist / Secretary / Therapist') }}">
         </div>
         <div>
           <label class="label">{{ tr(request, "Σύνδεση με θεραπευτή (προαιρετικό)", "Link to therapist (optional)") }}</label>
           <select class="input" name="therapist_id">
-            <option value="">{{ tr(request, "-- κανένας --", "-- none --") }}</option>
+            <option value="">{{ tr(request, '-- κανένας --', '-- none --') }}</option>
             {% for t in therapists %}
               <option value="{{ t.id }}">{{ t.name }}</option>
             {% endfor %}
           </select>
         </div>
         <div class="team-admin-form-actions">
-          <button class="btn" type="submit">{{ tr(request, "Δημιουργία χρήστη / προσωρινός κωδικός", "Create user / generate temp password") }}</button>
+          <button class="btn" type="submit">{{ tr(request, "Δημιουργία χρήστη / προσωρινού κωδικού", "Create user / generate temp password") }}</button>
         </div>
       </form>
     </article>
@@ -125,7 +125,7 @@
         <span class="pill p-gray">{{ tr(request, "Προγραμματισμός", "Scheduling") }}</span>
       </div>
       <p class="team-admin-panel__copy">
-        {{ tr(request, "Οι ενεργές αναθέσεις ελέγχουν ποια παιδιά εμφανίζονται στην προβολή του θεραπευτή και κρατούν το portal εστιασμένο στο σωστό φορτίο περιστατικών.", "Active assignments control which children appear in the therapist view and keep the portal focused on the right caseload.") }}
+        {{ tr(request, "Οι ενεργές αναθέσεις καθορίζουν ποια παιδιά εμφανίζονται στην προβολή κάθε θεραπευτή και κρατούν την πύλη εστιασμένη στο σωστό φορτίο εργασίας.", "Active assignments control which children appear in the therapist view and keep the portal focused on the right caseload.") }}
       </p>
       <form method="post" action="{{ rp }}/team/assignments/create" class="team-admin-form-grid">
         <div>
@@ -157,7 +157,7 @@
         <div class="team-admin-section-eyebrow">{{ tr(request, "Επισκόπηση πρόσβασης", "Access overview") }}</div>
         <h3 class="team-admin-section-title">{{ tr(request, "Χρήστες", "Users") }}</h3>
       </div>
-      <div class="team-admin-table-card__meta">{{ tr(request, "Επαναφέρετε κωδικούς ή ανακαλέστε πρόσβαση χωρίς να φύγετε από τη σελίδα.", "Reset passwords or revoke access without leaving the page.") }}</div>
+      <div class="team-admin-table-card__meta">{{ tr(request, "Επαναφορά κωδικών ή ανάκληση πρόσβασης χωρίς να φύγετε από τη σελίδα.", "Reset passwords or revoke access without leaving the page.") }}</div>
     </div>
 
     {% if users %}
@@ -179,7 +179,7 @@
           </td>
           <td>
             {% if u.role == 'clinic_superuser' %}
-              <span class="pill p-blue">{{ tr(request, "Διαχειριστής κλινικής", "Clinic superuser") }}</span>
+              <span class="pill p-blue">{{ tr(request, "Κύριος διαχειριστής", "Clinic superuser") }}</span>
             {% elif u.role == 'calendar_staff' %}
               <span class="pill p-gray">{{ tr(request, "Γραμματεία / ημερολόγιο", "Reception / calendar staff") }}</span>
             {% elif u.role == 'therapist' %}
@@ -202,7 +202,7 @@
                 <button class="btn btn-sm btn-outline" type="submit">{{ tr(request, "Επαναφορά κωδικού", "Reset password") }}</button>
               </form>
               <form class="inline" method="post" action="{{ rp }}/team/users/{{ u.id }}/toggle">
-                <button class="btn btn-sm btn-outline" type="submit">{{ tr(request, 'Ανάκληση', 'Revoke') if u.is_active else tr(request, 'Επαναφορά', 'Restore') }}</button>
+                <button class="btn btn-sm btn-outline" type="submit">{{ tr(request, 'Ανάκληση' if u.is_active else 'Επαναφορά', 'Revoke' if u.is_active else 'Restore') }}</button>
               </form>
             </div>
           </td>
@@ -211,14 +211,14 @@
       </tbody>
     </table>
     {% else %}
-      <div class="team-admin-empty">{{ tr(request, "Δεν υπάρχουν ακόμη χρήστες. Δημιουργήστε την πρώτη σύνδεση από το πλαίσιο πιο πάνω.", "No users yet. Create the first login from the panel above.") }}</div>
+      <div class="team-admin-empty">{{ tr(request, "Δεν υπάρχουν χρήστες ακόμη. Δημιουργήστε τον πρώτο λογαριασμό από το παραπάνω πλαίσιο.", "No users yet. Create the first login from the panel above.") }}</div>
     {% endif %}
   </section>
 
   <section class="card-soft team-admin-table-card">
     <div class="team-admin-table-card__head">
       <div>
-        <div class="team-admin-section-eyebrow">{{ tr(request, "Επισκόπηση περιστατικών", "Caseload overview") }}</div>
+        <div class="team-admin-section-eyebrow">{{ tr(request, "Επισκόπηση φορτίου", "Caseload overview") }}</div>
         <h3 class="team-admin-section-title">{{ tr(request, "Αναθέσεις παιδί → θεραπευτής", "Child → therapist assignments") }}</h3>
       </div>
       <div class="team-admin-table-card__meta">{{ tr(request, "Χρησιμοποιήστε ενεργές αναθέσεις για να ελέγχετε τι βλέπει κάθε θεραπευτής στη λίστα εργασίας του.", "Use active assignments to control what each therapist sees in their working list.") }}</div>
@@ -231,7 +231,7 @@
           <th>{{ tr(request, "Παιδί", "Child") }}</th>
           <th>{{ tr(request, "Θεραπευτής", "Therapist") }}</th>
           <th>{{ tr(request, "Κατάσταση", "Status") }}</th>
-          <th>{{ tr(request, "Ανατέθηκε στις", "Assigned at") }}</th>
+          <th>{{ tr(request, "Ημερομηνία ανάθεσης", "Assigned at") }}</th>
           <th>{{ tr(request, "Ενέργεια", "Action") }}</th>
         </tr>
       </thead>
@@ -250,7 +250,7 @@
           <td>{{ a.assigned_at.strftime('%Y-%m-%d %H:%M') if a.assigned_at else '—' }}</td>
           <td>
             <form class="inline" method="post" action="{{ rp }}/team/assignments/{{ a.id }}/toggle">
-              <button class="btn btn-sm btn-outline" type="submit">{{ tr(request, 'Αφαίρεση', 'Remove') if a.is_active else tr(request, 'Επαναφορά', 'Restore') }}</button>
+              <button class="btn btn-sm btn-outline" type="submit">{{ tr(request, 'Αφαίρεση' if a.is_active else 'Επαναφορά', 'Remove' if a.is_active else 'Restore') }}</button>
             </form>
           </td>
         </tr>
@@ -258,7 +258,7 @@
       </tbody>
     </table>
     {% else %}
-      <div class="team-admin-empty">{{ tr(request, "Δεν υπάρχουν ακόμη αναθέσεις. Χρησιμοποιήστε το πλαίσιο πιο πάνω για να αντιστοιχίσετε ένα παιδί σε θεραπευτή.", "No assignments yet. Use the panel above to match a child to a therapist.") }}</div>
+      <div class="team-admin-empty">{{ tr(request, "Δεν υπάρχουν αναθέσεις ακόμη. Χρησιμοποιήστε το παραπάνω πλαίσιο για να δημιουργήσετε το φορτίο εργασίας κάθε θεραπευτή.", "No assignments yet. Use the assignment panel above to build each therapist's caseload.") }}</div>
     {% endif %}
   </section>
 </div>
