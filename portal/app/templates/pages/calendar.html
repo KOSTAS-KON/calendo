@@ -99,27 +99,27 @@
 <section class="subpanel ops-howto-panel">
   <div class="subhead subhead-flex">
     <div>
-      <div class="section-heading">How to use this screen</div>
-      <p class="section-copy">Use filters to focus the clinic view, then open the session note either from a busy slot or from the appointment card labelled <em>Open note</em>.</p>
+      <div class="section-heading">What this page supports today</div>
+      <p class="section-copy">This page is mainly for scheduling visibility and getting into the appointment detail screen. The clinical note is written <strong>inside the appointment</strong>, not directly on the calendar board.</p>
     </div>
     <div class="ops-calendar-filter-tags">
-      <span class="focus-tag">1 · Choose child / therapist</span>
-      <span class="focus-tag">2 · Scan gaps and busy slots</span>
-      <span class="focus-tag">3 · Open note from any busy appointment</span>
+      <span class="focus-tag">1 · Filter the clinic view</span>
+      <span class="focus-tag">2 · Open a busy appointment</span>
+      <span class="focus-tag">3 · Write the session note there</span>
     </div>
   </div>
   <div class="subbody ops-howto-grid">
     <div class="empty-state">
-      <strong>Therapist workflow</strong>
-      <div class="hint">Click a busy appointment card marked <em>Open note</em>, review the previous session, write today’s achievements, then save the plan for the next session.</div>
+      <strong>Busy appointment</strong>
+      <div class="hint">Busy appointment cards are the route into the session workflow. Open one to review the previous note, write today’s achievements, and set the next-session plan.</div>
     </div>
     <div class="empty-state">
-      <strong>Reception / superuser workflow</strong>
-      <div class="hint">Keep all therapists visible for the full clinic picture. Use the board to spot free 15-minute gaps and open Quick create directly from a free slot.</div>
+      <strong>Free slot</strong>
+      <div class="hint">Free 15-minute slots on the therapist occupancy board are only for scheduling. They open Quick create so reception or a superuser can add a new appointment.</div>
     </div>
     <div class="empty-state">
-      <strong>Need a live example?</strong>
-      <div class="hint">If the calendar is empty, use <em>Load demo clinic week</em> to seed mock therapists, children, appointments, billing, and one previous session note.</div>
+      <strong>If the view looks empty</strong>
+      <div class="hint">That usually means no appointments match the selected child / therapist filters yet. Use <em>Reset</em>, change the date, or {% if allow_demo_seed %}<em>Load demo clinic week</em>{% else %}add a test appointment{% endif %}.</div>
     </div>
   </div>
 </section>
@@ -149,6 +149,28 @@
 
 <div class="ops-clinic-alert" id="clinicAlert" hidden></div>
 
+<section class="subpanel ops-calendar-state-panel" id="calendarStatePanel">
+  <div class="subhead subhead-flex">
+    <div>
+      <div class="section-heading">Current calendar state</div>
+      <p class="section-copy">This block explains what the current filters and date are showing you, so the page does not feel blank or ambiguous.</p>
+    </div>
+    <div class="ops-calendar-filter-tags">
+      <span class="focus-tag" id="calendarStatePill">Waiting for calendar data</span>
+    </div>
+  </div>
+  <div class="subbody ops-calendar-state-grid">
+    <div class="empty-state ops-calendar-state-card">
+      <strong id="calendarStateHeadline">Loading schedule view…</strong>
+      <div class="hint" id="calendarStateBody">The weekly board and the calendar below should explain whether the clinic is busy, filtered, or simply empty for the selected date.</div>
+    </div>
+    <div class="empty-state ops-calendar-state-card">
+      <strong>What to click</strong>
+      <div class="hint">Busy appointment card → open appointment detail and session note. Free slot on the therapist board → open Quick create.</div>
+    </div>
+  </div>
+</section>
+
 <div class="ops-calendar-layout">
   <section class="ops-calendar-main">
     <div class="subpanel">
@@ -172,15 +194,15 @@
     <div class="subpanel">
       <div class="subhead subhead-flex">
         <div>
-          <div class="section-heading">Weekly / daily calendar</div>
-          <p class="section-copy">15-minute slots, therapist colours, and direct access to the session note screen. Every busy appointment card includes an <em>Open note</em> cue.</p>
+          <div class="section-heading">Calendar schedule</div>
+          <p class="section-copy">Use the toolbar inside the calendar to switch between <strong>Week</strong>, <strong>Day</strong>, and <strong>Month</strong>. Busy appointments open the appointment detail screen; free scheduling happens from the therapist board above.</p>
         </div>
       </div>
       <div class="subbody">
         <div id="calendar"></div>
         <div id="calendarEmpty" class="empty-state ops-calendar-empty" hidden>
           <strong>No calendar items match this view yet.</strong>
-          <div class="hint">Use Quick create to add an appointment, or change the active filters. {% if allow_demo_seed %}You can also load the demo clinic week to see a realistic busy schedule immediately.{% endif %}</div>
+          <div class="hint">The calendar itself is working, but there are currently no visible appointments for this child / therapist filter combination. Try <em>Reset</em>, switch the date, or {% if allow_demo_seed %}load the demo clinic week{% else %}add a test appointment{% endif %}.</div>
           {% if allow_demo_seed %}
             <div class="ops-calendar-empty__actions">
               <form method="post" action="{{ rp }}/calendar/seed_demo" class="inline-form">
@@ -209,30 +231,30 @@
     <div class="subpanel">
       <div class="subhead">
         <div>
-          <div class="section-heading">Simple workflow</div>
-          <p class="section-copy">The portal stays focused on scheduling and clinical notes. SMS functionality is unchanged.</p>
+          <div class="section-heading">Click behavior</div>
+          <p class="section-copy">This side panel explains what each interactive area actually does right now, so the screen is less confusing during rollout.</p>
         </div>
       </div>
       <div class="subbody">
         <div class="workflow-step">
           <div class="workflow-index">1</div>
           <div>
-            <strong>See the full clinic</strong>
-            <div class="hint">Use the board and calendar together to spot gaps, overlaps, and full-clinic saturation.</div>
+            <strong>Read the clinic state</strong>
+            <div class="hint">Use the board and the state box above to understand whether the clinic is busy, filtered, or simply empty for the selected date.</div>
           </div>
         </div>
         <div class="workflow-step">
           <div class="workflow-index">2</div>
           <div>
-            <strong>Open or create fast</strong>
-            <div class="hint">Click a busy block for the appointment detail, or a free block to create a new one at that exact 15-minute slot.</div>
+            <strong>Busy vs free clicks</strong>
+            <div class="hint">Busy appointment cards open the appointment detail screen. Free 15-minute therapist-board blocks open Quick create.</div>
           </div>
         </div>
         <div class="workflow-step">
           <div class="workflow-index">3</div>
           <div>
-            <strong>Write the clinical note</strong>
-            <div class="hint">Inside the appointment, review the previous note, record today's achievements, and plan the next session.</div>
+            <strong>Where notes live</strong>
+            <div class="hint">The therapist writes the clinical note inside the appointment detail screen: previous session review, today’s achievements, and next-session plan.</div>
           </div>
         </div>
       </div>
@@ -467,6 +489,9 @@
   const boardDateInput = document.getElementById('boardDate');
   const clinicAlert = document.getElementById('clinicAlert');
   const calendarEmpty = document.getElementById('calendarEmpty');
+  const calendarStatePill = document.getElementById('calendarStatePill');
+  const calendarStateHeadline = document.getElementById('calendarStateHeadline');
+  const calendarStateBody = document.getElementById('calendarStateBody');
 
   let selectedKinds = new Set(['appointment']);
   let rawEventCache = [];
@@ -837,6 +862,29 @@
     calendarEmpty.hidden = activeEvents.length > 0;
   }
 
+  function renderScreenState(summary){
+    if(!calendarStateHeadline || !calendarStateBody || !calendarStatePill) return;
+    const activeEvents = filterEvents(rawEventCache);
+    const visibleCount = summary.length;
+    const dayLabel = currentBoardDate.toLocaleDateString([], { weekday: 'short', day: '2-digit', month: 'short' });
+    if(!visibleCount){
+      calendarStatePill.textContent = 'No visible therapists';
+      calendarStateHeadline.textContent = 'The current filters hide all therapists.';
+      calendarStateBody.textContent = 'Reset the filters or re-add therapists to the visible view. The board and the calendar below cannot show clinic activity without at least one visible therapist.';
+      return;
+    }
+    if(!activeEvents.length){
+      calendarStatePill.textContent = 'Calendar ready but empty';
+      calendarStateHeadline.textContent = `No visible appointments for ${dayLabel}.`;
+      calendarStateBody.textContent = 'This usually means the clinic is filtered down too far, the selected date has no appointments yet, or demo data has not been loaded. Busy appointment cards will appear here once matching events exist.';
+      return;
+    }
+    const appointmentCount = activeEvents.filter((ev) => String((ev.extendedProps && ev.extendedProps.kind) || ev.kind || '') === 'appointment').length;
+    calendarStatePill.textContent = `${appointmentCount} appointment${appointmentCount === 1 ? '' : 's'} visible`;
+    calendarStateHeadline.textContent = `Showing ${activeEvents.length} calendar item${activeEvents.length === 1 ? '' : 's'} for ${visibleCount} therapist${visibleCount === 1 ? '' : 's'}.`;
+    calendarStateBody.textContent = 'Busy appointment cards are your route into the appointment detail and session note. Free 15-minute board slots are for quick scheduling only.';
+  }
+
   function renderStats(summary){
     const now = new Date();
     const isToday = sameDay(currentBoardDate, now);
@@ -877,6 +925,7 @@
     renderBoard(summary);
     renderStatusList(summary);
     renderStats(summary);
+    renderScreenState(summary);
     renderCalendarEmptyState();
   }
 

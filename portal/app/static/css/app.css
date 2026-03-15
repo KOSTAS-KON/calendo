@@ -1515,6 +1515,20 @@ body.modal-open {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.ops-calendar-state-panel {
+  margin-bottom: 18px;
+}
+
+.ops-calendar-state-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.ops-calendar-state-card {
+  min-height: 96px;
+}
+
 .ops-calendar-empty {
   margin-top: 14px;
 }
@@ -2066,4 +2080,11 @@ body.modal-open {
 }
 @media (max-width: 900px) {
   .appointment-type-help { grid-column: 1 / -1; }
+}
+
+@media (max-width: 900px) {
+  .ops-howto-grid,
+  .ops-calendar-state-grid {
+    grid-template-columns: 1fr;
+  }
 }
