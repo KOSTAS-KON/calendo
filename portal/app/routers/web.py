@@ -104,6 +104,48 @@ def status_chip(status: str | None) -> str:
 templates.env.globals["status_badge"] = status_badge
 templates.env.globals["status_chip"] = status_chip
 
+APPOINTMENT_TYPE_CHOICES: list[tuple[str, str]] = [
+    ("GOVERNMENT_FUNDED", "Government funded"),
+    ("REGULAR_ADDITIONAL", "Regular additional"),
+    ("REPLACEMENT", "Replacement session"),
+    ("BESPOKE_EXTRA", "Bespoke extra support"),
+    ("UNSPECIFIED", "Unspecified / legacy"),
+]
+
+THERAPY_TYPE_CHOICES: list[tuple[str, str]] = [
+    ("", "All therapy types"),
+    ("SPEECH_THERAPY", "Speech therapy"),
+    ("PHYSIOTHERAPY", "Physiotherapy"),
+    ("PSYCHOTHERAPY", "Psychotherapy"),
+    ("OCCUPATIONAL_THERAPY", "Occupational therapy"),
+    ("OTHER", "Other"),
+    ("UNSPECIFIED", "Unspecified / legacy"),
+]
+
+APPOINTMENT_TYPE_LABELS: dict[str, str] = {value: label for value, label in APPOINTMENT_TYPE_CHOICES}
+THERAPY_TYPE_LABELS: dict[str, str] = {value: label for value, label in THERAPY_TYPE_CHOICES if value}
+THERAPY_TYPE_LABELS.setdefault("UNSPECIFIED", "Unspecified / legacy")
+
+
+def appointment_type_label(value: str | None) -> str:
+    key = (value or "UNSPECIFIED").strip().upper() or "UNSPECIFIED"
+    if key == "APPROVED_GOVERNMENT":
+        key = "GOVERNMENT_FUNDED"
+    return APPOINTMENT_TYPE_LABELS.get(key, key.replace("_", " ").title())
+
+
+def therapy_type_label(value: str | None) -> str:
+    key = (value or "UNSPECIFIED").strip().upper() or "UNSPECIFIED"
+    return THERAPY_TYPE_LABELS.get(key, key.replace("_", " ").title())
+
+
+def quarter_hour_options() -> list[str]:
+    return [f"{hour:02d}:{minute:02d}" for hour in range(24) for minute in (0, 15, 30, 45)]
+
+
+templates.env.globals["appointment_type_label"] = appointment_type_label
+templates.env.globals["therapy_type_label"] = therapy_type_label
+
 
 # -----------------------------
 # DB dependency
@@ -900,6 +942,18 @@ def child_detail(request: Request, child_id: int):
             .all()
         )
         ctx = _base_context(db, request, ts, tid)
+        hours_start_raw = (request.query_params.get("hours_start") or "").strip()
+        hours_end_raw = (request.query_params.get("hours_end") or "").strip()
+        try:
+            hours_start = date.fromisoformat(hours_start_raw) if hours_start_raw else None
+        except Exception:
+            hours_start = None
+        try:
+            hours_end = date.fromisoformat(hours_end_raw) if hours_end_raw else None
+        except Exception:
+            hours_end = None
+        hours_therapy_filter = (request.query_params.get("therapy_type") or "").strip().upper()
+        hours_include_counted = (request.query_params.get("include_counted") or "").strip() in ("1", "true", "yes", "on")
         return templates.TemplateResponse(
             "pages/child_detail.html",
             {
@@ -912,6 +966,12 @@ def child_detail(request: Request, child_id: int):
                 "tab": tab,
                 "edit_mode": (request.query_params.get("edit") or "").strip() in ("1", "true", "yes"),
                 "can_edit_child": _role_flags(request)["is_clinic_superuser"],
+                "therapy_type_choices": THERAPY_TYPE_CHOICES,
+                "hours_start": hours_start,
+                "hours_end": hours_end,
+                "hours_therapy_filter": hours_therapy_filter,
+                "hours_include_counted": hours_include_counted,
+                "hours_data": None,
             },
         )
     finally:
@@ -2461,6 +2521,11 @@ def appointment_detail(request: Request, appointment_id: int):
             )
 
         uploads = db.query(Attachment).filter(Attachment.child_id == appt.child_id).order_by(Attachment.created_at.desc()).all()
+        therapists = db.query(Therapist).filter(Therapist.tenant_id == tid).filter(_is_active_filter(Therapist)).order_by(Therapist.name.asc()).all()
+        try:
+            appt_duration_minutes = int(getattr(appt, "duration_minutes", 60) or 60)
+        except Exception:
+            appt_duration_minutes = 60
 
         ctx = _base_context(db, request, ts, tid)
         return templates.TemplateResponse(
@@ -2473,6 +2538,10 @@ def appointment_detail(request: Request, appointment_id: int):
                 "uploads": uploads,
                 "previous_appt": previous_appt,
                 "previous_note": previous_note,
+                "therapists": therapists,
+                "appt_duration_minutes": appt_duration_minutes,
+                "quarter_hour_options": quarter_hour_options(),
+                "appointment_type_choices": APPOINTMENT_TYPE_CHOICES,
             },
         )
     finally:
