@@ -1,105 +1,265 @@
 {% extends "layout.html" %}
-{% set header = tr(request, 'Ομάδα & Πρόσβαση', 'Team & Access') %}
+{% set header = "Team & Access" %}
 {% block content %}
-<div class="grid grid-cols-1 xl:grid-cols-3 gap-5">
-  <section class="xl:col-span-2 space-y-5">
-    <div class="card-soft">
-      <div class="font-extrabold mb-3">{{ tr(request, 'Χρήστες', 'Users') }}</div>
-      {% if temp_password %}
-      <div class="mb-4 p-3 rounded-2xl border border-emerald-200 bg-emerald-50 text-emerald-900">
-        <div class="font-bold">{{ tr(request, 'Προσωρινά στοιχεία σύνδεσης', 'Temporary credentials') }}</div>
-        <div class="text-sm">Email: <b>{{ temp_email }}</b></div>
-        <div class="text-sm">{{ tr(request, 'Προσωρινός κωδικός', 'Temporary password') }}: <code>{{ temp_password }}</code></div>
-        <div class="text-xs mt-1">{{ tr(request, 'Μοιράσου το μία φορά. Ο χρήστης πρέπει να το αλλάξει στην πρώτη σύνδεση.', 'Share this once. The user should change it on first login.') }}</div>
-      </div>
-      {% endif %}
-      <table class="table js-responsive-table" data-cards="true">
-        <thead><tr><th>{{ tr(request, 'Email', 'Email') }}</th><th>{{ tr(request, 'Ρόλος', 'Role') }}</th><th>{{ tr(request, 'Ιδιότητα', 'Job title') }}</th><th>{{ tr(request, 'Κατάσταση', 'Status') }}</th><th>{{ tr(request, 'Ενέργειες', 'Actions') }}</th></tr></thead>
-        <tbody>
-        {% for u in users %}
-          <tr>
-            <td>{{ u.email }}</td>
-            <td>{{ u.role }}</td>
-            <td>{{ u.job_title or '' }}</td>
-            <td>{% if u.is_active %}<span class="pill p-green">{{ tr(request, 'ενεργός', 'active') }}</span>{% else %}<span class="pill p-red">{{ tr(request, 'ανενεργός', 'revoked') }}</span>{% endif %}</td>
-            <td>
-              <form class="inline" method="post" action="{{ rp }}/team/users/{{ u.id }}/reset_password"><button class="btn btn-sm btn-outline" type="submit">{{ tr(request, 'Επαναφορά κωδικού', 'Reset password') }}</button></form>
-              <form class="inline" method="post" action="{{ rp }}/team/users/{{ u.id }}/toggle"><button class="btn btn-sm btn-outline" type="submit">{{ tr(request, 'Ανάκληση', 'Revoke') if u.is_active else tr(request, 'Επαναφορά', 'Restore') }}</button></form>
-            </td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    </div>
+{% set total_users = users|length %}
+{% set active_users = users | selectattr('is_active') | list | length %}
+{% set therapist_count = therapists|length %}
+{% set active_assignments = assignments | selectattr('is_active') | list | length %}
 
-    <div class="card-soft">
-      <div class="font-extrabold mb-3">{{ tr(request, 'Αναθέσεις παιδιού → θεραπευτή', 'Child → Therapist assignments') }}</div>
-      <table class="table js-responsive-table" data-cards="true">
-        <thead><tr><th>{{ tr(request, 'Παιδί', 'Child') }}</th><th>{{ tr(request, 'Θεραπευτής', 'Therapist') }}</th><th>{{ tr(request, 'Κατάσταση', 'Status') }}</th><th>{{ tr(request, 'Ανατέθηκε στις', 'Assigned at') }}</th><th>{{ tr(request, 'Ενέργεια', 'Action') }}</th></tr></thead>
-        <tbody>
-        {% for a in assignments %}
-          <tr>
-            <td>{{ a.child.full_name if a.child else a.child_id }}</td>
-            <td>{{ a.therapist.name if a.therapist else a.therapist_id }}</td>
-            <td>{% if a.is_active %}<span class="pill p-green">{{ tr(request, 'ενεργή', 'active') }}</span>{% else %}<span class="pill p-gray">{{ tr(request, 'ανενεργή', 'inactive') }}</span>{% endif %}</td>
-            <td>{{ a.assigned_at }}</td>
-            <td>
-              <form class="inline" method="post" action="{{ rp }}/team/assignments/{{ a.id }}/toggle">
-                <button class="btn btn-sm btn-outline" type="submit">{{ tr(request, 'Αφαίρεση', 'Remove') if a.is_active else tr(request, 'Επαναφορά', 'Restore') }}</button>
-              </form>
-            </td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
+<div class="team-admin-shell space-y-5">
+  <section class="card-soft team-admin-hero">
+    <div class="team-admin-hero__text">
+      <span class="pill p-blue">Admin workspace</span>
+      <h2 class="team-admin-hero__title">Keep access, therapist links, and child assignments in one place</h2>
+      <p class="team-admin-hero__sub">
+        Use this page to create logins, connect therapists to users, and control which children appear in each therapist's working list.
+      </p>
+    </div>
+    <div class="team-admin-hero__meta">
+      <div class="team-admin-meta-card">
+        <div class="team-admin-meta-card__label">Today's focus</div>
+        <div class="team-admin-meta-card__value">Access + scheduling setup</div>
+      </div>
+      <div class="team-admin-meta-card">
+        <div class="team-admin-meta-card__label">Recommended order</div>
+        <div class="team-admin-meta-card__value">Create user → link therapist → assign children</div>
+      </div>
     </div>
   </section>
 
-  <aside class="space-y-5">
-    <div class="card-soft">
-      <div class="font-extrabold mb-3">{{ tr(request, 'Δημιουργία / επαναφορά σύνδεσης', 'Create / reset login') }}</div>
-      <form method="post" action="{{ rp }}/team/users/create" class="space-y-3">
-        <div><label class="label">{{ tr(request, 'Email', 'Email') }}</label><input class="input" name="email" required></div>
-        <div><label class="label">{{ tr(request, 'Ρόλος', 'Role') }}</label>
+  {% if temp_password %}
+  <section class="team-admin-credential card-soft">
+    <div class="team-admin-credential__head">
+      <div>
+        <div class="team-admin-section-eyebrow">Temporary credentials</div>
+        <div class="team-admin-section-title">Share these once, then ask the user to change the password</div>
+      </div>
+      <span class="pill p-green">Ready</span>
+    </div>
+    <div class="team-admin-credential__grid">
+      <div class="team-admin-credential__item">
+        <span class="team-admin-credential__k">Email</span>
+        <code class="team-admin-credential__v">{{ temp_email }}</code>
+      </div>
+      <div class="team-admin-credential__item">
+        <span class="team-admin-credential__k">Temporary password</span>
+        <code class="team-admin-credential__v">{{ temp_password }}</code>
+      </div>
+    </div>
+  </section>
+  {% endif %}
+
+  <section class="team-admin-stat-grid">
+    <article class="stat-card">
+      <div class="stat-card__label">Users</div>
+      <div class="stat-card__value">{{ total_users }}</div>
+      <div class="stat-card__meta">{{ active_users }} active · {{ total_users - active_users }} revoked</div>
+    </article>
+    <article class="stat-card">
+      <div class="stat-card__label">Therapists</div>
+      <div class="stat-card__value">{{ therapist_count }}</div>
+      <div class="stat-card__meta">Available for scheduling and session notes</div>
+    </article>
+    <article class="stat-card stat-card--highlight">
+      <div class="stat-card__label">Active assignments</div>
+      <div class="stat-card__value">{{ active_assignments }}</div>
+      <div class="stat-card__meta">Visible child-to-therapist links</div>
+    </article>
+    <article class="stat-card">
+      <div class="stat-card__label">Children</div>
+      <div class="stat-card__value">{{ children|length }}</div>
+      <div class="stat-card__meta">Children available for assignment</div>
+    </article>
+  </section>
+
+  <section class="team-admin-actions-grid">
+    <article class="card-soft team-admin-panel">
+      <div class="team-admin-panel__head">
+        <div>
+          <div class="team-admin-section-eyebrow">Step 1</div>
+          <h3 class="team-admin-section-title">Create or reset login</h3>
+        </div>
+        <span class="pill p-gray">Access</span>
+      </div>
+      <p class="team-admin-panel__copy">
+        Give receptionists, superusers, and therapists their own login. Linking a therapist keeps their calendar and child list consistent.
+      </p>
+      <form method="post" action="{{ rp }}/team/users/create" class="team-admin-form-grid">
+        <div>
+          <label class="label">Email</label>
+          <input class="input" name="email" type="email" required placeholder="user@clinic.com">
+        </div>
+        <div>
+          <label class="label">Role</label>
           <select class="input" name="role">
-            <option value="clinic_superuser">{{ tr(request, 'Υπερχρήστης κλινικής', 'Clinic superuser') }}</option>
-            <option value="calendar_staff">{{ tr(request, 'Γραμματεία / υποδοχή', 'Calendar staff / receptionist') }}</option>
-            <option value="therapist">{{ tr(request, 'Θεραπευτής', 'Therapist') }}</option>
+            <option value="clinic_superuser">Clinic superuser</option>
+            <option value="calendar_staff">Calendar staff / receptionist</option>
+            <option value="therapist">Therapist</option>
           </select>
         </div>
-        <div><label class="label">{{ tr(request, 'Ιδιότητα', 'Job title') }}</label><input class="input" name="job_title" placeholder="Receptionist / Secretary / Therapist"></div>
-        <div><label class="label">{{ tr(request, 'Σύνδεση με θεραπευτή (προαιρετικό)', 'Link to therapist (optional)') }}</label>
+        <div>
+          <label class="label">Job title</label>
+          <input class="input" name="job_title" placeholder="Receptionist / Secretary / Therapist">
+        </div>
+        <div>
+          <label class="label">Link to therapist (optional)</label>
           <select class="input" name="therapist_id">
-            <option value="">-- {{ tr(request, 'κανένα', 'none') }} --</option>
+            <option value="">-- none --</option>
             {% for t in therapists %}
               <option value="{{ t.id }}">{{ t.name }}</option>
             {% endfor %}
           </select>
         </div>
-        <button class="btn w-full" type="submit">{{ tr(request, 'Δημιουργία χρήστη / προσωρινός κωδικός', 'Create user / generate temp password') }}</button>
+        <div class="team-admin-form-actions">
+          <button class="btn" type="submit">Create user / generate temp password</button>
+        </div>
       </form>
-    </div>
+    </article>
 
-    <div class="card-soft">
-      <div class="font-extrabold mb-3">{{ tr(request, 'Ανάθεση παιδιού σε θεραπευτή', 'Assign child to therapist') }}</div>
-      <form method="post" action="{{ rp }}/team/assignments/create" class="space-y-3">
-        <div><label class="label">{{ tr(request, 'Παιδί', 'Child') }}</label>
+    <article class="card-soft team-admin-panel">
+      <div class="team-admin-panel__head">
+        <div>
+          <div class="team-admin-section-eyebrow">Step 2</div>
+          <h3 class="team-admin-section-title">Assign child to therapist</h3>
+        </div>
+        <span class="pill p-gray">Scheduling</span>
+      </div>
+      <p class="team-admin-panel__copy">
+        Active assignments control which children appear in the therapist view and keep the portal focused on the right caseload.
+      </p>
+      <form method="post" action="{{ rp }}/team/assignments/create" class="team-admin-form-grid">
+        <div>
+          <label class="label">Child</label>
           <select class="input" name="child_id" required>
             {% for c in children %}
               <option value="{{ c.id }}">{{ c.full_name }}</option>
             {% endfor %}
           </select>
         </div>
-        <div><label class="label">{{ tr(request, 'Θεραπευτής', 'Therapist') }}</label>
+        <div>
+          <label class="label">Therapist</label>
           <select class="input" name="therapist_id" required>
             {% for t in therapists %}
               <option value="{{ t.id }}">{{ t.name }}</option>
             {% endfor %}
           </select>
         </div>
-        <button class="btn w-full" type="submit">{{ tr(request, 'Ανάθεση', 'Assign') }}</button>
+        <div class="team-admin-form-actions team-admin-form-actions--half">
+          <button class="btn" type="submit">Assign child to therapist</button>
+        </div>
       </form>
+    </article>
+  </section>
+
+  <section class="card-soft team-admin-table-card">
+    <div class="team-admin-table-card__head">
+      <div>
+        <div class="team-admin-section-eyebrow">Access overview</div>
+        <h3 class="team-admin-section-title">Users</h3>
+      </div>
+      <div class="team-admin-table-card__meta">Reset passwords or revoke access without leaving the page.</div>
     </div>
-  </aside>
+
+    {% if users %}
+    <table class="table js-responsive-table" data-cards="true">
+      <thead>
+        <tr>
+          <th>Email</th>
+          <th>Role</th>
+          <th>Job title</th>
+          <th>Status</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for u in users %}
+        <tr>
+          <td>
+            <div class="team-admin-cell-main">{{ u.email }}</div>
+          </td>
+          <td>
+            {% if u.role == 'clinic_superuser' %}
+              <span class="pill p-blue">Clinic superuser</span>
+            {% elif u.role == 'calendar_staff' %}
+              <span class="pill p-gray">Reception / calendar staff</span>
+            {% elif u.role == 'therapist' %}
+              <span class="pill p-green">Therapist</span>
+            {% else %}
+              <span class="pill p-gray">{{ u.role }}</span>
+            {% endif %}
+          </td>
+          <td>{{ u.job_title or '—' }}</td>
+          <td>
+            {% if u.is_active %}
+              <span class="pill p-green">Active</span>
+            {% else %}
+              <span class="pill p-red">Revoked</span>
+            {% endif %}
+          </td>
+          <td>
+            <div class="team-admin-inline-actions">
+              <form class="inline" method="post" action="{{ rp }}/team/users/{{ u.id }}/reset_password">
+                <button class="btn btn-sm btn-outline" type="submit">Reset password</button>
+              </form>
+              <form class="inline" method="post" action="{{ rp }}/team/users/{{ u.id }}/toggle">
+                <button class="btn btn-sm btn-outline" type="submit">{{ 'Revoke' if u.is_active else 'Restore' }}</button>
+              </form>
+            </div>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+      <div class="team-admin-empty">No users yet. Create the first login from the panel above.</div>
+    {% endif %}
+  </section>
+
+  <section class="card-soft team-admin-table-card">
+    <div class="team-admin-table-card__head">
+      <div>
+        <div class="team-admin-section-eyebrow">Caseload overview</div>
+        <h3 class="team-admin-section-title">Child → therapist assignments</h3>
+      </div>
+      <div class="team-admin-table-card__meta">Use active assignments to control what each therapist sees in their working list.</div>
+    </div>
+
+    {% if assignments %}
+    <table class="table js-responsive-table" data-cards="true">
+      <thead>
+        <tr>
+          <th>Child</th>
+          <th>Therapist</th>
+          <th>Status</th>
+          <th>Assigned at</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for a in assignments %}
+        <tr>
+          <td>{{ a.child.full_name if a.child else a.child_id }}</td>
+          <td>{{ a.therapist.name if a.therapist else a.therapist_id }}</td>
+          <td>
+            {% if a.is_active %}
+              <span class="pill p-green">Active</span>
+            {% else %}
+              <span class="pill p-gray">Inactive</span>
+            {% endif %}
+          </td>
+          <td>{{ a.assigned_at.strftime('%Y-%m-%d %H:%M') if a.assigned_at else '—' }}</td>
+          <td>
+            <form class="inline" method="post" action="{{ rp }}/team/assignments/{{ a.id }}/toggle">
+              <button class="btn btn-sm btn-outline" type="submit">{{ 'Remove' if a.is_active else 'Restore' }}</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+      <div class="team-admin-empty">No assignments yet. Use the assignment panel above to build each therapist's caseload.</div>
+    {% endif %}
+  </section>
 </div>
 {% endblock %}
