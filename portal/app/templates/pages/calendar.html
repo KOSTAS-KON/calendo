@@ -100,18 +100,18 @@
   <div class="subhead subhead-flex">
     <div>
       <div class="section-heading">How to use this screen</div>
-      <p class="section-copy">This page is meant to be used from left to right: filter, scan the board, then open the appointment note.</p>
+      <p class="section-copy">Use filters to focus the clinic view, then open the session note either from a busy slot or from the appointment card labelled <em>Open note</em>.</p>
     </div>
     <div class="ops-calendar-filter-tags">
       <span class="focus-tag">1 · Choose child / therapist</span>
       <span class="focus-tag">2 · Scan gaps and busy slots</span>
-      <span class="focus-tag">3 · Open the appointment note</span>
+      <span class="focus-tag">3 · Open note from any busy appointment</span>
     </div>
   </div>
   <div class="subbody ops-howto-grid">
     <div class="empty-state">
       <strong>Therapist workflow</strong>
-      <div class="hint">Open an appointment, review the previous note, write today’s achievements, then save the plan for the next session.</div>
+      <div class="hint">Click a busy appointment card marked <em>Open note</em>, review the previous session, write today’s achievements, then save the plan for the next session.</div>
     </div>
     <div class="empty-state">
       <strong>Reception / superuser workflow</strong>
@@ -155,7 +155,7 @@
       <div class="subhead subhead-flex">
         <div>
           <div class="section-heading">Therapist occupancy board</div>
-          <p class="section-copy">A 15-minute operations board for the selected day. Click a free slot to open quick create. Click a busy slot to open that appointment.</p>
+          <p class="section-copy">A 15-minute operations board for the selected day. Click a free slot to open quick create. Click a busy slot to open the child’s session note workflow.</p>
         </div>
         <div class="ops-calendar-board-legend">
           <span class="ops-legend-item"><span class="ops-legend-swatch ops-legend-swatch--free"></span> Gap</span>
@@ -173,7 +173,7 @@
       <div class="subhead subhead-flex">
         <div>
           <div class="section-heading">Weekly / daily calendar</div>
-          <p class="section-copy">15-minute slots, therapist colours, and direct access to the session note screen. Use the calendar for the full context and the board for fast occupancy scanning.</p>
+          <p class="section-copy">15-minute slots, therapist colours, and direct access to the session note screen. Every busy appointment card includes an <em>Open note</em> cue.</p>
         </div>
       </div>
       <div class="subbody">
@@ -608,6 +608,7 @@
           <div class="fc-appointment-card ${statusClass(status)}" style="--therapist-color:${color}">
             <div class="fc-appointment-card__title">${title}</div>
             <div class="fc-appointment-card__meta">${procedure ? procedure + ' · ' : ''}${therapistName || 'Therapist'}</div>
+            <div class="fc-appointment-card__action">📝 Open note</div>
           </div>
         `
       };
