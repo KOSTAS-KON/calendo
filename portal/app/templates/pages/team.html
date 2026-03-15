@@ -1,30 +1,30 @@
 {% extends "layout.html" %}
-{% set header = "Team & Access" %}
+{% set header = tr(request, 'Ομάδα & Πρόσβαση', 'Team & Access') %}
 {% block content %}
 <div class="grid grid-cols-1 xl:grid-cols-3 gap-5">
   <section class="xl:col-span-2 space-y-5">
     <div class="card-soft">
-      <div class="font-extrabold mb-3">Users</div>
+      <div class="font-extrabold mb-3">{{ tr(request, 'Χρήστες', 'Users') }}</div>
       {% if temp_password %}
       <div class="mb-4 p-3 rounded-2xl border border-emerald-200 bg-emerald-50 text-emerald-900">
-        <div class="font-bold">Temporary credentials</div>
+        <div class="font-bold">{{ tr(request, 'Προσωρινά στοιχεία σύνδεσης', 'Temporary credentials') }}</div>
         <div class="text-sm">Email: <b>{{ temp_email }}</b></div>
-        <div class="text-sm">Temporary password: <code>{{ temp_password }}</code></div>
-        <div class="text-xs mt-1">Share this once. The user should change it on first login.</div>
+        <div class="text-sm">{{ tr(request, 'Προσωρινός κωδικός', 'Temporary password') }}: <code>{{ temp_password }}</code></div>
+        <div class="text-xs mt-1">{{ tr(request, 'Μοιράσου το μία φορά. Ο χρήστης πρέπει να το αλλάξει στην πρώτη σύνδεση.', 'Share this once. The user should change it on first login.') }}</div>
       </div>
       {% endif %}
       <table class="table js-responsive-table" data-cards="true">
-        <thead><tr><th>Email</th><th>Role</th><th>Job title</th><th>Status</th><th>Actions</th></tr></thead>
+        <thead><tr><th>{{ tr(request, 'Email', 'Email') }}</th><th>{{ tr(request, 'Ρόλος', 'Role') }}</th><th>{{ tr(request, 'Ιδιότητα', 'Job title') }}</th><th>{{ tr(request, 'Κατάσταση', 'Status') }}</th><th>{{ tr(request, 'Ενέργειες', 'Actions') }}</th></tr></thead>
         <tbody>
         {% for u in users %}
           <tr>
             <td>{{ u.email }}</td>
             <td>{{ u.role }}</td>
             <td>{{ u.job_title or '' }}</td>
-            <td>{% if u.is_active %}<span class="pill p-green">active</span>{% else %}<span class="pill p-red">revoked</span>{% endif %}</td>
+            <td>{% if u.is_active %}<span class="pill p-green">{{ tr(request, 'ενεργός', 'active') }}</span>{% else %}<span class="pill p-red">{{ tr(request, 'ανενεργός', 'revoked') }}</span>{% endif %}</td>
             <td>
-              <form class="inline" method="post" action="{{ rp }}/team/users/{{ u.id }}/reset_password"><button class="btn btn-sm btn-outline" type="submit">Reset password</button></form>
-              <form class="inline" method="post" action="{{ rp }}/team/users/{{ u.id }}/toggle"><button class="btn btn-sm btn-outline" type="submit">{{ 'Revoke' if u.is_active else 'Restore' }}</button></form>
+              <form class="inline" method="post" action="{{ rp }}/team/users/{{ u.id }}/reset_password"><button class="btn btn-sm btn-outline" type="submit">{{ tr(request, 'Επαναφορά κωδικού', 'Reset password') }}</button></form>
+              <form class="inline" method="post" action="{{ rp }}/team/users/{{ u.id }}/toggle"><button class="btn btn-sm btn-outline" type="submit">{{ tr(request, 'Ανάκληση', 'Revoke') if u.is_active else tr(request, 'Επαναφορά', 'Restore') }}</button></form>
             </td>
           </tr>
         {% endfor %}
@@ -33,19 +33,19 @@
     </div>
 
     <div class="card-soft">
-      <div class="font-extrabold mb-3">Child → Therapist assignments</div>
+      <div class="font-extrabold mb-3">{{ tr(request, 'Αναθέσεις παιδιού → θεραπευτή', 'Child → Therapist assignments') }}</div>
       <table class="table js-responsive-table" data-cards="true">
-        <thead><tr><th>Child</th><th>Therapist</th><th>Status</th><th>Assigned at</th><th>Action</th></tr></thead>
+        <thead><tr><th>{{ tr(request, 'Παιδί', 'Child') }}</th><th>{{ tr(request, 'Θεραπευτής', 'Therapist') }}</th><th>{{ tr(request, 'Κατάσταση', 'Status') }}</th><th>{{ tr(request, 'Ανατέθηκε στις', 'Assigned at') }}</th><th>{{ tr(request, 'Ενέργεια', 'Action') }}</th></tr></thead>
         <tbody>
         {% for a in assignments %}
           <tr>
             <td>{{ a.child.full_name if a.child else a.child_id }}</td>
             <td>{{ a.therapist.name if a.therapist else a.therapist_id }}</td>
-            <td>{% if a.is_active %}<span class="pill p-green">active</span>{% else %}<span class="pill p-gray">inactive</span>{% endif %}</td>
+            <td>{% if a.is_active %}<span class="pill p-green">{{ tr(request, 'ενεργή', 'active') }}</span>{% else %}<span class="pill p-gray">{{ tr(request, 'ανενεργή', 'inactive') }}</span>{% endif %}</td>
             <td>{{ a.assigned_at }}</td>
             <td>
               <form class="inline" method="post" action="{{ rp }}/team/assignments/{{ a.id }}/toggle">
-                <button class="btn btn-sm btn-outline" type="submit">{{ 'Remove' if a.is_active else 'Restore' }}</button>
+                <button class="btn btn-sm btn-outline" type="submit">{{ tr(request, 'Αφαίρεση', 'Remove') if a.is_active else tr(request, 'Επαναφορά', 'Restore') }}</button>
               </form>
             </td>
           </tr>
@@ -57,47 +57,47 @@
 
   <aside class="space-y-5">
     <div class="card-soft">
-      <div class="font-extrabold mb-3">Create / reset login</div>
+      <div class="font-extrabold mb-3">{{ tr(request, 'Δημιουργία / επαναφορά σύνδεσης', 'Create / reset login') }}</div>
       <form method="post" action="{{ rp }}/team/users/create" class="space-y-3">
-        <div><label class="label">Email</label><input class="input" name="email" required></div>
-        <div><label class="label">Role</label>
+        <div><label class="label">{{ tr(request, 'Email', 'Email') }}</label><input class="input" name="email" required></div>
+        <div><label class="label">{{ tr(request, 'Ρόλος', 'Role') }}</label>
           <select class="input" name="role">
-            <option value="clinic_superuser">Clinic superuser</option>
-            <option value="calendar_staff">Calendar staff / receptionist</option>
-            <option value="therapist">Therapist</option>
+            <option value="clinic_superuser">{{ tr(request, 'Υπερχρήστης κλινικής', 'Clinic superuser') }}</option>
+            <option value="calendar_staff">{{ tr(request, 'Γραμματεία / υποδοχή', 'Calendar staff / receptionist') }}</option>
+            <option value="therapist">{{ tr(request, 'Θεραπευτής', 'Therapist') }}</option>
           </select>
         </div>
-        <div><label class="label">Job title</label><input class="input" name="job_title" placeholder="Receptionist / Secretary / Therapist"></div>
-        <div><label class="label">Link to therapist (optional)</label>
+        <div><label class="label">{{ tr(request, 'Ιδιότητα', 'Job title') }}</label><input class="input" name="job_title" placeholder="Receptionist / Secretary / Therapist"></div>
+        <div><label class="label">{{ tr(request, 'Σύνδεση με θεραπευτή (προαιρετικό)', 'Link to therapist (optional)') }}</label>
           <select class="input" name="therapist_id">
-            <option value="">-- none --</option>
+            <option value="">-- {{ tr(request, 'κανένα', 'none') }} --</option>
             {% for t in therapists %}
               <option value="{{ t.id }}">{{ t.name }}</option>
             {% endfor %}
           </select>
         </div>
-        <button class="btn w-full" type="submit">Create user / generate temp password</button>
+        <button class="btn w-full" type="submit">{{ tr(request, 'Δημιουργία χρήστη / προσωρινός κωδικός', 'Create user / generate temp password') }}</button>
       </form>
     </div>
 
     <div class="card-soft">
-      <div class="font-extrabold mb-3">Assign child to therapist</div>
+      <div class="font-extrabold mb-3">{{ tr(request, 'Ανάθεση παιδιού σε θεραπευτή', 'Assign child to therapist') }}</div>
       <form method="post" action="{{ rp }}/team/assignments/create" class="space-y-3">
-        <div><label class="label">Child</label>
+        <div><label class="label">{{ tr(request, 'Παιδί', 'Child') }}</label>
           <select class="input" name="child_id" required>
             {% for c in children %}
               <option value="{{ c.id }}">{{ c.full_name }}</option>
             {% endfor %}
           </select>
         </div>
-        <div><label class="label">Therapist</label>
+        <div><label class="label">{{ tr(request, 'Θεραπευτής', 'Therapist') }}</label>
           <select class="input" name="therapist_id" required>
             {% for t in therapists %}
               <option value="{{ t.id }}">{{ t.name }}</option>
             {% endfor %}
           </select>
         </div>
-        <button class="btn w-full" type="submit">Assign</button>
+        <button class="btn w-full" type="submit">{{ tr(request, 'Ανάθεση', 'Assign') }}</button>
       </form>
     </div>
   </aside>

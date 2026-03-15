@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, Iterable, List, Optional
-from urllib.parse import quote
+from urllib.parse import quote, parse_qsl, urlencode, urlsplit, urlunsplit
 
 import sqlalchemy as sa
 import bcrypt
@@ -57,6 +57,37 @@ from app.utils.security import generate_temp_password
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
+
+SUPPORTED_UI_LANGS = {"el", "en"}
+
+
+def _ui_lang(request: Request) -> str:
+    raw = (request.query_params.get("lang") or "").strip().lower()
+    if raw in SUPPORTED_UI_LANGS:
+        try:
+            request.session["ui_lang"] = raw
+        except Exception:
+            pass
+        return raw
+    try:
+        sess = str((request.session or {}).get("ui_lang") or "").strip().lower()
+    except Exception:
+        sess = ""
+    return sess if sess in SUPPORTED_UI_LANGS else "el"
+
+
+def tr(request: Request, el: str, en: str | None = None) -> str:
+    return el if _ui_lang(request) == "el" else (en if en is not None else el)
+
+
+def lang_switch_url(request: Request, code: str) -> str:
+    lang = code if code in SUPPORTED_UI_LANGS else "el"
+    parts = urlsplit(str(request.url))
+    params = dict(parse_qsl(parts.query, keep_blank_values=True))
+    params["lang"] = lang
+    query = urlencode(params, doseq=True)
+    return urlunsplit(("", "", parts.path, query, ""))
 
 
 # -----------------------------
@@ -103,6 +134,9 @@ def status_chip(status: str | None) -> str:
 
 templates.env.globals["status_badge"] = status_badge
 templates.env.globals["status_chip"] = status_chip
+templates.env.globals["tr"] = tr
+templates.env.globals["ui_lang"] = _ui_lang
+templates.env.globals["lang_switch_url"] = lang_switch_url
 
 APPOINTMENT_TYPE_CHOICES: list[tuple[str, str]] = [
     ("GOVERNMENT_FUNDED", "Government funded"),
@@ -558,6 +592,7 @@ def _base_context(db: Session, request: Request, tenant_slug: str, tenant_id: st
         "sms_app_url": _sms_sso_url(tenant_slug),
         "active": request.scope.get("route").name if request.scope.get("route") else "",
         "therapist_self": therapist,
+        "lang_code": _ui_lang(request),
         **rolef,
     }
 

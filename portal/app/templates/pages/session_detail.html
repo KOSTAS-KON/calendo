@@ -1,16 +1,16 @@
 {% extends "layout.html" %}
-{% set header = "Session Workflow" %}
+{% set header = tr(request, 'Ροή συνεδρίας', 'Session Workflow') %}
 {% block content %}
 
 <section class="page-hero page-hero--compact">
   <div>
-    <div class="eyebrow">Therapist-first note workflow</div>
+    <div class="eyebrow">{{ tr(request, 'Ροή σημειώσεων θεραπευτή', 'Therapist-first note workflow') }}</div>
     <h1 class="hero-title">{{ appt.child.full_name }}</h1>
-    <p class="hero-sub">{{ appt.starts_at }} · {{ appt.therapist_name or 'Therapist not set' }} · {{ appt.procedure or 'Session' }} · {{ appointment_type_label(appt.appointment_type) }}</p>
+    <p class="hero-sub">{{ appt.starts_at }} · {{ appt.therapist_name or tr(request, 'Δεν ορίστηκε θεραπευτής', 'Therapist not set') }} · {{ appt.procedure or tr(request, 'Συνεδρία', 'Session') }} · {{ appointment_type_label(appt.appointment_type) }}</p>
   </div>
   <div class="hero-actions">
-    <a class="btn btn-outline" href="{{ rp }}/calendar?tenant={{ tenant_slug }}&child_id={{ appt.child_id }}">Back to calendar</a>
-    <a class="btn btn-primary" href="{{ rp }}/children/{{ appt.child_id }}?tenant={{ tenant_slug }}">Open child record</a>
+    <a class="btn btn-outline" href="{{ rp }}/calendar?tenant={{ tenant_slug }}&child_id={{ appt.child_id }}">{{ tr(request, 'Πίσω στο ημερολόγιο', 'Back to calendar') }}</a>
+    <a class="btn btn-primary" href="{{ rp }}/children/{{ appt.child_id }}?tenant={{ tenant_slug }}">{{ tr(request, 'Άνοιγμα καρτέλας παιδιού', 'Open child record') }}</a>
   </div>
 </section>
 
@@ -19,40 +19,40 @@
     <div class="session-card">
       <div class="session-card__head">
         <div>
-          <div class="eyebrow">Step 1</div>
-          <div class="section-heading">Review the previous session</div>
-          <p class="section-copy">Before writing today's note, check the latest clinical context so continuity stays simple and consistent.</p>
+          <div class="eyebrow">{{ tr(request, 'Βήμα 1', 'Step 1') }}</div>
+          <div class="section-heading">{{ tr(request, 'Ανασκόπηση προηγούμενης συνεδρίας', 'Review the previous session') }}</div>
+          <p class="section-copy">{{ tr(request, "Πριν γράψεις τη σημερινή σημείωση, έλεγξε το πιο πρόσφατο κλινικό πλαίσιο ώστε να υπάρχει συνέχεια και συνέπεια.", "Before writing today's note, check the latest clinical context so continuity stays simple and consistent.") }}</p>
         </div>
       </div>
       <div class="session-card__body">
         {% if previous_appt %}
           <div class="previous-note">
-            <div class="note-meta">Last session · {{ previous_appt.starts_at }}{% if previous_appt.therapist_name %} · {{ previous_appt.therapist_name }}{% endif %}</div>
+            <div class="note-meta">{{ tr(request, 'Προηγούμενη συνεδρία', 'Last session') }} · {{ previous_appt.starts_at }}{% if previous_appt.therapist_name %} · {{ previous_appt.therapist_name }}{% endif %}</div>
             {% if previous_note and (previous_note.summary or previous_note.what_went_wrong or previous_note.improvements or previous_note.next_steps) %}
               <div class="note-grid note-grid--review">
                 <div class="note-highlight field-span-2">
-                  <div class="note-highlight__label">What was achieved last time</div>
-                  <div class="note-highlight__body">{{ previous_note.summary or 'No summary saved.' }}</div>
+                  <div class="note-highlight__label">{{ tr(request, 'Τι επιτεύχθηκε την προηγούμενη φορά', 'What was achieved last time') }}</div>
+                  <div class="note-highlight__body">{{ previous_note.summary or tr(request, 'Δεν έχει αποθηκευτεί σύνοψη.', 'No summary saved.') }}</div>
                 </div>
                 <div class="note-highlight">
-                  <div class="note-highlight__label">Challenges / observations</div>
-                  <div class="note-highlight__body">{{ previous_note.what_went_wrong or 'No challenges noted.' }}</div>
+                  <div class="note-highlight__label">{{ tr(request, 'Δυσκολίες / παρατηρήσεις', 'Challenges / observations') }}</div>
+                  <div class="note-highlight__body">{{ previous_note.what_went_wrong or tr(request, 'Δεν έχουν καταγραφεί δυσκολίες.', 'No challenges noted.') }}</div>
                 </div>
                 <div class="note-highlight">
-                  <div class="note-highlight__label">What helped</div>
-                  <div class="note-highlight__body">{{ previous_note.improvements or 'No therapist reflections saved.' }}</div>
+                  <div class="note-highlight__label">{{ tr(request, 'Τι βοήθησε', 'What helped') }}</div>
+                  <div class="note-highlight__body">{{ previous_note.improvements or tr(request, 'Δεν έχουν αποθηκευτεί παρατηρήσεις θεραπευτή.', 'No therapist reflections saved.') }}</div>
                 </div>
                 <div class="note-highlight field-span-2">
-                  <div class="note-highlight__label">Planned next steps</div>
-                  <div class="note-highlight__body">{{ previous_note.next_steps or 'No next-step plan saved.' }}</div>
+                  <div class="note-highlight__label">{{ tr(request, 'Προγραμματισμένα επόμενα βήματα', 'Planned next steps') }}</div>
+                  <div class="note-highlight__body">{{ previous_note.next_steps or tr(request, 'Δεν έχει αποθηκευτεί πλάνο επόμενων βημάτων.', 'No next-step plan saved.') }}</div>
                 </div>
               </div>
             {% else %}
-              <div class="empty-state">A previous appointment exists, but no structured session note was saved yet.</div>
+              <div class="empty-state">{{ tr(request, 'Υπάρχει προηγούμενο ραντεβού, αλλά δεν έχει αποθηκευτεί δομημένη σημείωση συνεδρίας.', 'A previous appointment exists, but no structured session note was saved yet.') }}</div>
             {% endif %}
           </div>
         {% else %}
-          <div class="empty-state">This looks like the first recorded appointment for this child, so there is no previous session note to review.</div>
+          <div class="empty-state">{{ tr(request, 'Αυτή φαίνεται να είναι η πρώτη καταγεγραμμένη συνεδρία για αυτό το παιδί, οπότε δεν υπάρχει προηγούμενη σημείωση προς ανασκόπηση.', 'This looks like the first recorded appointment for this child, so there is no previous session note to review.') }}</div>
         {% endif %}
       </div>
     </div>
@@ -60,38 +60,38 @@
     <div class="session-card">
       <div class="session-card__head">
         <div>
-          <div class="eyebrow">Step 2</div>
-          <div class="section-heading">Write today's session note</div>
-          <p class="section-copy">Capture only what matters for the next therapist: achievements, observations, what helped, and what the next session should include.</p>
+          <div class="eyebrow">{{ tr(request, 'Βήμα 2', 'Step 2') }}</div>
+          <div class="section-heading">{{ tr(request, "Συμπλήρωσε τη σημερινή σημείωση συνεδρίας", "Write today's session note") }}</div>
+          <p class="section-copy">{{ tr(request, 'Κατάγραψε μόνο ό,τι χρειάζεται ο επόμενος θεραπευτής: επιτεύγματα, παρατηρήσεις, τι βοήθησε και τι πρέπει να περιλαμβάνει η επόμενη συνεδρία.', 'Capture only what matters for the next therapist: achievements, observations, what helped, and what the next session should include.') }}</p>
         </div>
       </div>
       <div class="session-card__body">
         <form method="post" action="{{ rp }}/appointments/{{ appt.id }}/note" class="session-note-form">
           <div class="note-grid">
             <div class="field-block field-span-2">
-              <label class="label">Today's achievements</label>
-              <textarea name="summary" rows="4" class="input" placeholder="What went well today? What did the child achieve?">{{ note.summary or "" }}</textarea>
-              <div class="hint">Write this so the next session can continue immediately without re-reading the full record.</div>
+              <label class="label">{{ tr(request, "Σημερινά επιτεύγματα", "Today's achievements") }}</label>
+              <textarea name="summary" rows="4" class="input" placeholder="{{ tr(request, 'Τι πήγε καλά σήμερα; Τι πέτυχε το παιδί;', 'What went well today? What did the child achieve?') }}">{{ note.summary or "" }}</textarea>
+              <div class="hint">{{ tr(request, 'Γράψε το έτσι ώστε η επόμενη συνεδρία να συνεχίσει άμεσα χωρίς ανάγνωση όλου του φακέλου.', 'Write this so the next session can continue immediately without re-reading the full record.') }}</div>
             </div>
 
             <div class="field-block">
-              <label class="label">Challenges / observations</label>
-              <textarea name="what_went_wrong" rows="5" class="input" placeholder="What was difficult today? Any regulation, behaviour, fatigue, communication or pacing issues?">{{ note.what_went_wrong or "" }}</textarea>
+              <label class="label">{{ tr(request, 'Δυσκολίες / παρατηρήσεις', 'Challenges / observations') }}</label>
+              <textarea name="what_went_wrong" rows="5" class="input" placeholder="{{ tr(request, 'Τι ήταν δύσκολο σήμερα; Υπήρξαν θέματα ρύθμισης, συμπεριφοράς, κόπωσης, επικοινωνίας ή ρυθμού;', 'What was difficult today? Any regulation, behaviour, fatigue, communication or pacing issues?') }}">{{ note.what_went_wrong or "" }}</textarea>
             </div>
 
             <div class="field-block">
-              <label class="label">What helped / therapist reflections</label>
-              <textarea name="improvements" rows="5" class="input" placeholder="Which approach, prompt, cue or activity worked best today?">{{ note.improvements or "" }}</textarea>
+              <label class="label">{{ tr(request, 'Τι βοήθησε', 'What helped') }} / {{ tr(request, 'παρατηρήσεις θεραπευτή', 'therapist reflections') }}</label>
+              <textarea name="improvements" rows="5" class="input" placeholder="{{ tr(request, 'Ποια προσέγγιση, υπόδειξη ή δραστηριότητα βοήθησε περισσότερο σήμερα;', 'Which approach, prompt, cue or activity worked best today?') }}">{{ note.improvements or "" }}</textarea>
             </div>
 
             <div class="field-block field-span-2">
-              <label class="label">Next session plan & home practice</label>
-              <textarea name="next_steps" rows="5" class="input" placeholder="What should the next session include? Add any homework, parent follow-up or preparation notes.">{{ note.next_steps or "" }}</textarea>
+              <label class="label">{{ tr(request, 'Πλάνο επόμενης συνεδρίας & εργασία για το σπίτι', 'Next session plan & home practice') }}</label>
+              <textarea name="next_steps" rows="5" class="input" placeholder="{{ tr(request, 'Τι πρέπει να περιλαμβάνει η επόμενη συνεδρία; Πρόσθεσε εργασία για το σπίτι, ενημέρωση γονέων ή σημειώσεις προετοιμασίας.', 'What should the next session include? Add any homework, parent follow-up or preparation notes.') }}">{{ note.next_steps or "" }}</textarea>
             </div>
           </div>
 
           <div class="session-form-actions">
-            <button class="btn btn-primary" type="submit">Save session note</button>
+            <button class="btn btn-primary" type="submit">{{ tr(request, 'Αποθήκευση σημείωσης συνεδρίας', 'Save session note') }}</button>
           </div>
         </form>
       </div>
@@ -102,15 +102,15 @@
     <div class="session-card session-sticky">
       <div class="session-card__head">
         <div>
-          <div class="eyebrow">Quick status</div>
-          <div class="section-heading">Attendance</div>
+          <div class="eyebrow">{{ tr(request, 'Γρήγορη κατάσταση', 'Quick status') }}</div>
+          <div class="section-heading">{{ tr(request, 'Παρουσία', 'Attendance') }}</div>
         </div>
         <div>{{ status_chip(appt.attendance_status) | safe }}</div>
       </div>
       <div class="session-card__body">
         <form method="post" action="{{ rp }}/appointments/{{ appt.id }}/attendance" class="stack">
           <div>
-            <label class="label">Attendance status</label>
+            <label class="label">{{ tr(request, 'Παρουσία', 'Attendance') }} status</label>
             <select name="attendance_status" class="input" required>
               {% for s in ["CONFIRMED","UNCONFIRMED","ATTENDED","MISSED","CANCELLED_PROVIDER","CANCELLED_ME"] %}
                 <option value="{{ s }}" {% if appt.attendance_status == s %}selected{% endif %}>{{ s|replace('_', ' ')|title }}</option>
@@ -118,13 +118,13 @@
             </select>
           </div>
           <div>
-            <label class="label">Attendance note</label>
-            <input name="attendance_note" class="input" value="{{ appt.attendance_note or '' }}" placeholder="Optional note about attendance" />
+            <label class="label">{{ tr(request, 'Παρουσία', 'Attendance') }} note</label>
+            <input name="attendance_note" class="input" value="{{ appt.attendance_note or '' }}" placeholder="{{ tr(request, 'Προαιρετική σημείωση για την παρουσία', 'Optional note about attendance') }}" />
           </div>
           {% if appt.attendance_marked_at %}
-            <div class="hint">Last updated: {{ appt.attendance_marked_at }}</div>
+            <div class="hint">{{ tr(request, 'Τελευταία ενημέρωση', 'Last updated') }}: {{ appt.attendance_marked_at }}</div>
           {% endif %}
-          <button class="btn btn-outline" type="submit">Save attendance</button>
+          <button class="btn btn-outline" type="submit">{{ tr(request, 'Αποθήκευση παρουσίας', 'Save attendance') }}</button>
         </form>
       </div>
     </div>
@@ -132,37 +132,37 @@
     <div class="session-card">
       <div class="session-card__head">
         <div>
-          <div class="eyebrow">Reference</div>
-          <div class="section-heading">Appointment snapshot</div>
+          <div class="eyebrow">{{ tr(request, 'Αναφορά', 'Reference') }}</div>
+          <div class="section-heading">{{ tr(request, 'Σύνοψη ραντεβού', 'Appointment snapshot') }}</div>
         </div>
       </div>
       <div class="session-card__body session-kv-list">
-        <div class="session-kv"><span>Child</span><strong>{{ appt.child.full_name }}</strong></div>
-        <div class="session-kv"><span>Start</span><strong>{{ appt.starts_at }}</strong></div>
-        <div class="session-kv"><span>Therapist</span><strong>{{ appt.therapist_name or '—' }}</strong></div>
-        <div class="session-kv"><span>Procedure</span><strong>{{ appt.procedure or 'Session' }}</strong></div>
-        <div class="session-kv"><span>Type</span><strong>{{ appointment_type_label(appt.appointment_type) }}</strong></div>
-        <div class="session-kv"><span>Series</span><strong>{% if appt.recurrence_group_id %}Weekly recurring{% else %}Single appointment{% endif %}</strong></div>
+        <div class="session-kv"><span>{{ tr(request, 'Παιδί', 'Child') }}</span><strong>{{ appt.child.full_name }}</strong></div>
+        <div class="session-kv"><span>{{ tr(request, 'Έναρξη', 'Start') }}</span><strong>{{ appt.starts_at }}</strong></div>
+        <div class="session-kv"><span>{{ tr(request, 'Θεραπευτής', 'Therapist') }}</span><strong>{{ appt.therapist_name or '—' }}</strong></div>
+        <div class="session-kv"><span>{{ tr(request, 'Υπηρεσία', 'Procedure') }}</span><strong>{{ appt.procedure or 'Session' }}</strong></div>
+        <div class="session-kv"><span>{{ tr(request, 'Τύπος', 'Type') }}</span><strong>{{ appointment_type_label(appt.appointment_type) }}</strong></div>
+        <div class="session-kv"><span>{{ tr(request, 'Σειρά', 'Series') }}</span><strong>{% if appt.recurrence_group_id %}{{ tr(request, 'Εβδομαδιαία επανάληψη', 'Weekly recurring') }}{% else %}{{ tr(request, 'Μεμονωμένο ραντεβού', 'Single appointment') }}{% endif %}</strong></div>
       </div>
     </div>
 
     <div class="session-card">
       <div class="session-card__head">
         <div>
-          <div class="eyebrow">Scheduling</div>
-          <div class="section-heading">Edit this appointment</div>
-          <p class="section-copy">Use this when a therapist is unwell, you need a replacement therapist, or the weekly slot changes.</p>
+          <div class="eyebrow">{{ tr(request, 'Προγραμματισμός', 'Scheduling') }}</div>
+          <div class="section-heading">{{ tr(request, 'Επεξεργασία ραντεβού', 'Edit this appointment') }}</div>
+          <p class="section-copy">{{ tr(request, 'Χρησιμοποίησέ το όταν ο θεραπευτής λείπει, χρειάζεται αντικατάσταση ή αλλάζει το εβδομαδιαίο ωράριο.', 'Use this when a therapist is unwell, you need a replacement therapist, or the weekly slot changes.') }}</p>
         </div>
       </div>
       <div class="session-card__body">
         <form method="post" action="{{ rp }}/appointments/{{ appt.id }}/schedule" class="stack">
           <div class="grid grid-2 gap-3">
             <div>
-              <label class="label">Date</label>
+              <label class="label">{{ tr(request, 'Ημερομηνία', 'Date') }}</label>
               <input class="input" type="date" name="starts_at_date" value="{{ appt.starts_at.strftime('%Y-%m-%d') }}" required>
             </div>
             <div>
-              <label class="label">Time</label>
+              <label class="label">{{ tr(request, 'Ώρα', 'Time') }}</label>
               <select class="input" name="starts_at_time" required>
                 {% set appt_time_value = appt.starts_at.strftime('%H:%M') %}
                 {% for slot in quarter_hour_options %}
@@ -173,17 +173,17 @@
           </div>
           <div class="grid grid-2 gap-3">
             <div>
-              <label class="label">Therapist / Provider</label>
+              <label class="label">{{ tr(request, 'Θεραπευτής', 'Therapist') }} / {{ tr(request, 'Πάροχος', 'Provider') }}</label>
               <input class="input" type="text" name="therapist_name" list="therapists" value="{{ appt.therapist_name or '' }}" required>
             </div>
             <div>
-              <label class="label">Procedure</label>
+              <label class="label">{{ tr(request, 'Υπηρεσία', 'Procedure') }}</label>
               <input class="input" type="text" name="procedure" value="{{ appt.procedure or '' }}">
             </div>
           </div>
           <div class="grid grid-2 gap-3">
             <div>
-              <label class="label">Appointment type</label>
+              <label class="label">{{ tr(request, 'Τύπος ραντεβού', 'Appointment type') }}</label>
               <select class="input" name="appointment_type">
                 {% for value, label in appointment_type_choices %}
                   <option value="{{ value }}" {% if (appt.appointment_type or 'APPROVED_GOVERNMENT') == value %}selected{% endif %}>{{ label }}</option>
@@ -191,7 +191,7 @@
               </select>
             </div>
             <div>
-              <label class="label">Duration</label>
+              <label class="label">{{ tr(request, 'Διάρκεια', 'Duration') }}</label>
               <select class="input" name="duration_minutes">
                 {% for minutes in [15, 30, 45, 60, 75, 90, 120] %}
                   <option value="{{ minutes }}" {% if appt_duration_minutes == minutes %}selected{% endif %}>{{ minutes }} min</option>
@@ -201,15 +201,15 @@
           </div>
           {% if appt.recurrence_group_id %}
             <div>
-              <label class="label">Apply change</label>
+              <label class="label">{{ tr(request, 'Εφαρμογή αλλαγής', 'Apply change') }}</label>
               <select class="input" name="series_scope">
-                <option value="THIS_ONLY" selected>This appointment only</option>
-                <option value="THIS_AND_FUTURE">This and future weekly appointments</option>
+                <option value="THIS_ONLY" selected>{{ tr(request, 'Μόνο αυτό το ραντεβού', 'This appointment only') }}</option>
+                <option value="THIS_AND_FUTURE">{{ tr(request, 'Αυτό και τα επόμενα εβδομαδιαία ραντεβού', 'This and future weekly appointments') }}</option>
               </select>
-              <div class="hint">Use “this and future” if another therapist is replacing the usual therapist for the rest of the series.</div>
+              <div class="hint">{{ tr(request, 'Χρησιμοποίησε «αυτό και τα επόμενα» αν άλλος θεραπευτής αντικαθιστά τον συνήθη θεραπευτή για το υπόλοιπο της σειράς.', 'Use “this and future” if another therapist is replacing the usual therapist for the rest of the series.') }}</div>
             </div>
           {% endif %}
-          <button class="btn btn-outline" type="submit">Save scheduling changes</button>
+          <button class="btn btn-outline" type="submit">{{ tr(request, 'Αποθήκευση αλλαγών προγράμματος', 'Save scheduling changes') }}</button>
         </form>
       </div>
     </div>
@@ -217,7 +217,7 @@
     <div class="session-card">
       <div class="session-card__head">
         <div>
-          <div class="eyebrow">Files</div>
+          <div class="eyebrow">{{ tr(request, 'Αρχεία', 'Files') }}</div>
           <div class="section-heading">Documents</div>
           <p class="section-copy">Upload supporting files without leaving the session workflow.</p>
         </div>

@@ -4,20 +4,20 @@
 <div class="page-head">
   <div>
     <div class="sub">
-      <a class="link" href="{{ rp }}/children?tenant={{ tenant_slug }}">&larr; Back to Children</a>
+      <a class="link" href="{{ rp }}/children?tenant={{ tenant_slug }}">&larr; {{ tr(request, 'Πίσω στα παιδιά', 'Back to Children') }}</a>
     </div>
     <h1 class="h1">{{ child.full_name }}</h1>
     <div class="sub">
       {% if child.date_of_birth %}
-        <span>DOB: {{ child.date_of_birth }}</span>
+        <span>{{ tr(request, 'Ημ. γέννησης', 'DOB') }}: {{ child.date_of_birth }}</span>
       {% endif %}
       {% if child.parent1_phone %}
         <span class="mx-2">&middot;</span>
-        <span>Parent 1: {{ child.parent1_phone }}</span>
+        <span>{{ tr(request, 'Γονέας 1', 'Parent 1') }}: {{ child.parent1_phone }}</span>
       {% endif %}
       {% if child.parent2_phone %}
         <span class="mx-2">&middot;</span>
-        <span>Parent 2: {{ child.parent2_phone }}</span>
+        <span>{{ tr(request, 'Γονέας 2', 'Parent 2') }}: {{ child.parent2_phone }}</span>
       {% endif %}
     </div>
   </div>
@@ -25,12 +25,12 @@
   <div class="flex items-center gap-2">
     {% if can_edit_child %}
       {% if edit_mode %}
-        <a class="btn btn-outline" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=overview">Cancel edit</a>
+        <a class="btn btn-outline" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=overview">{{ tr(request, 'Ακύρωση επεξεργασίας', 'Cancel edit') }}</a>
       {% else %}
-        <a class="btn btn-outline" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=overview&edit=1">Edit details</a>
+        <a class="btn btn-outline" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=overview&edit=1">{{ tr(request, 'Επεξεργασία στοιχείων', 'Edit details') }}</a>
       {% endif %}
     {% endif %}
-    <a class="btn btn-outline" href="{{ rp }}/children?tenant={{ tenant_slug }}">All children</a>
+    <a class="btn btn-outline" href="{{ rp }}/children?tenant={{ tenant_slug }}">{{ tr(request, 'Όλα τα παιδιά', 'All children') }}</a>
     {% if sms_app_url %}
       <a class="btn btn-primary" href="{{ sms_app_url }}" target="_blank" rel="noopener">
         Open SMS Calendar
@@ -39,11 +39,11 @@
     {% if is_clinic_superuser %}
       {% if child.is_archived %}
         <form method="post" action="{{ rp }}/children/{{ child.id }}/restore" style="display:inline;">
-          <button class="btn btn-outline" type="submit">♻ Restore child</button>
+          <button class="btn btn-outline" type="submit">♻ {{ tr(request, 'Επαναφορά παιδιού', 'Restore child') }}</button>
         </form>
       {% else %}
         <form method="post" action="{{ rp }}/children/{{ child.id }}/archive" style="display:inline;">
-          <button class="btn btn-outline" type="submit">🗄 Archive child</button>
+          <button class="btn btn-outline" type="submit">🗄 {{ tr(request, 'Αρχειοθέτηση παιδιού', 'Archive child') }}</button>
         </form>
       {% endif %}
     {% endif %}
@@ -53,11 +53,11 @@
 <div class="card">
   <div class="card-body">
     <div class="tabs">
-      <a class="tab {{ 'tab-active' if tab=='overview' else '' }}" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=overview">Overview</a>
-      <a class="tab {{ 'tab-active' if tab=='timeline' else '' }}" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=timeline">Timeline</a>
-      <a class="tab {{ 'tab-active' if tab=='appointments' else '' }}" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=appointments">Appointments</a>
-      <a class="tab {{ 'tab-active' if tab=='hours' else '' }}" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=hours">Hours &amp; claims</a>
-      <a class="tab {{ 'tab-active' if tab=='attachments' else '' }}" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=attachments">Attachments</a>
+      <a class="tab {{ 'tab-active' if tab=='overview' else '' }}" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=overview">{{ tr(request, 'Επισκόπηση', 'Overview') }}</a>
+      <a class="tab {{ 'tab-active' if tab=='timeline' else '' }}" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=timeline">{{ tr(request, 'Χρονογραμμή', 'Timeline') }}</a>
+      <a class="tab {{ 'tab-active' if tab=='appointments' else '' }}" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=appointments">{{ tr(request, 'Ραντεβού', 'Appointments') }}</a>
+      <a class="tab {{ 'tab-active' if tab=='hours' else '' }}" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=hours">{{ tr(request, 'Ώρες & αξιώσεις', 'Hours & claims') }}</a>
+      <a class="tab {{ 'tab-active' if tab=='attachments' else '' }}" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=attachments">{{ tr(request, 'Συνημμένα', 'Attachments') }}</a>
     </div>
 
     {% if tab == 'timeline' %}
@@ -84,7 +84,7 @@
             {% endfor %}
           </div>
         {% else %}
-          <div class="text-slate-600">No timeline events yet.</div>
+          <div class="text-slate-600">{{ tr(request, 'Δεν υπάρχουν ακόμη συμβάντα στη χρονογραμμή.', 'No timeline events yet.') }}</div>
         {% endif %}
       </div>
 
@@ -93,8 +93,8 @@
         {% if appointments and appointments|length %}
           <div class="note-workflow-banner">
             <div>
-              <strong>Session note workflow</strong>
-              <div class="hint">Open a session note from any appointment row below. Therapists can review the previous session, write today's achievements, and save the plan for the next session.</div>
+              <strong>{{ tr(request, 'Ροή σημειώσεων συνεδρίας', 'Session note workflow') }}</strong>
+              <div class="hint">{{ tr(request, "Άνοιξε σημείωση συνεδρίας από οποιαδήποτε γραμμή ραντεβού παρακάτω. Οι θεραπευτές μπορούν να δουν την προηγούμενη συνεδρία, να γράψουν τα σημερινά επιτεύγματα και να αποθηκεύσουν το πλάνο της επόμενης.", "Open a session note from any appointment row below. Therapists can review the previous session, write today's achievements, and save the plan for the next session.") }}</div>
             </div>
           </div>
           <div class="table-wrap">
@@ -108,7 +108,7 @@
                   <th>Procedure</th>
                   <th>Duration</th>
                   <th>Appointment type</th>
-                  <th>Therapy type</th>
+                  <th>{{ tr(request, 'Τύπος θεραπείας', 'Therapy type') }}</th>
                   <th>Counted</th>
                   <th>Actions</th>
                 </tr>
@@ -126,7 +126,7 @@
                     <td>{{ therapy_type_label(a.therapy_type) }}</td>
                     <td>{{ a.hours_counted_label or ('Yes' if a.hours_counted_at else 'No') }}</td>
                     <td class="actions-cell">
-                      <a class="btn btn-sm btn-primary" href="{{ rp }}/appointments/{{ a.id }}?tenant={{ tenant_slug }}">Open session note</a>
+                      <a class="btn btn-sm btn-primary" href="{{ rp }}/appointments/{{ a.id }}?tenant={{ tenant_slug }}">{{ tr(request, 'Άνοιγμα σημείωσης συνεδρίας', 'Open session note') }}</a>
                     </td>
                   </tr>
                 {% endfor %}
@@ -157,7 +157,7 @@
                   <input class="input" type="date" name="hours_end" value="{{ hours_end.isoformat() if hours_end else '' }}">
                 </div>
                 <div>
-                  <label class="label">Therapy type</label>
+                  <label class="label">{{ tr(request, 'Τύπος θεραπείας', 'Therapy type') }}</label>
                   <select class="input" name="therapy_type">
                     {% for value, label in therapy_type_choices %}
                       <option value="{{ value }}" {% if hours_therapy_filter == value %}selected{% endif %}>{{ label }}</option>
@@ -273,7 +273,7 @@
                         <th>Duration</th>
                         <th>Status</th>
                         <th>Appointment type</th>
-                        <th>Therapy type</th>
+                        <th>{{ tr(request, 'Τύπος θεραπείας', 'Therapy type') }}</th>
                         <th>Counted batch</th>
                       </tr>
                     </thead>

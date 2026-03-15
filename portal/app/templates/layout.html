@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="en">
+<html lang="{{ ui_lang(request) if request is defined else 'el' }}">
 
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>{{ page_title or "Calendo" }}</title>
+  <title>{{ page_title or tr(request, 'Calendo Θεραπευτικό Portal', 'Calendo Therapy Portal') }}</title>
 
   {% set rp = request.scope.root_path or "" %}
 
@@ -21,63 +21,63 @@
 <body class="bg-slate-100 text-slate-900">
   <div class="page">
 
-    <aside class="sidebar" id="sidebar" aria-label="Primary navigation">
+    <aside class="sidebar" id="sidebar" aria-label="{{ tr(request, 'Κύρια πλοήγηση', 'Primary navigation') }}">
       <div class="sidebar-inner">
         <div class="sidebar-mobile-head">
-          <div class="sidebar-title">Workspace</div>
-          <button class="iconbtn sidebar-close" type="button" data-action="close-sidebar" aria-label="Close menu">✕</button>
+          <div class="sidebar-title">{{ tr(request, 'Χώρος εργασίας', 'Workspace') }}</div>
+          <button class="iconbtn sidebar-close" type="button" data-action="close-sidebar" aria-label="{{ tr(request, 'Κλείσιμο μενού', 'Close menu') }}">✕</button>
         </div>
 
         <a class="sidebar-link {% if active=='dashboard' %}active{% endif %}" href="{{ rp }}/?tenant={{ tenant_slug }}">
           <span class="icon">🏠</span>
-          <span>Overview</span>
+          <span>{{ tr(request, 'Επισκόπηση', 'Overview') }}</span>
         </a>
         <a class="sidebar-link {% if active=='suite' %}active{% endif %}" href="{{ rp }}/t/{{ tenant_slug }}/suite">
           <span class="icon">🧩</span>
-          <span>Suite</span>
+          <span>{{ tr(request, 'Κεντρική σελίδα', 'Suite') }}</span>
         </a>
         {% if can_access_calendar %}
         <a class="sidebar-link {% if active=='appointments' %}active{% endif %}" href="{{ rp }}/calendar?tenant={{ tenant_slug }}">
           <span class="icon">📅</span>
-          <span>Calendar</span>
+          <span>{{ tr(request, 'Ημερολόγιο', 'Calendar') }}</span>
         </a>
         {% endif %}
         {% if can_access_children %}
         <a class="sidebar-link {% if active=='children' %}active{% endif %}" href="{{ rp }}/children?tenant={{ tenant_slug }}">
           <span class="icon">🧒</span>
-          <span>{% if is_therapist %}My Caseload{% else %}Children{% endif %}</span>
+          <span>{% if is_therapist %}{{ tr(request, 'Το πελατολόγιό μου', 'My Caseload') }}{% else %}{{ tr(request, 'Παιδιά', 'Children') }}{% endif %}</span>
         </a>
         {% endif %}
         {% if can_access_therapists %}
         <a class="sidebar-link {% if active=='therapists' %}active{% endif %}" href="{{ rp }}/therapists?tenant={{ tenant_slug }}">
           <span class="icon">👩‍⚕️</span>
-          <span>Therapists</span>
+          <span>{{ tr(request, 'Θεραπευτές', 'Therapists') }}</span>
         </a>
         {% endif %}
         {% if can_manage_team %}
         <a class="sidebar-link {% if active=='team' %}active{% endif %}" href="{{ rp }}/team?tenant={{ tenant_slug }}">
           <span class="icon">🔐</span>
-          <span>Team & Access</span>
+          <span>{{ tr(request, 'Ομάδα & Πρόσβαση', 'Team & Access') }}</span>
         </a>
         {% endif %}
         {% if can_access_sms_outbox %}
         <a class="sidebar-link {% if active=='outbox' %}active{% endif %}" href="{{ rp }}/sms-outbox?tenant={{ tenant_slug }}">
           <span class="icon">📨</span>
-          <span>SMS Outbox</span>
+          <span>{{ tr(request, 'Εξερχόμενα SMS', 'SMS Outbox') }}</span>
         </a>
         {% endif %}
         {% if can_access_settings %}
         <a class="sidebar-link {% if active=='settings' %}active{% endif %}" href="{{ rp }}/settings?tenant={{ tenant_slug }}">
           <span class="icon">⚙️</span>
-          <span>Settings</span>
+          <span>{{ tr(request, 'Ρυθμίσεις', 'Settings') }}</span>
         </a>
         {% endif %}
 
         {% if sms_app_url %}
-          <div class="sidebar-section">Apps</div>
+          <div class="sidebar-section">{{ tr(request, 'Εφαρμογές', 'Apps') }}</div>
           <a class="sidebar-link" href="{{ sms_app_url }}" target="_blank" rel="noopener">
             <span class="icon">🗓️</span>
-            <span>SMS Calendar</span>
+            <span>{{ tr(request, 'Ημερολόγιο SMS', 'SMS Calendar') }}</span>
           </a>
         {% endif %}
       </div>
@@ -89,12 +89,12 @@
       <div class="topbar">
         <div class="topbar-inner">
           <div class="topbar-left">
-            <button class="menu-btn" type="button" data-action="toggle-sidebar" aria-label="Toggle menu">☰</button>
+            <button class="menu-btn" type="button" data-action="toggle-sidebar" aria-label="{{ tr(request, 'Εναλλαγή μενού', 'Toggle menu') }}">☰</button>
             <a class="brand" href="{{ rp }}/t/{{ tenant_slug }}/suite">
               <div class="brand-logo"></div>
               <div class="brand-text">
                 <div class="brand-title">Calendo</div>
-                <div class="brand-sub">Simple daily workflow for therapists</div>
+                <div class="brand-sub">{{ tr(request, 'Απλή καθημερινή ροή για θεραπευτές', 'Simple daily workflow for therapists') }}</div>
               </div>
             </a>
           </div>
@@ -105,8 +105,12 @@
               <span>{{ tenant_slug }}</span>
               <span class="badge badge-neutral">{{ current_role|replace('_', ' ')|title }}</span>
             </div>
+            <div class="flex items-center gap-2">
+              <a class="btn btn-sm btn-outline {% if ui_lang(request) == 'el' %}btn-primary{% endif %}" href="{{ lang_switch_url(request, 'el') }}">ΕΛ</a>
+              <a class="btn btn-sm btn-outline {% if ui_lang(request) == 'en' %}btn-primary{% endif %}" href="{{ lang_switch_url(request, 'en') }}">EN</a>
+            </div>
             {% if sms_app_url %}
-              <a class="btn btn-sm btn-outline" href="{{ sms_app_url }}" target="_blank" rel="noopener">SMS Calendar</a>
+              <a class="btn btn-sm btn-outline" href="{{ sms_app_url }}" target="_blank" rel="noopener">{{ tr(request, 'Ημερολόγιο SMS', 'SMS Calendar') }}</a>
             {% endif %}
           </div>
         </div>
@@ -116,22 +120,22 @@
     </main>
   </div>
 
-  <nav class="bottom-nav" aria-label="Bottom navigation">
+  <nav class="bottom-nav" aria-label="{{ tr(request, 'Κάτω πλοήγηση', 'Bottom navigation') }}">
     <a class="item" href="{{ rp }}/?tenant={{ tenant_slug }}">
       <div class="icon">🏠</div>
-      <div class="lbl">Home</div>
+      <div class="lbl">{{ tr(request, 'Αρχική', 'Home') }}</div>
     </a>
     <a class="item" href="{{ rp }}/calendar?tenant={{ tenant_slug }}">
       <div class="icon">📅</div>
-      <div class="lbl">Calendar</div>
+      <div class="lbl">{{ tr(request, 'Ημερολόγιο', 'Calendar') }}</div>
     </a>
     <a class="item" href="{{ rp }}/children?tenant={{ tenant_slug }}">
       <div class="icon">🧒</div>
-      <div class="lbl">Children</div>
+      <div class="lbl">{{ tr(request, 'Παιδιά', 'Children') }}</div>
     </a>
     <a class="item" href="{{ rp }}/settings?tenant={{ tenant_slug }}">
       <div class="icon">⚙️</div>
-      <div class="lbl">Settings</div>
+      <div class="lbl">{{ tr(request, 'Ρυθμίσεις', 'Settings') }}</div>
     </a>
   </nav>
 

@@ -1,5 +1,5 @@
 {% extends "layout.html" %}
-{% set header = "Calendar" %}
+{% set header = tr(request, 'Ημερολόγιο', 'Calendar') %}
 {% block content %}
 
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.css">
@@ -9,7 +9,7 @@
   <div>
     <div class="eyebrow">Therapist operations board</div>
     <h1 class="hero-title">Clinic calendar</h1>
-    <p class="hero-sub">See the whole day in one place: who is busy, who has gaps, and when the clinic is fully occupied. Keep the note-writing flow inside the appointment detail.</p>
+    <p class="hero-sub">{{ tr(request, 'Δες όλη την ημέρα σε μία οθόνη: ποιος είναι απασχολημένος, ποιος έχει κενά και πότε η κλινική είναι πλήρως καλυμμένη. Η καταγραφή της συνεδρίας παραμένει μέσα στη λεπτομέρεια του ραντεβού.', 'See the whole day in one place: who is busy, who has gaps, and when the clinic is fully occupied. Keep the note-writing flow inside the appointment detail.') }}</p>
   </div>
   <div class="ops-calendar-hero__actions">
     <div class="ops-calendar-datepick">
@@ -18,7 +18,7 @@
     </div>
     {% if allow_demo_seed %}
       <form method="post" action="{{ rp }}/calendar/seed_demo" class="inline-form">
-        <button type="submit" class="btn btn-outline">Load demo clinic week</button>
+        <button type="submit" class="btn btn-outline">{{ tr(request, 'Φόρτωση δοκιμαστικής εβδομάδας', 'Load demo clinic week') }}</button>
       </form>
     {% endif %}
     <button type="button" class="btn btn-primary" id="openQuickCreate">⚡ Quick create</button>
@@ -29,20 +29,20 @@
   <div class="subhead subhead-flex">
     <div>
       <div class="section-heading">Filters</div>
-      <p class="section-copy">Filter to one child, one therapist, or keep the full clinic view. The occupancy board and the calendar both reflect the active filters.</p>
+      <p class="section-copy">{{ tr(request, 'Φίλτραρε σε ένα παιδί, έναν θεραπευτή ή κράτησε ολόκληρη την εικόνα της κλινικής. Ο πίνακας πληρότητας και το ημερολόγιο ακολουθούν τα ενεργά φίλτρα.', 'Filter to one child, one therapist, or keep the full clinic view. The occupancy board and the calendar both reflect the active filters.') }}</p>
     </div>
     <div class="ops-calendar-filter-tags">
       {% if selected_child_id %}
-        <span class="focus-tag">Child filter active</span>
+        <span class="focus-tag">{{ tr(request, 'Φίλτρο παιδιού ενεργό', 'Child filter active') }}</span>
       {% else %}
-        <span class="focus-tag">All children</span>
+        <span class="focus-tag">{{ tr(request, 'Όλα τα παιδιά', 'All children') }}</span>
       {% endif %}
       {% if is_therapist %}
-        <span class="focus-tag focus-tag--accent">My therapist schedule</span>
+        <span class="focus-tag focus-tag--accent">{{ tr(request, 'Το πρόγραμμά μου', 'My therapist schedule') }}</span>
       {% elif selected_therapist_ids and selected_therapist_ids|length %}
         <span class="focus-tag">{{ selected_therapist_ids|length }} therapist{{ '' if selected_therapist_ids|length == 1 else 's' }}</span>
       {% else %}
-        <span class="focus-tag">All therapists</span>
+        <span class="focus-tag">{{ tr(request, 'Όλοι οι θεραπευτές', 'All therapists') }}</span>
       {% endif %}
       <span class="focus-tag">15-minute planning</span>
     </div>
@@ -51,16 +51,16 @@
     <form method="get" action="{{ rp }}/calendar" class="ops-calendar-filter-form">
       <div class="ops-calendar-filter-grid">
         <div>
-          <label class="label">Child</label>
+          <label class="label">{{ tr(request, 'Παιδί', 'Child') }}</label>
           <select name="child_id" class="input">
-            <option value="">All children</option>
+            <option value="">{{ tr(request, 'Όλα τα παιδιά', 'All children') }}</option>
             {% for c in children %}
               <option value="{{ c.id }}" {% if selected_child_id == c.id %}selected{% endif %}>{{ c.full_name }}</option>
             {% endfor %}
           </select>
         </div>
         <div>
-          <label class="label">Therapists</label>
+          <label class="label">{{ tr(request, 'Θεραπευτές', 'Therapists') }}</label>
           <select name="therapist_ids" class="input input-multi" multiple size="5" {% if is_therapist %}disabled{% endif %}>
             {% for t in therapists %}
               <option value="{{ t.id }}" {% if selected_therapist_ids and t.id in selected_therapist_ids %}selected{% endif %}>{{ t.name }}</option>
@@ -68,28 +68,28 @@
           </select>
           <div class="hint">
             {% if is_calendar_staff %}
-              Reception can focus one or more therapists.
+              {{ tr(request, 'Η γραμματεία μπορεί να εστιάσει σε έναν ή περισσότερους θεραπευτές.', 'Reception can focus one or more therapists.') }}
             {% elif is_therapist %}
-              Your own calendar is selected automatically.
+              {{ tr(request, 'Το προσωπικό σου ημερολόγιο επιλέγεται αυτόματα.', 'Your own calendar is selected automatically.') }}
             {% else %}
-              Keep all therapists selected to see the full clinic picture.
+              {{ tr(request, 'Κράτησε όλους τους θεραπευτές επιλεγμένους για να δεις όλη την εικόνα της κλινικής.', 'Keep all therapists selected to see the full clinic picture.') }}
             {% endif %}
           </div>
         </div>
         <div>
-          <label class="label">Visible event layers</label>
+          <label class="label">{{ tr(request, 'Ορατά επίπεδα συμβάντων', 'Visible event layers') }}</label>
           <div class="ops-kind-toggle-group" id="eventKindToggles">
-            <button type="button" class="kind-toggle active" data-kind="appointment">Appointments</button>
-            <button type="button" class="kind-toggle" data-kind="billing">Billing</button>
-            <button type="button" class="kind-toggle" data-kind="journey">Journey</button>
+            <button type="button" class="kind-toggle active" data-kind="appointment">{{ tr(request, 'Ραντεβού', 'Appointments') }}</button>
+            <button type="button" class="kind-toggle" data-kind="billing">{{ tr(request, 'Χρεώσεις', 'Billing') }}</button>
+            <button type="button" class="kind-toggle" data-kind="journey">{{ tr(request, 'Σημειώσεις πορείας', 'Journey') }}</button>
           </div>
         </div>
       </div>
       <div class="ops-calendar-filter-actions">
-        <button class="btn btn-primary" type="submit">Apply filters</button>
-        <a class="btn btn-outline" href="{{ rp }}/calendar?tenant={{ tenant_slug }}">Reset</a>
+        <button class="btn btn-primary" type="submit">{{ tr(request, 'Εφαρμογή φίλτρων', 'Apply filters') }}</button>
+        <a class="btn btn-outline" href="{{ rp }}/calendar?tenant={{ tenant_slug }}">{{ tr(request, 'Επαναφορά', 'Reset') }}</a>
         {% if selected_child_id %}
-          <a class="btn btn-outline" href="{{ rp }}/children/{{ selected_child_id }}?tenant={{ tenant_slug }}">Open child</a>
+          <a class="btn btn-outline" href="{{ rp }}/children/{{ selected_child_id }}?tenant={{ tenant_slug }}">{{ tr(request, 'Άνοιγμα παιδιού', 'Open child') }}</a>
         {% endif %}
       </div>
     </form>
@@ -99,49 +99,49 @@
 <section class="subpanel ops-howto-panel">
   <div class="subhead subhead-flex">
     <div>
-      <div class="section-heading">What this page supports today</div>
+      <div class="section-heading">{{ tr(request, 'Τι υποστηρίζει σήμερα αυτή η σελίδα', 'What this page supports today') }}</div>
       <p class="section-copy">This page is mainly for scheduling visibility and getting into the appointment detail screen. The clinical note is written <strong>inside the appointment</strong>, not directly on the calendar board.</p>
     </div>
     <div class="ops-calendar-filter-tags">
       <span class="focus-tag">1 · Filter the clinic view</span>
-      <span class="focus-tag">2 · Open a busy appointment</span>
-      <span class="focus-tag">3 · Write the session note there</span>
+      <span class="focus-tag">2 · {{ tr(request, 'Άνοιγμα απασχολημένου ραντεβού', 'Open a busy appointment') }}</span>
+      <span class="focus-tag">3 · {{ tr(request, 'Συμπλήρωσε εκεί τη σημείωση συνεδρίας', 'Write the session note there') }}</span>
     </div>
   </div>
   <div class="subbody ops-howto-grid">
     <div class="empty-state">
-      <strong>Busy appointment</strong>
+      <strong>{{ tr(request, 'Απασχολημένο ραντεβού', 'Busy appointment') }}</strong>
       <div class="hint">Busy appointment cards are the route into the session workflow. Open one to review the previous note, write today’s achievements, and set the next-session plan.</div>
     </div>
     <div class="empty-state">
-      <strong>Free slot</strong>
+      <strong>{{ tr(request, 'Ελεύθερο κενό', 'Free slot') }}</strong>
       <div class="hint">Free 15-minute slots on the therapist occupancy board are only for scheduling. They open Quick create so reception or a superuser can add a new appointment.</div>
     </div>
     <div class="empty-state">
       <strong>If the view looks empty</strong>
-      <div class="hint">That usually means no appointments match the selected child / therapist filters yet. Use <em>Reset</em>, change the date, or {% if allow_demo_seed %}<em>Load demo clinic week</em>{% else %}add a test appointment{% endif %}.</div>
+      <div class="hint">That usually means no appointments match the selected child / therapist filters yet. Use <em>{{ tr(request, 'Επαναφορά', 'Reset') }}</em>, change the date, or {% if allow_demo_seed %}<em>{{ tr(request, 'Φόρτωση δοκιμαστικής εβδομάδας', 'Load demo clinic week') }}</em>{% else %}add a test appointment{% endif %}.</div>
     </div>
   </div>
 </section>
 
 <section class="ops-calendar-stats" id="calendarStats">
   <article class="stat-card">
-    <div class="stat-card__label">Busy right now</div>
+    <div class="stat-card__label">{{ tr(request, 'Απασχολημένοι τώρα', 'Busy right now') }}</div>
     <div class="stat-card__value" id="statBusyNow">—</div>
     <div class="stat-card__meta" id="statBusyNowMeta">Choose a day to analyse.</div>
   </article>
   <article class="stat-card">
-    <div class="stat-card__label">Free right now</div>
+    <div class="stat-card__label">{{ tr(request, 'Ελεύθεροι τώρα', 'Free right now') }}</div>
     <div class="stat-card__value" id="statFreeNow">—</div>
     <div class="stat-card__meta" id="statFreeNowMeta">Visible therapists only.</div>
   </article>
   <article class="stat-card">
-    <div class="stat-card__label">No-free-therapist blocks</div>
+    <div class="stat-card__label">{{ tr(request, 'Χρονικά μπλοκ χωρίς διαθέσιμο θεραπευτή', 'No-free-therapist blocks') }}</div>
     <div class="stat-card__value" id="statFullBlocks">—</div>
     <div class="stat-card__meta" id="statFullBlocksMeta">15-minute blocks where no visible therapist has a free working slot.</div>
   </article>
   <article class="stat-card stat-card--highlight">
-    <div class="stat-card__label">Next available gap</div>
+    <div class="stat-card__label">{{ tr(request, 'Επόμενο διαθέσιμο κενό', 'Next available gap') }}</div>
     <div class="stat-card__value stat-card__value--small" id="statNextGap">—</div>
     <div class="stat-card__meta" id="statNextGapMeta">First visible free therapist slot.</div>
   </article>
@@ -152,7 +152,7 @@
 <section class="subpanel ops-calendar-state-panel" id="calendarStatePanel">
   <div class="subhead subhead-flex">
     <div>
-      <div class="section-heading">Current calendar state</div>
+      <div class="section-heading">{{ tr(request, 'Τρέχουσα κατάσταση ημερολογίου', 'Current calendar state') }}</div>
       <p class="section-copy">This block explains what the current filters and date are showing you, so the page does not feel blank or ambiguous.</p>
     </div>
     <div class="ops-calendar-filter-tags">
@@ -165,7 +165,7 @@
       <div class="hint" id="calendarStateBody">The weekly board and the calendar below should explain whether the clinic is busy, filtered, or simply empty for the selected date.</div>
     </div>
     <div class="empty-state ops-calendar-state-card">
-      <strong>What to click</strong>
+      <strong>{{ tr(request, 'Τι να πατήσεις', 'What to click') }}</strong>
       <div class="hint">Busy appointment card → open appointment detail and session note. Free slot on the therapist board → open Quick create.</div>
     </div>
   </div>
@@ -176,7 +176,7 @@
     <div class="subpanel">
       <div class="subhead subhead-flex">
         <div>
-          <div class="section-heading">Therapist occupancy board</div>
+          <div class="section-heading">{{ tr(request, 'Πίνακας πληρότητας θεραπευτών', 'Therapist occupancy board') }}</div>
           <p class="section-copy">A 15-minute operations board for the selected day. Click a free slot to open quick create. Click a busy slot to open the child’s session note workflow.</p>
         </div>
         <div class="ops-calendar-board-legend">
@@ -194,7 +194,7 @@
     <div class="subpanel">
       <div class="subhead subhead-flex">
         <div>
-          <div class="section-heading">Calendar schedule</div>
+          <div class="section-heading">{{ tr(request, 'Πρόγραμμα ημερολογίου', 'Calendar schedule') }}</div>
           <p class="section-copy">Use the toolbar inside the calendar to switch between <strong>Week</strong>, <strong>Day</strong>, and <strong>Month</strong>. Busy appointments open the appointment detail screen; free scheduling happens from the therapist board above.</p>
         </div>
       </div>
@@ -202,11 +202,11 @@
         <div id="calendar"></div>
         <div id="calendarEmpty" class="empty-state ops-calendar-empty" hidden>
           <strong>No calendar items match this view yet.</strong>
-          <div class="hint">The calendar itself is working, but there are currently no visible appointments for this child / therapist filter combination. Try <em>Reset</em>, switch the date, or {% if allow_demo_seed %}load the demo clinic week{% else %}add a test appointment{% endif %}.</div>
+          <div class="hint">The calendar itself is working, but there are currently no visible appointments for this child / therapist filter combination. Try <em>{{ tr(request, 'Επαναφορά', 'Reset') }}</em>, switch the date, or {% if allow_demo_seed %}load the demo clinic week{% else %}add a test appointment{% endif %}.</div>
           {% if allow_demo_seed %}
             <div class="ops-calendar-empty__actions">
               <form method="post" action="{{ rp }}/calendar/seed_demo" class="inline-form">
-                <button type="submit" class="btn btn-outline">Load demo clinic week</button>
+                <button type="submit" class="btn btn-outline">{{ tr(request, 'Φόρτωση δοκιμαστικής εβδομάδας', 'Load demo clinic week') }}</button>
               </form>
             </div>
           {% endif %}
@@ -219,7 +219,7 @@
     <div class="subpanel">
       <div class="subhead">
         <div>
-          <div class="section-heading">Visible therapists</div>
+          <div class="section-heading">{{ tr(request, 'Ορατοί θεραπευτές', 'Visible therapists') }}</div>
           <p class="section-copy">Each therapist keeps a fixed colour so superusers, receptionists, and therapists can read the day at a glance.</p>
         </div>
       </div>
@@ -231,7 +231,7 @@
     <div class="subpanel">
       <div class="subhead">
         <div>
-          <div class="section-heading">Click behavior</div>
+          <div class="section-heading">{{ tr(request, 'Συμπεριφορά κλικ', 'Click behavior') }}</div>
           <p class="section-copy">This side panel explains what each interactive area actually does right now, so the screen is less confusing during rollout.</p>
         </div>
       </div>
@@ -239,21 +239,21 @@
         <div class="workflow-step">
           <div class="workflow-index">1</div>
           <div>
-            <strong>Read the clinic state</strong>
+            <strong>{{ tr(request, 'Διάβασε την κατάσταση της κλινικής', 'Read the clinic state') }}</strong>
             <div class="hint">Use the board and the state box above to understand whether the clinic is busy, filtered, or simply empty for the selected date.</div>
           </div>
         </div>
         <div class="workflow-step">
           <div class="workflow-index">2</div>
           <div>
-            <strong>Busy vs free clicks</strong>
+            <strong>{{ tr(request, 'Κλικ σε απασχολημένο ή ελεύθερο', 'Busy vs free clicks') }}</strong>
             <div class="hint">Busy appointment cards open the appointment detail screen. Free 15-minute therapist-board blocks open Quick create.</div>
           </div>
         </div>
         <div class="workflow-step">
           <div class="workflow-index">3</div>
           <div>
-            <strong>Where notes live</strong>
+            <strong>{{ tr(request, 'Πού γράφονται οι σημειώσεις', 'Where notes live') }}</strong>
             <div class="hint">The therapist writes the clinical note inside the appointment detail screen: previous session review, today’s achievements, and next-session plan.</div>
           </div>
         </div>
@@ -267,7 +267,7 @@
   <div class="modal-card modal-card--wide" role="dialog" aria-modal="true" aria-labelledby="createModalTitle">
     <div class="modal-head">
       <div>
-        <div class="modal-kicker">Quick create</div>
+        <div class="modal-kicker">{{ tr(request, 'Γρήγορη δημιουργία', 'Quick create') }}</div>
         <div id="createModalTitle" class="modal-title">Add to calendar</div>
       </div>
       <button type="button" class="iconbtn" data-close="1" title="Close">✕</button>
@@ -284,7 +284,7 @@
         <form method="post" action="{{ rp }}/calendar/add_appointment" class="stack">
           <div class="grid grid-2 gap-3">
             <div>
-              <label class="label">Child</label>
+              <label class="label">{{ tr(request, 'Παιδί', 'Child') }}</label>
               <select id="m_appt_child" name="child_id" class="input" required>
                 {% for c in children %}
                   <option value="{{ c.id }}" {% if selected_child_id == c.id %}selected{% endif %}>{{ c.full_name }}</option>
@@ -292,17 +292,17 @@
               </select>
             </div>
             <div>
-              <label class="label">Start</label>
+              <label class="label">{{ tr(request, 'Έναρξη', 'Start') }}</label>
               <input id="m_appt_start" class="input" type="datetime-local" name="starts_at" step="900" required>
             </div>
           </div>
           <div class="grid grid-3 gap-3">
             <div>
-              <label class="label">Therapist / Provider</label>
+              <label class="label">{{ tr(request, 'Θεραπευτής / Πάροχος', 'Therapist / Provider') }}</label>
               <input id="m_appt_therapist" class="input" type="text" name="therapist_name" list="therapists" placeholder="Therapist" required>
             </div>
             <div>
-              <label class="label">Procedure</label>
+              <label class="label">{{ tr(request, 'Υπηρεσία', 'Procedure') }}</label>
               <input class="input" type="text" name="procedure" value="Speech Session">
             </div>
             <div>
@@ -320,7 +320,7 @@
           </div>
           <div class="grid grid-2 gap-3">
             <div>
-              <label class="label">Appointment type</label>
+              <label class="label">{{ tr(request, 'Τύπος ραντεβού', 'Appointment type') }}</label>
               <select class="input" name="appointment_type">
                 <option value="GOVERNMENT_FUNDED">Government funded</option>
                 <option value="REGULAR_ADDITIONAL">Regular additional</option>
@@ -330,7 +330,7 @@
               </select>
             </div>
             <div>
-              <label class="label">Therapy type</label>
+              <label class="label">{{ tr(request, 'Τύπος θεραπείας', 'Therapy type') }}</label>
               <select class="input" name="therapy_type">
                 <option value="SPEECH_THERAPY">Speech therapy</option>
                 <option value="PHYSIOTHERAPY">Physiotherapy</option>
@@ -343,8 +343,8 @@
           </div>
           <input type="hidden" name="also_add_timeline" value="YES" />
           <div class="modal-actions">
-            <button type="button" class="btn btn-outline" data-close="1">Cancel</button>
-            <button class="btn btn-primary" type="submit">Create appointment</button>
+            <button type="button" class="btn btn-outline" data-close="1">{{ tr(request, 'Ακύρωση', 'Cancel') }}</button>
+            <button class="btn btn-primary" type="submit">{{ tr(request, 'Δημιουργία ραντεβού', 'Create appointment') }}</button>
           </div>
         </form>
       </div>
@@ -353,7 +353,7 @@
         <form method="post" action="{{ rp }}/calendar/add_billing" class="stack">
           <div class="grid grid-2 gap-3">
             <div>
-              <label class="label">Child</label>
+              <label class="label">{{ tr(request, 'Παιδί', 'Child') }}</label>
               <select id="m_bill_child" name="child_id" class="input" required>
                 {% for c in children %}
                   <option value="{{ c.id }}" {% if selected_child_id == c.id %}selected{% endif %}>{{ c.full_name }}</option>
@@ -367,11 +367,11 @@
           </div>
           <div class="grid grid-2 gap-3">
             <div>
-              <label class="label">Amount (€)</label>
+              <label class="label">{{ tr(request, 'Ποσό', 'Amount') }} (€)</label>
               <input class="input" type="number" step="0.01" name="amount_eur" placeholder="40.00">
             </div>
             <div>
-              <label class="label">Description</label>
+              <label class="label">{{ tr(request, 'Περιγραφή', 'Description') }}</label>
               <input class="input" type="text" name="description" placeholder="Monthly sessions">
             </div>
           </div>
@@ -399,7 +399,7 @@
             </div>
           </div>
           <div class="modal-actions">
-            <button type="button" class="btn btn-outline" data-close="1">Cancel</button>
+            <button type="button" class="btn btn-outline" data-close="1">{{ tr(request, 'Ακύρωση', 'Cancel') }}</button>
             <button class="btn btn-primary" type="submit">Create billing</button>
           </div>
         </form>
@@ -409,7 +409,7 @@
         <form method="post" action="{{ rp }}/calendar/add_journey" class="stack">
           <div class="grid grid-2 gap-3">
             <div>
-              <label class="label">Child</label>
+              <label class="label">{{ tr(request, 'Παιδί', 'Child') }}</label>
               <select id="m_j_child" name="child_id" class="input" required>
                 {% for c in children %}
                   <option value="{{ c.id }}" {% if selected_child_id == c.id %}selected{% endif %}>{{ c.full_name }}</option>
@@ -446,7 +446,7 @@
             <textarea class="input" name="details" rows="4" placeholder="Optional"></textarea>
           </div>
           <div class="modal-actions">
-            <button type="button" class="btn btn-outline" data-close="1">Cancel</button>
+            <button type="button" class="btn btn-outline" data-close="1">{{ tr(request, 'Ακύρωση', 'Cancel') }}</button>
             <button class="btn btn-primary" type="submit">Create journey item</button>
           </div>
         </form>
@@ -831,7 +831,7 @@
       const freeSlots = item.timeline.filter((slot) => slot.state === 'free');
       const busySlots = item.timeline.filter((slot) => slot.state === 'busy');
       let state = 'Free';
-      let detail = freeSlots.length ? `Next gap ${formatClock(freeSlots[0].start)}` : 'No visible gap';
+      let detail = freeSlots.length ? `Next gap ${formatClock(freeSlots[0].start)}` : {{ tr(request, 'Δεν υπάρχει ορατό κενό', 'No visible gap') | tojson }};
       if(item.leave){
         state = 'Leave';
         detail = 'Marked annual leave';
@@ -868,13 +868,13 @@
     const visibleCount = summary.length;
     const dayLabel = currentBoardDate.toLocaleDateString([], { weekday: 'short', day: '2-digit', month: 'short' });
     if(!visibleCount){
-      calendarStatePill.textContent = 'No visible therapists';
-      calendarStateHeadline.textContent = 'The current filters hide all therapists.';
-      calendarStateBody.textContent = 'Reset the filters or re-add therapists to the visible view. The board and the calendar below cannot show clinic activity without at least one visible therapist.';
+      calendarStatePill.textContent = {{ tr(request, 'Δεν υπάρχουν ορατοί θεραπευτές', 'No visible therapists') | tojson }};
+      calendarStateHeadline.textContent = {{ tr(request, 'Τα τρέχοντα φίλτρα κρύβουν όλους τους θεραπευτές.', 'The current filters hide all therapists.') | tojson }};
+      calendarStateBody.textContent = {{ tr(request, 'Επαναφορά φίλτρων ή επανεμφάνιση θεραπευτών στην προβολή. Ο πίνακας και το ημερολόγιο δεν μπορούν να δείξουν δραστηριότητα χωρίς τουλάχιστον έναν ορατό θεραπευτή.', 'Reset the filters or re-add therapists to the visible view. The board and the calendar below cannot show clinic activity without at least one visible therapist.') | tojson }};
       return;
     }
     if(!activeEvents.length){
-      calendarStatePill.textContent = 'Calendar ready but empty';
+      calendarStatePill.textContent = {{ tr(request, 'Το ημερολόγιο είναι έτοιμο αλλά κενό', 'Calendar ready but empty') | tojson }};
       calendarStateHeadline.textContent = `No visible appointments for ${dayLabel}.`;
       calendarStateBody.textContent = 'This usually means the clinic is filtered down too far, the selected date has no appointments yet, or demo data has not been loaded. Busy appointment cards will appear here once matching events exist.';
       return;
@@ -882,7 +882,7 @@
     const appointmentCount = activeEvents.filter((ev) => String((ev.extendedProps && ev.extendedProps.kind) || ev.kind || '') === 'appointment').length;
     calendarStatePill.textContent = `${appointmentCount} appointment${appointmentCount === 1 ? '' : 's'} visible`;
     calendarStateHeadline.textContent = `Showing ${activeEvents.length} calendar item${activeEvents.length === 1 ? '' : 's'} for ${visibleCount} therapist${visibleCount === 1 ? '' : 's'}.`;
-    calendarStateBody.textContent = 'Busy appointment cards are your route into the appointment detail and session note. Free 15-minute board slots are for quick scheduling only.';
+    calendarStateBody.textContent = {{ tr(request, 'Οι κάρτες απασχολημένων ραντεβού οδηγούν στη λεπτομέρεια ραντεβού και στη σημείωση συνεδρίας. Τα ελεύθερα 15λεπτα κενά προορίζονται μόνο για γρήγορο προγραμματισμό.', 'Busy appointment cards are your route into the appointment detail and session note. Free 15-minute board slots are for quick scheduling only.') | tojson }};
   }
 
   function renderStats(summary){
@@ -897,18 +897,18 @@
     const nextGap = firstFutureFreeSlot(summary, isToday ? now : startOfDay(currentBoardDate));
 
     document.getElementById('statBusyNow').textContent = liveBusy === null ? '—' : `${liveBusy}/${summary.length}`;
-    document.getElementById('statBusyNowMeta').textContent = isToday ? 'Currently busy therapists.' : 'Live status available when viewing today.';
+    document.getElementById('statBusyNowMeta').textContent = isToday ? {{ tr(request, 'Θεραπευτές που είναι απασχολημένοι αυτή τη στιγμή.', 'Currently busy therapists.') | tojson }} : {{ tr(request, 'Η ζωντανή κατάσταση είναι διαθέσιμη όταν βλέπεις τη σημερινή ημέρα.', 'Live status available when viewing today.') | tojson }};
     document.getElementById('statFreeNow').textContent = liveFree === null ? '—' : String(liveFree);
     document.getElementById('statFreeNowMeta').textContent = isToday ? 'Therapists with a free working slot now.' : 'Switch to today for live free/busy status.';
     document.getElementById('statFullBlocks').textContent = String(fullBlocks);
-    document.getElementById('statFullBlocksMeta').textContent = fullBlocks ? 'No visible therapist gap in these 15-minute blocks.' : 'There is at least one visible therapist gap throughout the day.';
-    document.getElementById('statNextGap').textContent = nextGap ? `${formatClock(nextGap.slot.start)} · ${nextGap.therapist.name}` : 'No visible gap';
-    document.getElementById('statNextGapMeta').textContent = nextGap ? 'First visible free therapist slot.' : 'Adjust filters or set weekly availability.';
+    document.getElementById('statFullBlocksMeta').textContent = fullBlocks ? 'No visible therapist gap in these 15-minute blocks.' : {{ tr(request, 'Υπάρχει τουλάχιστον ένα ορατό κενό θεραπευτή μέσα στην ημέρα.', 'There is at least one visible therapist gap throughout the day.') | tojson }};
+    document.getElementById('statNextGap').textContent = nextGap ? `${formatClock(nextGap.slot.start)} · ${nextGap.therapist.name}` : {{ tr(request, 'Δεν υπάρχει ορατό κενό', 'No visible gap') | tojson }};
+    document.getElementById('statNextGapMeta').textContent = nextGap ? {{ tr(request, 'Πρώτο ορατό ελεύθερο κενό θεραπευτή.', 'First visible free therapist slot.') | tojson }} : {{ tr(request, 'Ρύθμισε τα φίλτρα ή όρισε εβδομαδιαία διαθεσιμότητα.', 'Adjust filters or set weekly availability.') | tojson }};
 
     if(isToday && summary.length && liveFree === 0){
       clinicAlert.hidden = false;
       clinicAlert.className = 'ops-clinic-alert ops-clinic-alert--danger';
-      clinicAlert.textContent = 'No visible therapist is free right now.';
+      clinicAlert.textContent = {{ tr(request, 'Κανένας ορατός θεραπευτής δεν είναι ελεύθερος αυτή τη στιγμή.', 'No visible therapist is free right now.') | tojson }};
     } else if(isToday && summary.length){
       clinicAlert.hidden = false;
       clinicAlert.className = 'ops-clinic-alert ops-clinic-alert--ok';
@@ -916,7 +916,7 @@
     } else {
       clinicAlert.hidden = false;
       clinicAlert.className = 'ops-clinic-alert';
-      clinicAlert.textContent = 'Board stats reflect the selected day and the active filters.';
+      clinicAlert.textContent = {{ tr(request, 'Τα στατιστικά του πίνακα αντικατοπτρίζουν την επιλεγμένη ημέρα και τα ενεργά φίλτρα.', 'Board stats reflect the selected day and the active filters.') | tojson }};
     }
   }
 

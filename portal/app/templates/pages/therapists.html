@@ -1,11 +1,11 @@
 {% extends "layout.html" %}
-{% set header = "Therapists" %}
+{% set header = tr(request, 'Θεραπευτές', 'Therapists') %}
 {% block content %}
 
 <div class="grid grid-cols-1 xl:grid-cols-3 gap-5">
   <section class="xl:col-span-2">
-    <div class="mb-3 text-sm text-slate-600">Manage therapists/providers. Their names are used in appointment drop-downs.</div>
-<div class="flex flex-wrap gap-2 mb-4"><a class="btn btn-sm {% if show != 'archived' and show != 'all' %}btn-primary{% else %}btn-outline{% endif %}" href="{{ rp }}/therapists">Active</a><a class="btn btn-sm {% if show == 'archived' %}btn-primary{% else %}btn-outline{% endif %}" href="{{ rp }}/therapists?show=archived">Archived</a><a class="btn btn-sm {% if show == 'all' %}btn-primary{% else %}btn-outline{% endif %}" href="{{ rp }}/therapists?show=all">All</a></div>
+    <div class="mb-3 text-sm text-slate-600">{{ tr(request, 'Διαχειρίσου θεραπευτές/παρόχους. Τα ονόματά τους χρησιμοποιούνται στις επιλογές ραντεβού.', 'Manage therapists/providers. Their names are used in appointment drop-downs.') }}</div>
+<div class="flex flex-wrap gap-2 mb-4"><a class="btn btn-sm {% if show != 'archived' and show != 'all' %}btn-primary{% else %}btn-outline{% endif %}" href="{{ rp }}/therapists">{{ tr(request, 'Ενεργοί', 'Active') }}</a><a class="btn btn-sm {% if show == 'archived' %}btn-primary{% else %}btn-outline{% endif %}" href="{{ rp }}/therapists?show=archived">{{ tr(request, 'Αρχειοθετημένοι', 'Archived') }}</a><a class="btn btn-sm {% if show == 'all' %}btn-primary{% else %}btn-outline{% endif %}" href="{{ rp }}/therapists?show=all">{{ tr(request, 'Όλοι', 'All') }}</a></div>
 
     <div class="list">
       {% for t in therapists %}
@@ -16,46 +16,46 @@
       <div class="text-xs text-slate-500">{% if t.role %}{{ t.role }}{% else %}Therapist{% endif %}{% if t.phone %} · {{ t.phone }}{% endif %}{% if t.email %} · {{ t.email }}{% endif %}</div>
     </div>
     <div class="flex gap-2 items-center">
-      <a class="btn btn-sm btn-outline" href="{{ rp }}/therapists/{{ t.id }}">Open</a>
+      <a class="btn btn-sm btn-outline" href="{{ rp }}/therapists/{{ t.id }}">{{ tr(request, 'Άνοιγμα', 'Open') }}</a>
       {% if t.is_archived %}
         <form method="post" action="{{ rp }}/therapists/{{ t.id }}/restore" style="display:inline;">
-          <button class="btn btn-sm btn-outline" type="submit">♻ Restore</button>
+          <button class="btn btn-sm btn-outline" type="submit">♻ {{ tr(request, 'Επαναφορά', 'Restore') }}</button>
         </form>
       {% else %}
         <form method="post" action="{{ rp }}/therapists/{{ t.id }}/archive" style="display:inline;">
-          <button class="btn btn-sm btn-outline" type="submit">🗄 Archive</button>
+          <button class="btn btn-sm btn-outline" type="submit">🗄 {{ tr(request, 'Αρχειοθέτηση', 'Archive') }}</button>
         </form>
       {% endif %}
     </div>
   </div>
 </div>
       {% else %}
-        <div class="text-sm text-slate-500">No therapists yet. Add one from the panel on the right.</div>
+        <div class="text-sm text-slate-500">{{ tr(request, 'Δεν υπάρχουν θεραπευτές ακόμη. Πρόσθεσε έναν από το πλαίσιο δεξιά.', 'No therapists yet. Add one from the panel on the right.') }}</div>
       {% endfor %}
     </div>
   </section>
 
   <aside class="card-soft">
-    <div class="font-extrabold mb-3">Add therapist</div>
+    <div class="font-extrabold mb-3">{{ tr(request, 'Προσθήκη θεραπευτή', 'Add therapist') }}</div>
     <form class="space-y-3" method="post" action="{{ rp }}/therapists/create">
       <div>
-        <label class="label">Name</label>
+        <label class="label">{{ tr(request, 'Όνομα', 'Name') }}</label>
         <input name="name" required class="input" placeholder="e.g., James Sawyer" />
       </div>
       <div>
-        <label class="label">Role</label>
+        <label class="label">{{ tr(request, 'Ρόλος', 'Role') }}</label>
         <input name="role" class="input" placeholder="e.g., Speech therapist" />
       </div>
       <div>
-        <label class="label">Phone</label>
+        <label class="label">{{ tr(request, 'Τηλέφωνο', 'Phone') }}</label>
         <input name="phone" class="input" placeholder="e.g., +30 69..." />
       </div>
       <div>
-        <label class="label">Email</label>
+        <label class="label">{{ tr(request, 'Email', 'Email') }}</label>
         <input name="email" class="input" placeholder="e.g., name@clinic.gr" />
       </div>
-      <button class="btn w-full" type="submit">Create therapist</button>
-      <div class="text-xs text-slate-500">Tip: availability & annual leave are set in the therapist record.</div>
+      <button class="btn w-full" type="submit">{{ tr(request, 'Δημιουργία θεραπευτή', 'Create therapist') }}</button>
+      <div class="text-xs text-slate-500">{{ tr(request, 'Συμβουλή: το ωράριο και οι άδειες ρυθμίζονται στην καρτέλα του θεραπευτή.', 'Tip: availability & annual leave are set in the therapist record.') }}</div>
     </form>
   </aside>
 </div>

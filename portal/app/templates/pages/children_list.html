@@ -1,11 +1,11 @@
 {% extends "layout.html" %}
-{% set header = "Children" %}
+{% set header = tr(request, 'Παιδιά', 'Children') %}
 {% block content %}
 
 <div class="grid grid-cols-1 xl:grid-cols-3 gap-5">
   <section class="xl:col-span-2">
-    <div class="mb-3 text-sm text-slate-600">Select a child to view records, documents, appointments, and billing.</div>
-<div class="flex flex-wrap gap-2 mb-4"><a class="btn btn-sm {% if show != 'archived' and show != 'all' %}btn-primary{% else %}btn-outline{% endif %}" href="{{ rp }}/children?tenant={{ tenant_slug }}">Active</a><a class="btn btn-sm {% if show == 'archived' %}btn-primary{% else %}btn-outline{% endif %}" href="{{ rp }}/children?tenant={{ tenant_slug }}&show=archived">Archived</a><a class="btn btn-sm {% if show == 'all' %}btn-primary{% else %}btn-outline{% endif %}" href="{{ rp }}/children?tenant={{ tenant_slug }}&show=all">All</a></div>
+    <div class="mb-3 text-sm text-slate-600">{{ tr(request, 'Επίλεξε παιδί για να δεις στοιχεία, έγγραφα, ραντεβού και χρεώσεις.', 'Select a child to view records, documents, appointments, and billing.') }}</div>
+<div class="flex flex-wrap gap-2 mb-4"><a class="btn btn-sm {% if show != 'archived' and show != 'all' %}btn-primary{% else %}btn-outline{% endif %}" href="{{ rp }}/children?tenant={{ tenant_slug }}">{{ tr(request, 'Ενεργά', 'Active') }}</a><a class="btn btn-sm {% if show == 'archived' %}btn-primary{% else %}btn-outline{% endif %}" href="{{ rp }}/children?tenant={{ tenant_slug }}&show=archived">{{ tr(request, 'Αρχειοθετημένα', 'Archived') }}</a><a class="btn btn-sm {% if show == 'all' %}btn-primary{% else %}btn-outline{% endif %}" href="{{ rp }}/children?tenant={{ tenant_slug }}&show=all">{{ tr(request, 'Όλα', 'All') }}</a></div>
 
     
     <div class="list children-cards">
@@ -14,11 +14,11 @@
         <div class="child-card">
           <a class="child-main" href="{{ rp }}/children/{{ c.id }}?tenant={{ tenant_slug }}">
             <div class="child-title">{{ c.full_name }}</div>
-            <div class="child-sub">ID {{ c.id }}{% if c.date_of_birth %} · DOB {{ c.date_of_birth }}{% endif %}</div>
+            <div class="child-sub">{{ tr(request, 'Κωδικός', 'ID') }} {{ c.id }}{% if c.date_of_birth %} · {{ tr(request, 'Ημ. γέννησης', 'DOB') }} {{ c.date_of_birth }}{% endif %}</div>
 
             <div class="child-badges">
               {% if m and m.next_appt %}
-                <span class="pill p-blue">📅 Next {{ m.next_appt.strftime("%b %d, %H:%M") }}</span>
+                <span class="pill p-blue">📅 {{ tr(request, 'Επόμενο', 'Next') }} {{ m.next_appt.strftime("%b %d, %H:%M") }}</span>
               {% endif %}
               {% if m and m.last_attendance %}
                 {% if m.last_attendance in ["ATTENDED"] %}
@@ -30,75 +30,75 @@
                 {% endif %}
               {% endif %}
               {% if m and m.unpaid_count and m.unpaid_count > 0 %}
-                <span class="pill p-amber">💳 {{ m.unpaid_count }} unpaid</span>
+                <span class="pill p-amber">💳 {{ m.unpaid_count }} {{ tr(request, 'απλήρωτα', 'unpaid') }}</span>
               {% endif %}
             </div>
           </a>
 
           <div class="child-actions">
-            <a class="btn btn-sm btn-outline" href="{{ rp }}/children/{{ c.id }}?tenant={{ tenant_slug }}&tab=appointments">+ Appointment</a>
-            <a class="btn btn-sm btn-outline" href="{{ rp }}/children/{{ c.id }}?tenant={{ tenant_slug }}&tab=billing">+ Invoice</a>
-            {% if can_edit_child %}<a class="btn btn-sm btn-outline" href="{{ rp }}/children/{{ c.id }}?tenant={{ tenant_slug }}&tab=overview&edit=1">✏️ Edit</a>{% endif %}
+            <a class="btn btn-sm btn-outline" href="{{ rp }}/children/{{ c.id }}?tenant={{ tenant_slug }}&tab=appointments">+ {{ tr(request, 'Ραντεβού', 'Appointment') }}</a>
+            <a class="btn btn-sm btn-outline" href="{{ rp }}/children/{{ c.id }}?tenant={{ tenant_slug }}&tab=billing">+ {{ tr(request, 'Χρέωση', 'Invoice') }}</a>
+            {% if can_edit_child %}<a class="btn btn-sm btn-outline" href="{{ rp }}/children/{{ c.id }}?tenant={{ tenant_slug }}&tab=overview&edit=1">✏️ {{ tr(request, 'Επεξεργασία', 'Edit') }}</a>{% endif %}
             {% if m and m.p1_phone %}
-              <a class="btn btn-sm btn-outline" href="tel:{{ m.p1_phone }}">📞 Parent</a>
+              <a class="btn btn-sm btn-outline" href="tel:{{ m.p1_phone }}">📞 {{ tr(request, 'Γονέας', 'Parent') }}</a>
             {% endif %}
             {% if is_clinic_superuser %}
               {% if c.is_archived %}
                 <form method="post" action="{{ rp }}/children/{{ c.id }}/restore" style="display:inline;">
-                  <button class="btn btn-sm btn-outline" type="submit">♻ Restore</button>
+                  <button class="btn btn-sm btn-outline" type="submit">♻ {{ tr(request, 'Επαναφορά', 'Restore') }}</button>
                 </form>
               {% else %}
                 <form method="post" action="{{ rp }}/children/{{ c.id }}/archive" style="display:inline;">
-                  <button class="btn btn-sm btn-outline" type="submit">🗄 Archive</button>
+                  <button class="btn btn-sm btn-outline" type="submit">🗄 {{ tr(request, 'Αρχειοθέτηση', 'Archive') }}</button>
                 </form>
               {% endif %}
             {% endif %}
           </div>
         </div>
       {% else %}
-        <div class="text-sm text-slate-500">No children yet.</div>
+        <div class="text-sm text-slate-500">{{ tr(request, 'Δεν υπάρχουν παιδιά ακόμη.', 'No children yet.') }}</div>
       {% endfor %}
     </div>
 
   </section>
 
   <aside class="card-soft">
-    <div class="font-extrabold mb-3">Add child</div>
+    <div class="font-extrabold mb-3">{{ tr(request, 'Προσθήκη παιδιού', 'Add child') }}</div>
     <form class="space-y-3" method="post" action="{{ rp }}/children/create">
       <input type="hidden" name="tenant" value="{{ tenant_slug }}">
       <div>
-        <label class="label">Full name</label>
-        <input name="full_name" required class="input" placeholder="e.g., John D." />
+        <label class="label">{{ tr(request, 'Ονοματεπώνυμο', 'Full name') }}</label>
+        <input name="full_name" required class="input" placeholder="π.χ. Γιάννης Π." />
       </div>
       <div>
-        <label class="label">Date of birth</label>
+        <label class="label">{{ tr(request, 'Ημερομηνία γέννησης', 'Date of birth') }}</label>
         <input type="date" name="date_of_birth" class="input" />
       </div>
       <div>
-        <label class="label">Notes</label>
-        <textarea name="notes" rows="4" class="input" placeholder="Goals, background, etc."></textarea>
+        <label class="label">{{ tr(request, 'Σημειώσεις', 'Notes') }}</label>
+        <textarea name="notes" rows="4" class="input" placeholder="Στόχοι, ιστορικό, κ.λπ."></textarea>
       </div>
 
       <div class="pt-2 border-t border-slate-200"></div>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div>
-          <label class="label">Parent/Guardian 1 name</label>
+          <label class="label">{{ tr(request, 'Όνομα γονέα/κηδεμόνα 1', 'Parent/Guardian 1 name') }}</label>
           <input name="parent1_name" class="input" placeholder="e.g., Maria Papadopoulou" />
         </div>
         <div>
-          <label class="label">Parent/Guardian 1 phone</label>
+          <label class="label">{{ tr(request, 'Τηλέφωνο γονέα/κηδεμόνα 1', 'Parent/Guardian 1 phone') }}</label>
           <input name="parent1_phone" class="input" placeholder="e.g., +30 69..." />
         </div>
         <div>
-          <label class="label">Parent/Guardian 2 name</label>
+          <label class="label">{{ tr(request, 'Όνομα γονέα/κηδεμόνα 2', 'Parent/Guardian 2 name') }}</label>
           <input name="parent2_name" class="input" placeholder="optional" />
         </div>
         <div>
-          <label class="label">Parent/Guardian 2 phone</label>
+          <label class="label">{{ tr(request, 'Τηλέφωνο γονέα/κηδεμόνα 2', 'Parent/Guardian 2 phone') }}</label>
           <input name="parent2_phone" class="input" placeholder="optional" />
         </div>
       </div>
-      <button class="btn w-full" type="submit">Create</button>
+      <button class="btn w-full" type="submit">{{ tr(request, 'Δημιουργία', 'Create') }}</button>
     </form>
   </aside>
 </div>

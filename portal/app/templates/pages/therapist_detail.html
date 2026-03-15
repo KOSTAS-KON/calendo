@@ -1,22 +1,22 @@
 {% extends "layout.html" %}
-{% set header = "Therapist" %}
+{% set header = tr(request, 'Θεραπευτής', 'Therapist') %}
 {% block content %}
 
 <div class="flex items-start justify-between gap-3 mb-4">
   <div>
-    <div class="text-xs text-slate-500">Therapist</div>
+    <div class="text-xs text-slate-500">{{ tr(request, 'Θεραπευτής', 'Therapist') }}</div>
     <div class="text-2xl font-extrabold">{{ t.name }}</div>
     <div class="text-sm text-slate-600">ID {{ t.id }}{% if t.role %} · {{ t.role }}{% endif %}{% if t.phone %} · {{ t.phone }}{% endif %}</div>
   </div>
   <div class="flex gap-2">
-    <a class="btn" href="{{ rp }}/therapists">Back to list</a>
+    <a class="btn" href="{{ rp }}/therapists">{{ tr(request, 'Πίσω στη λίστα', 'Back to list') }}</a>
     {% if t.is_archived %}
       <form method="post" action="{{ rp }}/therapists/{{ t.id }}/restore" style="display:inline;">
-        <button class="btn btn-outline" type="submit">♻ Restore therapist</button>
+        <button class="btn btn-outline" type="submit">♻ {{ tr(request, 'Επαναφορά θεραπευτή', 'Restore therapist') }}</button>
       </form>
     {% else %}
       <form method="post" action="{{ rp }}/therapists/{{ t.id }}/archive" style="display:inline;">
-        <button class="btn btn-outline" type="submit">🗄 Archive therapist</button>
+        <button class="btn btn-outline" type="submit">🗄 {{ tr(request, 'Αρχειοθέτηση θεραπευτή', 'Archive therapist') }}</button>
       </form>
     {% endif %}
   </div>
@@ -26,9 +26,9 @@
   <section class="xl:col-span-2">
     <div class="subpanel">
       <div class="subhead flex items-center justify-between">
-        <div>Weekly availability</div>
+        <div>{{ tr(request, 'Εβδομαδιαία διαθεσιμότητα', 'Weekly availability') }}</div>
         <div class="flex gap-2">
-          <span class="pill p-gray">Weekly hours: <b>{{ weekly_hours }}</b></span>
+          <span class="pill p-gray">{{ tr(request, 'Εβδομαδιαίες ώρες', 'Weekly hours') }}: <b>{{ weekly_hours }}</b></span>
           <span class="pill p-gray">{{ month_label }}: <b>{{ month_hours }}</b></span>
         </div>
       </div>
@@ -36,36 +36,36 @@
         <form method="post" action="{{ rp }}/therapists/{{ t.id }}/update" class="space-y-4">
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label class="label">Name</label>
+              <label class="label">{{ tr(request, 'Όνομα', 'Name') }}</label>
               <input name="name" class="input" value="{{ t.name }}" required />
             </div>
             <div>
-              <label class="label">Role</label>
+              <label class="label">{{ tr(request, 'Ρόλος', 'Role') }}</label>
               <input name="role" class="input" value="{{ t.role or '' }}" placeholder="e.g., Speech therapist" />
             </div>
             <div>
-              <label class="label">Phone</label>
+              <label class="label">{{ tr(request, 'Τηλέφωνο', 'Phone') }}</label>
               <input name="phone" class="input" value="{{ t.phone or '' }}" placeholder="e.g., +30 69..." />
             </div>
             <div>
-              <label class="label">Email</label>
+              <label class="label">{{ tr(request, 'Email', 'Email') }}</label>
               <input name="email" class="input" value="{{ t.email or '' }}" placeholder="e.g., name@clinic.gr" />
             </div>
           </div>
 
           <div class="pt-2 border-t border-slate-200"></div>
 
-          <div class="text-sm text-slate-600 mb-2">Set up to two working blocks per day (e.g., 09:00–13:00 and 14:00–18:00).</div>
+          <div class="text-sm text-slate-600 mb-2">{{ tr(request, 'Όρισε έως δύο ζώνες εργασίας ανά ημέρα (π.χ. 09:00–13:00 και 14:00–18:00).', 'Set up to two working blocks per day (e.g., 09:00–13:00 and 14:00–18:00).') }}</div>
 
           <div class="tablewrap">
             <table class="apptable">
               <thead>
                 <tr>
-                  <th>Day</th>
-                  <th>Block 1 start</th>
-                  <th>Block 1 end</th>
-                  <th>Block 2 start</th>
-                  <th>Block 2 end</th>
+                  <th>{{ tr(request, 'Ημέρα', 'Day') }}</th>
+                  <th>{{ tr(request, 'Έναρξη ζώνης 1', 'Block 1 start') }}</th>
+                  <th>{{ tr(request, 'Λήξη ζώνης 1', 'Block 1 end') }}</th>
+                  <th>{{ tr(request, 'Έναρξη ζώνης 2', 'Block 2 start') }}</th>
+                  <th>{{ tr(request, 'Λήξη ζώνης 2', 'Block 2 end') }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -85,7 +85,7 @@
           </div>
 
           <div class="flex justify-end">
-            <button class="btn" type="submit">Save therapist</button>
+            <button class="btn" type="submit">{{ tr(request, 'Αποθήκευση θεραπευτή', 'Save therapist') }}</button>
           </div>
         </form>
       </div>
@@ -94,25 +94,25 @@
 
   <aside>
     <div class="card-soft">
-      <div class="font-extrabold mb-2">Annual leave</div>
-      <div class="text-sm text-slate-600 mb-3">Leave days are excluded from monthly working hours and can be used for planning.</div>
+      <div class="font-extrabold mb-2">{{ tr(request, 'Ετήσια άδεια', 'Annual leave') }}</div>
+      <div class="text-sm text-slate-600 mb-3">{{ tr(request, 'Οι ημέρες άδειας εξαιρούνται από τις μηνιαίες ώρες εργασίας και βοηθούν στον προγραμματισμό.', 'Leave days are excluded from monthly working hours and can be used for planning.') }}</div>
 
       <form method="post" action="{{ rp }}/therapists/{{ t.id }}/leave/add" class="space-y-3">
         <div class="grid grid-cols-2 gap-3">
           <div>
-            <label class="label">Start</label>
+            <label class="label">{{ tr(request, 'Από', 'Start') }}</label>
             <input type="date" name="start" class="input" required />
           </div>
           <div>
-            <label class="label">End</label>
+            <label class="label">{{ tr(request, 'Έως', 'End') }}</label>
             <input type="date" name="end" class="input" required />
           </div>
         </div>
         <div>
-          <label class="label">Reason</label>
-          <input name="reason" class="input" placeholder="e.g., Vacation" />
+          <label class="label">{{ tr(request, 'Λόγος', 'Reason') }}</label>
+          <input name="reason" class="input" placeholder="e.g., Άδεια" />
         </div>
-        <button class="btn w-full" type="submit">Add leave</button>
+        <button class="btn w-full" type="submit">{{ tr(request, 'Προσθήκη άδειας', 'Add leave') }}</button>
       </form>
 
       <div class="pt-3 mt-3 border-t border-slate-200"></div>
@@ -126,11 +126,11 @@
             </div>
             <form method="post" action="{{ rp }}/therapists/{{ t.id }}/leave/remove">
               <input type="hidden" name="idx" value="{{ loop.index0 }}" />
-              <button class="btn btn-sm" type="submit">Remove</button>
+              <button class="btn btn-sm" type="submit">{{ tr(request, 'Αφαίρεση', 'Remove') }}</button>
             </form>
           </div>
         {% else %}
-          <div class="text-sm text-slate-500">No leave entries.</div>
+          <div class="text-sm text-slate-500">{{ tr(request, 'Δεν υπάρχουν εγγραφές άδειας.', 'No leave entries.') }}</div>
         {% endfor %}
       </div>
     </div>
