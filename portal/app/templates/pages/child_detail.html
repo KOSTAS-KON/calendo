@@ -89,8 +89,14 @@
       </div>
 
     {% elif tab == 'appointments' %}
-      <div class="mt-4">
+      <div class="mt-4 stack gap-4">
         {% if appointments and appointments|length %}
+          <div class="note-workflow-banner">
+            <div>
+              <strong>Session note workflow</strong>
+              <div class="hint">Open a session note from any appointment row below. Therapists can review the previous session, write today's achievements, and save the plan for the next session.</div>
+            </div>
+          </div>
           <div class="table-wrap">
             <table class="table">
               <thead>
@@ -104,6 +110,7 @@
                   <th>Appointment type</th>
                   <th>Therapy type</th>
                   <th>Counted</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -118,6 +125,9 @@
                     <td>{{ appointment_type_label(a.appointment_type) }}</td>
                     <td>{{ therapy_type_label(a.therapy_type) }}</td>
                     <td>{{ a.hours_counted_label or ('Yes' if a.hours_counted_at else 'No') }}</td>
+                    <td class="actions-cell">
+                      <a class="btn btn-sm btn-primary" href="{{ rp }}/appointments/{{ a.id }}?tenant={{ tenant_slug }}">Open session note</a>
+                    </td>
                   </tr>
                 {% endfor %}
               </tbody>

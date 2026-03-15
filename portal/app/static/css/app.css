@@ -1949,6 +1949,30 @@ body.modal-open {
   opacity: 0.92;
 }
 
+.fc-appointment-card__action {
+  margin-top: 6px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  opacity: 0.96;
+  padding-top: 5px;
+  border-top: 1px solid rgba(255, 255, 255, 0.22);
+}
+
+.note-workflow-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: rgba(91, 91, 214, 0.08);
+  border: 1px solid rgba(91, 91, 214, 0.18);
+}
+
+.actions-cell {
+  min-width: 180px;
+}
+
 .fc-appointment-card.status-missed,
 .fc-appointment-card.status-cancelled-provider,
 .fc-appointment-card.status-cancelled-me {
