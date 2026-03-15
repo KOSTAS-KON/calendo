@@ -13,7 +13,7 @@
   <div class="flex items-center justify-between gap-3">
     <div>
       <a class="font-semibold" href="{{ rp }}/therapists/{{ t.id }}">{{ t.name }}</a>
-      <div class="text-xs text-slate-500">{% if t.role %}{{ t.role }}{% else %}Therapist{% endif %}{% if t.phone %} · {{ t.phone }}{% endif %}{% if t.email %} · {{ t.email }}{% endif %}</div>
+      <div class="text-xs text-slate-500">{% if t.role %}{{ t.role }}{% else %}{{ tr(request, "Θεραπευτής", "Therapist") }}{% endif %}{% if t.phone %} · {{ t.phone }}{% endif %}{% if t.email %} · {{ t.email }}{% endif %}</div>
     </div>
     <div class="flex gap-2 items-center">
       <a class="btn btn-sm btn-outline" href="{{ rp }}/therapists/{{ t.id }}">{{ tr(request, 'Άνοιγμα', 'Open') }}</a>
@@ -40,19 +40,19 @@
     <form class="space-y-3" method="post" action="{{ rp }}/therapists/create">
       <div>
         <label class="label">{{ tr(request, 'Όνομα', 'Name') }}</label>
-        <input name="name" required class="input" placeholder="e.g., James Sawyer" />
+        <input name="name" required class="input" placeholder="π.χ. Μαρία Μπέλλα" />
       </div>
       <div>
         <label class="label">{{ tr(request, 'Ρόλος', 'Role') }}</label>
-        <input name="role" class="input" placeholder="e.g., Speech therapist" />
+        <input name="role" class="input" placeholder="π.χ. Λογοθεραπεύτρια" />
       </div>
       <div>
         <label class="label">{{ tr(request, 'Τηλέφωνο', 'Phone') }}</label>
-        <input name="phone" class="input" placeholder="e.g., +30 69..." />
+        <input name="phone" class="input" placeholder="π.χ. +30 69..." />
       </div>
       <div>
         <label class="label">{{ tr(request, 'Email', 'Email') }}</label>
-        <input name="email" class="input" placeholder="e.g., name@clinic.gr" />
+        <input name="email" class="input" placeholder="π.χ. name@clinic.gr" />
       </div>
       <button class="btn w-full" type="submit">{{ tr(request, 'Δημιουργία θεραπευτή', 'Create therapist') }}</button>
       <div class="text-xs text-slate-500">{{ tr(request, 'Συμβουλή: το ωράριο και οι άδειες ρυθμίζονται στην καρτέλα του θεραπευτή.', 'Tip: availability & annual leave are set in the therapist record.') }}</div>

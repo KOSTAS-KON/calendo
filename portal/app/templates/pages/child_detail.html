@@ -4,20 +4,20 @@
 <div class="page-head">
   <div>
     <div class="sub">
-      <a class="link" href="{{ rp }}/children?tenant={{ tenant_slug }}">&larr; Back to Children</a>
+      <a class="link" href="{{ rp }}/children?tenant={{ tenant_slug }}">&larr; {{ tr(request, "Πίσω στα παιδιά", "Back to Children") }}</a>
     </div>
     <h1 class="h1">{{ child.full_name }}</h1>
     <div class="sub">
       {% if child.date_of_birth %}
-        <span>DOB: {{ child.date_of_birth }}</span>
+        <span>{{ tr(request, "Ημ. γέννησης", "DOB") }}: {{ child.date_of_birth }}</span>
       {% endif %}
       {% if child.parent1_phone %}
         <span class="mx-2">&middot;</span>
-        <span>Parent 1: {{ child.parent1_phone }}</span>
+        <span>{{ tr(request, "Γονέας 1", "Parent 1") }}: {{ child.parent1_phone }}</span>
       {% endif %}
       {% if child.parent2_phone %}
         <span class="mx-2">&middot;</span>
-        <span>Parent 2: {{ child.parent2_phone }}</span>
+        <span>{{ tr(request, "Γονέας 2", "Parent 2") }}: {{ child.parent2_phone }}</span>
       {% endif %}
     </div>
   </div>
@@ -25,25 +25,25 @@
   <div class="flex items-center gap-2">
     {% if can_edit_child %}
       {% if edit_mode %}
-        <a class="btn btn-outline" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=overview">Cancel edit</a>
+        <a class="btn btn-outline" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=overview">{{ tr(request, "Ακύρωση επεξεργασίας", "Cancel edit") }}</a>
       {% else %}
-        <a class="btn btn-outline" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=overview&edit=1">Edit details</a>
+        <a class="btn btn-outline" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=overview&edit=1">{{ tr(request, "Επεξεργασία στοιχείων", "Edit details") }}</a>
       {% endif %}
     {% endif %}
-    <a class="btn btn-outline" href="{{ rp }}/children?tenant={{ tenant_slug }}">All children</a>
+    <a class="btn btn-outline" href="{{ rp }}/children?tenant={{ tenant_slug }}">{{ tr(request, "Όλα τα παιδιά", "All children") }}</a>
     {% if sms_app_url %}
       <a class="btn btn-primary" href="{{ sms_app_url }}" target="_blank" rel="noopener">
-        Open SMS Calendar
+        {{ tr(request, "Άνοιγμα ημερολογίου SMS", "Open SMS Calendar") }}
       </a>
     {% endif %}
     {% if is_clinic_superuser %}
       {% if child.is_archived %}
         <form method="post" action="{{ rp }}/children/{{ child.id }}/restore" style="display:inline;">
-          <button class="btn btn-outline" type="submit">♻ Restore child</button>
+          <button class="btn btn-outline" type="submit">♻ {{ tr(request, "Επαναφορά παιδιού", "Restore child") }}</button>
         </form>
       {% else %}
         <form method="post" action="{{ rp }}/children/{{ child.id }}/archive" style="display:inline;">
-          <button class="btn btn-outline" type="submit">🗄 Archive child</button>
+          <button class="btn btn-outline" type="submit">🗄 {{ tr(request, "Αρχειοθέτηση παιδιού", "Archive child") }}</button>
         </form>
       {% endif %}
     {% endif %}
@@ -53,11 +53,11 @@
 <div class="card">
   <div class="card-body">
     <div class="tabs">
-      <a class="tab {{ 'tab-active' if tab=='overview' else '' }}" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=overview">Overview</a>
-      <a class="tab {{ 'tab-active' if tab=='timeline' else '' }}" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=timeline">Timeline</a>
-      <a class="tab {{ 'tab-active' if tab=='appointments' else '' }}" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=appointments">Appointments</a>
-      <a class="tab {{ 'tab-active' if tab=='hours' else '' }}" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=hours">Hours &amp; claims</a>
-      <a class="tab {{ 'tab-active' if tab=='attachments' else '' }}" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=attachments">Attachments</a>
+      <a class="tab {{ 'tab-active' if tab=='overview' else '' }}" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=overview">{{ tr(request, "Επισκόπηση", "Overview") }}</a>
+      <a class="tab {{ 'tab-active' if tab=='timeline' else '' }}" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=timeline">{{ tr(request, "Χρονολόγιο", "Timeline") }}</a>
+      <a class="tab {{ 'tab-active' if tab=='appointments' else '' }}" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=appointments">{{ tr(request, "Ραντεβού", "Appointments") }}</a>
+      <a class="tab {{ 'tab-active' if tab=='hours' else '' }}" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=hours">{{ tr(request, "Ώρες & απαιτήσεις", "Hours & claims") }}</a>
+      <a class="tab {{ 'tab-active' if tab=='attachments' else '' }}" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=attachments">{{ tr(request, "Συνημμένα", "Attachments") }}</a>
     </div>
 
     {% if tab == 'timeline' %}
@@ -69,7 +69,7 @@
                 <div class="timeline-dot"></div>
                 <div class="timeline-content">
                   <div class="timeline-meta">
-                    <span class="font-semibold">{{ e.event_type or 'Event' }}</span>
+                    <span class="font-semibold">{{ e.event_type or tr(request, 'Συμβάν', 'Event') }}</span>
                     <span class="mx-2">&middot;</span>
                     <span>{{ e.occurred_at }}</span>
                   </div>
@@ -84,7 +84,7 @@
             {% endfor %}
           </div>
         {% else %}
-          <div class="text-slate-600">No timeline events yet.</div>
+          <div class="text-slate-600">{{ tr(request, "Δεν υπάρχουν ακόμη γεγονότα στο χρονολόγιο.", "No timeline events yet.") }}</div>
         {% endif %}
       </div>
 
@@ -93,24 +93,24 @@
         {% if appointments and appointments|length %}
           <div class="note-workflow-banner">
             <div>
-              <strong>Session note workflow</strong>
-              <div class="hint">Open a session note from any appointment row below. Therapists can review the previous session, write today's achievements, and save the plan for the next session.</div>
+              <strong>{{ tr(request, "Ροή σημειώσεων συνεδρίας", "Session note workflow") }}</strong>
+              <div class="hint">{{ tr(request, 'Άνοιξε σημείωση συνεδρίας από οποιαδήποτε γραμμή ραντεβού παρακάτω. Οι θεραπευτές μπορούν να δουν την προηγούμενη συνεδρία, να γράψουν τα σημερινά επιτεύγματα και να αποθηκεύσουν το πλάνο για την επόμενη συνεδρία.', "Open a session note from any appointment row below. Therapists can review the previous session, write today's achievements, and save the plan for the next session.") }}</div>
             </div>
           </div>
           <div class="table-wrap">
             <table class="table">
               <thead>
                 <tr>
-                  <th>Start</th>
-                  <th>End</th>
-                  <th>Therapist</th>
-                  <th>Status</th>
-                  <th>Procedure</th>
-                  <th>Duration</th>
-                  <th>Appointment type</th>
-                  <th>Therapy type</th>
-                  <th>Counted</th>
-                  <th>Actions</th>
+                  <th>{{ tr(request, "Έναρξη", "Start") }}</th>
+                  <th>{{ tr(request, "Λήξη", "End") }}</th>
+                  <th>{{ tr(request, "Θεραπευτής", "Therapist") }}</th>
+                  <th>{{ tr(request, "Κατάσταση", "Status") }}</th>
+                  <th>{{ tr(request, "Υπηρεσία", "Procedure") }}</th>
+                  <th>{{ tr(request, "Διάρκεια", "Duration") }}</th>
+                  <th>{{ tr(request, "Τύπος ραντεβού", "Appointment type") }}</th>
+                  <th>{{ tr(request, "Τύπος θεραπείας", "Therapy type") }}</th>
+                  <th>{{ tr(request, "Υπολογισμένο", "Counted") }}</th>
+                  <th>{{ tr(request, "Ενέργειες", "Actions") }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -121,12 +121,12 @@
                     <td>{{ a.therapist_name or '' }}</td>
                     <td>{{ a.attendance_status or '' }}</td>
                     <td>{{ a.procedure or '' }}</td>
-                    <td>{{ a.duration_minutes or 60 }} min</td>
+                    <td>{{ a.duration_minutes or 60 }} {{ tr(request, "λεπτά", "min") }}</td>
                     <td>{{ appointment_type_label(a.appointment_type) }}</td>
                     <td>{{ therapy_type_label(a.therapy_type) }}</td>
-                    <td>{{ a.hours_counted_label or ('Yes' if a.hours_counted_at else 'No') }}</td>
+                    <td>{{ a.hours_counted_label or (tr(request, 'Ναι', 'Yes') if a.hours_counted_at else tr(request, 'Όχι', 'No')) }}</td>
                     <td class="actions-cell">
-                      <a class="btn btn-sm btn-primary" href="{{ rp }}/appointments/{{ a.id }}?tenant={{ tenant_slug }}">Open session note</a>
+                      <a class="btn btn-sm btn-primary" href="{{ rp }}/appointments/{{ a.id }}?tenant={{ tenant_slug }}">{{ tr(request, "Άνοιγμα σημείωσης συνεδρίας", "Open session note") }}</a>
                     </td>
                   </tr>
                 {% endfor %}
@@ -134,30 +134,30 @@
             </table>
           </div>
         {% else %}
-          <div class="text-slate-600">No appointments for this customer yet.</div>
+          <div class="text-slate-600">{{ tr(request, "Δεν υπάρχουν ακόμη ραντεβού για αυτό το παιδί.", "No appointments for this customer yet.") }}</div>
         {% endif %}
       </div>
 
     {% elif tab == 'hours' %}
       <div class="mt-4 stack">
         <div class="card">
-          <div class="card-head">Hours &amp; claims summary</div>
+          <div class="card-head">{{ tr(request, "Σύνοψη ωρών & απαιτήσεων", "Hours & claims summary") }}</div>
           <div class="card-body">
-            <div class="text-slate-600 mb-3">Choose a date window to calculate this child's sessions and hours. The breakdown separates therapy discipline, session type, missed sessions, and already-counted batches.</div>
+            <div class="text-slate-600 mb-3">{{ tr(request, 'Επίλεξε εύρος ημερομηνιών για να υπολογίσεις τις συνεδρίες και τις ώρες αυτού του παιδιού. Η ανάλυση χωρίζει τις ώρες ανά θεραπεία, τύπο συνεδρίας, χαμένες συνεδρίες και ήδη υπολογισμένες παρτίδες.', "Choose a date window to calculate this child's sessions and hours. The breakdown separates therapy discipline, session type, missed sessions, and already-counted batches.") }}</div>
             <form method="get" action="{{ rp }}/children/{{ child.id }}" class="stack">
               <input type="hidden" name="tenant" value="{{ tenant_slug }}">
               <input type="hidden" name="tab" value="hours">
               <div class="grid gap-4 md:grid-cols-4">
                 <div>
-                  <label class="label">From date</label>
+                  <label class="label">{{ tr(request, "Από ημερομηνία", "From date") }}</label>
                   <input class="input" type="date" name="hours_start" value="{{ hours_start.isoformat() if hours_start else '' }}">
                 </div>
                 <div>
-                  <label class="label">To date</label>
+                  <label class="label">{{ tr(request, "Έως ημερομηνία", "To date") }}</label>
                   <input class="input" type="date" name="hours_end" value="{{ hours_end.isoformat() if hours_end else '' }}">
                 </div>
                 <div>
-                  <label class="label">Therapy type</label>
+                  <label class="label">{{ tr(request, "Τύπος θεραπείας", "Therapy type") }}</label>
                   <select class="input" name="therapy_type">
                     {% for value, label in therapy_type_choices %}
                       <option value="{{ value }}" {% if hours_therapy_filter == value %}selected{% endif %}>{{ label }}</option>
@@ -165,15 +165,15 @@
                   </select>
                 </div>
                 <div>
-                  <label class="label">Options</label>
+                  <label class="label">{{ tr(request, "Επιλογές", "Options") }}</label>
                   <label class="input flex items-center gap-2" style="padding-top:11px;padding-bottom:11px;">
                     <input type="checkbox" name="include_counted" value="1" {% if hours_include_counted %}checked{% endif %}>
-                    <span>Include already-counted sessions</span>
+                    <span>{{ tr(request, "Συμπερίληψη ήδη υπολογισμένων συνεδριών", "Include already-counted sessions") }}</span>
                   </label>
                 </div>
               </div>
               <div class="flex items-center gap-2">
-                <button class="btn btn-primary" type="submit">Calculate sessions &amp; hours</button>
+                <button class="btn btn-primary" type="submit">{{ tr(request, "Υπολογισμός συνεδριών & ωρών", "Calculate sessions & hours") }}</button>
               </div>
             </form>
           </div>
@@ -182,39 +182,39 @@
         {% if hours_data %}
           {% set hs = hours_data.summary %}
           <div class="grid gap-4 md:grid-cols-4">
-            <div class="card"><div class="card-head">Scheduled sessions</div><div class="card-body"><div class="h1">{{ hs.scheduled_sessions }}</div><div class="sub">{{ '%.2f'|format(hs.scheduled_hours) }} hours in range</div></div></div>
-            <div class="card"><div class="card-head">Delivered sessions</div><div class="card-body"><div class="h1">{{ hs.delivered_sessions }}</div><div class="sub">{{ '%.2f'|format(hs.delivered_hours) }} attended / completed hours</div></div></div>
-            <div class="card"><div class="card-head">Missed sessions</div><div class="card-body"><div class="h1">{{ hs.missed_sessions }}</div><div class="sub">{{ '%.2f'|format(hs.missed_hours) }} missed hours</div></div></div>
-            <div class="card"><div class="card-head">Already counted</div><div class="card-body"><div class="h1">{{ hs.excluded_counted_count }}</div><div class="sub">{{ '%.2f'|format(hs.excluded_counted_hours) }} hours excluded</div></div></div>
+            <div class="card"><div class="card-head">{{ tr(request, "Προγραμματισμένες συνεδρίες", "Scheduled sessions") }}</div><div class="card-body"><div class="h1">{{ hs.scheduled_sessions }}</div><div class="sub">{{ '%.2f'|format(hs.scheduled_hours) }} {{ tr(request, "ώρες στο εύρος", "hours in range") }}</div></div></div>
+            <div class="card"><div class="card-head">{{ tr(request, "Πραγματοποιημένες συνεδρίες", "Delivered sessions") }}</div><div class="card-body"><div class="h1">{{ hs.delivered_sessions }}</div><div class="sub">{{ '%.2f'|format(hs.delivered_hours) }} {{ tr(request, "ώρες παρουσίας / ολοκλήρωσης", "attended / completed hours") }}</div></div></div>
+            <div class="card"><div class="card-head">{{ tr(request, "Χαμένες συνεδρίες", "Missed sessions") }}</div><div class="card-body"><div class="h1">{{ hs.missed_sessions }}</div><div class="sub">{{ '%.2f'|format(hs.missed_hours) }} {{ tr(request, "χαμένες ώρες", "missed hours") }}</div></div></div>
+            <div class="card"><div class="card-head">{{ tr(request, "Ήδη υπολογισμένα", "Already counted") }}</div><div class="card-body"><div class="h1">{{ hs.excluded_counted_count }}</div><div class="sub">{{ '%.2f'|format(hs.excluded_counted_hours) }} {{ tr(request, "ώρες εξαιρέθηκαν", "hours excluded") }}</div></div></div>
           </div>
 
           <div class="grid gap-4 md:grid-cols-4">
-            <div class="card"><div class="card-head">Cancelled sessions</div><div class="card-body"><div class="h1">{{ hs.cancelled_sessions }}</div><div class="sub">{{ '%.2f'|format(hs.cancelled_hours) }} cancelled hours</div></div></div>
-            <div class="card"><div class="card-head">Prescribed / government funded</div><div class="card-body"><div class="h1">{{ hs.by_type_count.GOVERNMENT_FUNDED }}</div><div class="sub">{{ '%.2f'|format(hs.by_type.GOVERNMENT_FUNDED) }} hours</div></div></div>
-            <div class="card"><div class="card-head">Private scheduled</div><div class="card-body"><div class="h1">{{ hs.by_type_count.REGULAR_ADDITIONAL }}</div><div class="sub">{{ '%.2f'|format(hs.by_type.REGULAR_ADDITIONAL) }} hours</div></div></div>
-            <div class="card"><div class="card-head">Private unscheduled / bespoke</div><div class="card-body"><div class="h1">{{ hs.by_type_count.BESPOKE_EXTRA }}</div><div class="sub">{{ '%.2f'|format(hs.by_type.BESPOKE_EXTRA) }} hours</div></div></div>
+            <div class="card"><div class="card-head">{{ tr(request, "Ακυρωμένες συνεδρίες", "Cancelled sessions") }}</div><div class="card-body"><div class="h1">{{ hs.cancelled_sessions }}</div><div class="sub">{{ '%.2f'|format(hs.cancelled_hours) }} {{ tr(request, "ακυρωμένες ώρες", "cancelled hours") }}</div></div></div>
+            <div class="card"><div class="card-head">{{ tr(request, "Συνταγογραφημένες / κρατικά καλυπτόμενες", "Prescribed / government funded") }}</div><div class="card-body"><div class="h1">{{ hs.by_type_count.GOVERNMENT_FUNDED }}</div><div class="sub">{{ '%.2f'|format(hs.by_type.GOVERNMENT_FUNDED) }} {{ tr(request, "ώρες", "hours") }}</div></div></div>
+            <div class="card"><div class="card-head">{{ tr(request, "Ιδιωτικές προγραμματισμένες", "Private scheduled") }}</div><div class="card-body"><div class="h1">{{ hs.by_type_count.REGULAR_ADDITIONAL }}</div><div class="sub">{{ '%.2f'|format(hs.by_type.REGULAR_ADDITIONAL) }} {{ tr(request, "ώρες", "hours") }}</div></div></div>
+            <div class="card"><div class="card-head">{{ tr(request, "Ιδιωτικές έκτακτες / ειδικές", "Private unscheduled / bespoke") }}</div><div class="card-body"><div class="h1">{{ hs.by_type_count.BESPOKE_EXTRA }}</div><div class="sub">{{ '%.2f'|format(hs.by_type.BESPOKE_EXTRA) }} {{ tr(request, "ώρες", "hours") }}</div></div></div>
           </div>
 
           <div class="grid gap-4 md:grid-cols-2">
-            <div class="card"><div class="card-head">Covered from older cancellations</div><div class="card-body"><div class="h1">{{ hs.by_type_count.REPLACEMENT }}</div><div class="sub">{{ '%.2f'|format(hs.by_type.REPLACEMENT) }} hours</div></div></div>
-            <div class="card"><div class="card-head">Unspecified / legacy</div><div class="card-body"><div class="h1">{{ hs.by_type_count.UNSPECIFIED }}</div><div class="sub">{{ '%.2f'|format(hs.by_type.UNSPECIFIED) }} hours</div></div></div>
+            <div class="card"><div class="card-head">{{ tr(request, "Κάλυψη από παλαιότερες ακυρώσεις", "Covered from older cancellations") }}</div><div class="card-body"><div class="h1">{{ hs.by_type_count.REPLACEMENT }}</div><div class="sub">{{ '%.2f'|format(hs.by_type.REPLACEMENT) }} {{ tr(request, "ώρες", "hours") }}</div></div></div>
+            <div class="card"><div class="card-head">{{ tr(request, "Μη καθορισμένο / παλαιό", "Unspecified / legacy") }}</div><div class="card-body"><div class="h1">{{ hs.by_type_count.UNSPECIFIED }}</div><div class="sub">{{ '%.2f'|format(hs.by_type.UNSPECIFIED) }} {{ tr(request, "ώρες", "hours") }}</div></div></div>
           </div>
 
           {% if is_clinic_superuser and not hours_include_counted and hs.scheduled_sessions %}
             <div class="card">
-              <div class="card-head">Finalize this calculation</div>
+              <div class="card-head">{{ tr(request, "Οριστικοποίηση αυτού του υπολογισμού", "Finalize this calculation") }}</div>
               <div class="card-body">
-                <div class="text-slate-600 mb-3">Mark the currently visible non-cancelled appointments as counted so these sessions are excluded from future calculations by default.</div>
+                <div class="text-slate-600 mb-3">{{ tr(request, 'Σήμανε τα ορατά μη ακυρωμένα ραντεβού ως υπολογισμένα ώστε να εξαιρούνται από μελλοντικούς υπολογισμούς από προεπιλογή.', 'Mark the currently visible non-cancelled appointments as counted so these sessions are excluded from future calculations by default.') }}</div>
                 <form method="post" action="{{ rp }}/children/{{ child.id }}/hours/finalize" class="stack">
                   <input type="hidden" name="hours_start" value="{{ hours_start.isoformat() if hours_start else '' }}">
                   <input type="hidden" name="hours_end" value="{{ hours_end.isoformat() if hours_end else '' }}">
                   <input type="hidden" name="therapy_type" value="{{ hours_therapy_filter }}">
                   <div>
-                    <label class="label">Summary label</label>
-                    <input class="input" name="summary_label" placeholder="e.g. March 2026 claims batch">
+                    <label class="label">{{ tr(request, "Ετικέτα σύνοψης", "Summary label") }}</label>
+                    <input class="input" name="summary_label" placeholder="π.χ. Παρτίδα απαιτήσεων Μαρτίου 2026">
                   </div>
                   <div class="flex items-center gap-2">
-                    <button class="btn btn-primary" type="submit">Finalize and exclude from future calculations</button>
+                    <button class="btn btn-primary" type="submit">{{ tr(request, "Οριστικοποίηση και εξαίρεση από μελλοντικούς υπολογισμούς", "Finalize and exclude from future calculations") }}</button>
                   </div>
                 </form>
               </div>
@@ -222,21 +222,21 @@
           {% endif %}
 
           <div class="card">
-            <div class="card-head">Breakdown by session type</div>
+            <div class="card-head">{{ tr(request, "Ανάλυση ανά τύπο συνεδρίας", "Breakdown by session type") }}</div>
             <div class="card-body">
               {% if hours_data.session_type_rows and hours_data.session_type_rows|length %}
                 <div class="table-wrap">
                   <table class="table">
                     <thead>
                       <tr>
-                        <th>Session type</th>
-                        <th>Sessions</th>
-                        <th>Delivered</th>
-                        <th>Missed</th>
-                        <th>Cancelled</th>
-                        <th>Scheduled hours</th>
-                        <th>Delivered hours</th>
-                        <th>Missed hours</th>
+                        <th>{{ tr(request, "Τύπος συνεδρίας", "Session type") }}</th>
+                        <th>{{ tr(request, "Συνεδρίες", "Sessions") }}</th>
+                        <th>{{ tr(request, "Πραγματοποιημένες", "Delivered") }}</th>
+                        <th>{{ tr(request, "Χαμένες", "Missed") }}</th>
+                        <th>{{ tr(request, "Ακυρωμένες", "Cancelled") }}</th>
+                        <th>{{ tr(request, "Προγραμματισμένες ώρες", "Scheduled hours") }}</th>
+                        <th>{{ tr(request, "Πραγματοποιημένες ώρες", "Delivered hours") }}</th>
+                        <th>{{ tr(request, "Χαμένες ώρες", "Missed hours") }}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -256,32 +256,32 @@
                   </table>
                 </div>
               {% else %}
-                <div class="text-slate-600">No appointments matched the selected range.</div>
+                <div class="text-slate-600">{{ tr(request, "Κανένα ραντεβού δεν ταιριάζει στο επιλεγμένο εύρος.", "No appointments matched the selected range.") }}</div>
               {% endif %}
             </div>
           </div>
 
           <div class="card">
-            <div class="card-head">Breakdown by therapy discipline</div>
+            <div class="card-head">{{ tr(request, "Ανάλυση ανά θεραπευτική ειδικότητα", "Breakdown by therapy discipline") }}</div>
             <div class="card-body">
               {% if hours_data.therapy_rows and hours_data.therapy_rows|length %}
                 <div class="table-wrap">
                   <table class="table">
                     <thead>
                       <tr>
-                        <th>Therapy</th>
-                        <th>Sessions</th>
-                        <th>Delivered</th>
-                        <th>Missed</th>
-                        <th>Cancelled</th>
-                        <th>Scheduled hours</th>
-                        <th>Delivered hours</th>
-                        <th>Missed hours</th>
-                        <th>Prescribed</th>
-                        <th>Private scheduled</th>
-                        <th>Private unscheduled</th>
-                        <th>Covered cancellations</th>
-                        <th>Unspecified</th>
+                        <th>{{ tr(request, "Θεραπεία", "Therapy") }}</th>
+                        <th>{{ tr(request, "Συνεδρίες", "Sessions") }}</th>
+                        <th>{{ tr(request, "Πραγματοποιημένες", "Delivered") }}</th>
+                        <th>{{ tr(request, "Χαμένες", "Missed") }}</th>
+                        <th>{{ tr(request, "Ακυρωμένες", "Cancelled") }}</th>
+                        <th>{{ tr(request, "Προγραμματισμένες ώρες", "Scheduled hours") }}</th>
+                        <th>{{ tr(request, "Πραγματοποιημένες ώρες", "Delivered hours") }}</th>
+                        <th>{{ tr(request, "Χαμένες ώρες", "Missed hours") }}</th>
+                        <th>{{ tr(request, "Συνταγογραφημένες", "Prescribed") }}</th>
+                        <th>{{ tr(request, "Ιδιωτικές προγραμματισμένες", "Private scheduled") }}</th>
+                        <th>{{ tr(request, "Ιδιωτικές έκτακτες", "Private unscheduled") }}</th>
+                        <th>{{ tr(request, "Καλυμμένες ακυρώσεις", "Covered cancellations") }}</th>
+                        <th>{{ tr(request, "Μη καθορισμένες", "Unspecified") }}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -295,38 +295,38 @@
                           <td>{{ '%.2f'|format(row.scheduled_hours) }}</td>
                           <td>{{ '%.2f'|format(row.delivered_hours) }}</td>
                           <td>{{ '%.2f'|format(row.missed_hours) }}</td>
-                          <td>{{ row.by_type_count.GOVERNMENT_FUNDED }} ({{ '%.2f'|format(row.by_type.GOVERNMENT_FUNDED) }}h)</td>
-                          <td>{{ row.by_type_count.REGULAR_ADDITIONAL }} ({{ '%.2f'|format(row.by_type.REGULAR_ADDITIONAL) }}h)</td>
-                          <td>{{ row.by_type_count.BESPOKE_EXTRA }} ({{ '%.2f'|format(row.by_type.BESPOKE_EXTRA) }}h)</td>
-                          <td>{{ row.by_type_count.REPLACEMENT }} ({{ '%.2f'|format(row.by_type.REPLACEMENT) }}h)</td>
-                          <td>{{ row.by_type_count.UNSPECIFIED }} ({{ '%.2f'|format(row.by_type.UNSPECIFIED) }}h)</td>
+                          <td>{{ row.by_type_count.GOVERNMENT_FUNDED }} ({{ '%.2f'|format(row.by_type.GOVERNMENT_FUNDED) }} {{ tr(request, "ώρες", "h") }})</td>
+                          <td>{{ row.by_type_count.REGULAR_ADDITIONAL }} ({{ '%.2f'|format(row.by_type.REGULAR_ADDITIONAL) }} {{ tr(request, "ώρες", "h") }})</td>
+                          <td>{{ row.by_type_count.BESPOKE_EXTRA }} ({{ '%.2f'|format(row.by_type.BESPOKE_EXTRA) }} {{ tr(request, "ώρες", "h") }})</td>
+                          <td>{{ row.by_type_count.REPLACEMENT }} ({{ '%.2f'|format(row.by_type.REPLACEMENT) }} {{ tr(request, "ώρες", "h") }})</td>
+                          <td>{{ row.by_type_count.UNSPECIFIED }} ({{ '%.2f'|format(row.by_type.UNSPECIFIED) }} {{ tr(request, "ώρες", "h") }})</td>
                         </tr>
                       {% endfor %}
                     </tbody>
                   </table>
                 </div>
               {% else %}
-                <div class="text-slate-600">No appointments matched the selected range.</div>
+                <div class="text-slate-600">{{ tr(request, "Κανένα ραντεβού δεν ταιριάζει στο επιλεγμένο εύρος.", "No appointments matched the selected range.") }}</div>
               {% endif %}
             </div>
           </div>
 
           <div class="card">
-            <div class="card-head">Appointment ledger for this calculation window</div>
+            <div class="card-head">{{ tr(request, "Κατάλογος ραντεβού για αυτό το εύρος υπολογισμού", "Appointment ledger for this calculation window") }}</div>
             <div class="card-body">
               {% if hours_data.ledger_rows and hours_data.ledger_rows|length %}
                 <div class="table-wrap">
                   <table class="table">
                     <thead>
                       <tr>
-                        <th>Date / time</th>
-                        <th>Therapist</th>
-                        <th>Procedure</th>
-                        <th>Duration</th>
-                        <th>Status</th>
-                        <th>Session type</th>
-                        <th>Therapy type</th>
-                        <th>Counted batch</th>
+                        <th>{{ tr(request, "Ημερομηνία / ώρα", "Date / time") }}</th>
+                        <th>{{ tr(request, "Θεραπευτής", "Therapist") }}</th>
+                        <th>{{ tr(request, "Υπηρεσία", "Procedure") }}</th>
+                        <th>{{ tr(request, "Διάρκεια", "Duration") }}</th>
+                        <th>{{ tr(request, "Κατάσταση", "Status") }}</th>
+                        <th>{{ tr(request, "Τύπος συνεδρίας", "Session type") }}</th>
+                        <th>{{ tr(request, "Τύπος θεραπείας", "Therapy type") }}</th>
+                        <th>{{ tr(request, "Πακέτο υπολογισμού", "Counted batch") }}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -335,18 +335,18 @@
                           <td><a class="link" href="{{ rp }}/appointments/{{ row.id }}">{{ row.starts_at }}</a></td>
                           <td>{{ row.therapist_name or '—' }}</td>
                           <td>{{ row.procedure }}</td>
-                          <td>{{ row.duration_minutes }} min ({{ '%.2f'|format(row.duration_hours) }}h)</td>
+                          <td>{{ row.duration_minutes }} {{ tr(request, 'λεπτά', 'min') }} ({{ '%.2f'|format(row.duration_hours) }} {{ tr(request, 'ώρες', 'h') }})</td>
                           <td>{{ row.status|replace('_', ' ')|title }}</td>
                           <td>{{ row.appointment_type_label }}</td>
                           <td>{{ row.therapy_type_label }}</td>
-                          <td>{{ row.hours_counted_label or ('Counted' if row.hours_counted_at else 'Not counted') }}</td>
+                          <td>{{ row.hours_counted_label or (tr(request, 'Υπολογισμένο', 'Counted') if row.hours_counted_at else tr(request, 'Μη υπολογισμένο', 'Not counted')) }}</td>
                         </tr>
                       {% endfor %}
                     </tbody>
                   </table>
                 </div>
               {% else %}
-                <div class="text-slate-600">No appointments matched the selected range.</div>
+                <div class="text-slate-600">{{ tr(request, "Κανένα ραντεβού δεν ταιριάζει στο επιλεγμένο εύρος.", "No appointments matched the selected range.") }}</div>
               {% endif %}
             </div>
           </div>
@@ -358,7 +358,7 @@
         <div class="mb-3">
           <form method="post" action="{{ rp }}/children/{{ child.id }}/upload" enctype="multipart/form-data" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
             <input type="file" name="file" required>
-            <button class="btn btn-primary" type="submit">Upload</button>
+            <button class="btn btn-primary" type="submit">{{ tr(request, "Μεταφόρτωση", "Upload") }}</button>
           </form>
         </div>
 
@@ -367,10 +367,10 @@
             <table class="table">
               <thead>
                 <tr>
-                  <th>Filename</th>
-                  <th>Uploaded</th>
-                  <th>Type</th>
-                  <th>Size</th>
+                  <th>{{ tr(request, "Όνομα αρχείου", "Filename") }}</th>
+                  <th>{{ tr(request, "Μεταφορτώθηκε", "Uploaded") }}</th>
+                  <th>{{ tr(request, "Τύπος", "Type") }}</th>
+                  <th>{{ tr(request, "Μέγεθος", "Size") }}</th>
                   <th></th>
                 </tr>
               </thead>
@@ -384,8 +384,8 @@
                     <td>{{ f.mime_type or '' }}</td>
                     <td>{{ f.size_bytes or '' }}</td>
                     <td style="text-align:right;">
-                      <form method="post" action="{{ rp }}/attachments/{{ f.id }}/delete" onsubmit="return confirm('Delete this file?');">
-                        <button class="btn btn-outline" type="submit">Delete</button>
+                      <form method="post" action="{{ rp }}/attachments/{{ f.id }}/delete" onsubmit="return confirm('{{ tr(request, 'Να διαγραφεί αυτό το αρχείο;', 'Delete this file?') }}');">
+                        <button class="btn btn-outline" type="submit">{{ tr(request, "Διαγραφή", "Delete") }}</button>
                       </form>
                     </td>
                   </tr>
@@ -394,7 +394,7 @@
             </table>
           </div>
         {% else %}
-          <div class="text-slate-600">No attachments uploaded yet.</div>
+          <div class="text-slate-600">{{ tr(request, "Δεν έχουν μεταφορτωθεί ακόμη συνημμένα.", "No attachments uploaded yet.") }}</div>
         {% endif %}
       </div>
 
@@ -404,51 +404,51 @@
         <form method="post" action="{{ rp }}/children/{{ child.id }}/edit?tenant={{ tenant_slug }}">
           <div class="grid gap-4 md:grid-cols-2">
             <div class="card">
-              <div class="card-head">Child details</div>
+              <div class="card-head">{{ tr(request, "Στοιχεία παιδιού", "Child details") }}</div>
               <div class="card-body">
-                <label class="label">Full name</label>
+                <label class="label">{{ tr(request, "Ονοματεπώνυμο", "Full name") }}</label>
                 <input class="input" name="full_name" value="{{ child.full_name }}" required>
-                <label class="label mt-3">Date of birth</label>
+                <label class="label mt-3">{{ tr(request, "Ημερομηνία γέννησης", "Date of birth") }}</label>
                 <input class="input" type="date" name="date_of_birth" value="{{ child.date_of_birth.isoformat() if child.date_of_birth else '' }}">
-                <label class="label mt-3">Notes</label>
+                <label class="label mt-3">{{ tr(request, "Σημειώσεις", "Notes") }}</label>
                 <textarea class="input" name="notes" rows="5">{{ child.notes or '' }}</textarea>
               </div>
             </div>
 
             <div class="card">
-              <div class="card-head">Contact</div>
+              <div class="card-head">{{ tr(request, "Επικοινωνία", "Contact") }}</div>
               <div class="card-body">
-                <label class="label">Parent 1 name</label>
+                <label class="label">{{ tr(request, "Όνομα γονέα 1", "Parent 1 name") }}</label>
                 <input class="input" name="parent1_name" value="{{ child.parent1_name or '' }}">
-                <label class="label mt-3">Primary / Parent 1 phone</label>
+                <label class="label mt-3">{{ tr(request, "Κύριο / τηλέφωνο γονέα 1", "Primary / Parent 1 phone") }}</label>
                 <input class="input" name="parent1_phone" value="{{ child.parent1_phone or '' }}">
-                <label class="label mt-3">Parent 2 name</label>
+                <label class="label mt-3">{{ tr(request, "Όνομα γονέα 2", "Parent 2 name") }}</label>
                 <input class="input" name="parent2_name" value="{{ child.parent2_name or '' }}">
-                <label class="label mt-3">Parent 2 phone</label>
+                <label class="label mt-3">{{ tr(request, "Τηλέφωνο γονέα 2", "Parent 2 phone") }}</label>
                 <input class="input" name="parent2_phone" value="{{ child.parent2_phone or '' }}">
               </div>
             </div>
           </div>
           <div class="mt-4 flex items-center gap-2">
-            <button class="btn btn-primary" type="submit">Save changes</button>
-            <a class="btn btn-outline" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=overview">Cancel</a>
+            <button class="btn btn-primary" type="submit">{{ tr(request, "Αποθήκευση αλλαγών", "Save changes") }}</button>
+            <a class="btn btn-outline" href="{{ rp }}/children/{{ child.id }}?tenant={{ tenant_slug }}&tab=overview">{{ tr(request, "Ακύρωση", "Cancel") }}</a>
           </div>
         </form>
       </div>
       {% else %}
       <div class="mt-4 grid gap-4 md:grid-cols-2">
         <div class="card">
-          <div class="card-head">Contact</div>
+          <div class="card-head">{{ tr(request, "Επικοινωνία", "Contact") }}</div>
           <div class="card-body">
-            <div class="kv"><div class="k">Parent 1 name</div><div class="v">{{ child.parent1_name or '—' }}</div></div>
-            <div class="kv"><div class="k">Parent 1 / Primary SMS phone</div><div class="v">{{ child.parent1_phone or '—' }}</div></div>
-            <div class="kv"><div class="k">Parent 2 name</div><div class="v">{{ child.parent2_name or '—' }}</div></div>
-            <div class="kv"><div class="k">Parent 2 phone</div><div class="v">{{ child.parent2_phone or '—' }}</div></div>
+            <div class="kv"><div class="k">{{ tr(request, "Όνομα γονέα 1", "Parent 1 name") }}</div><div class="v">{{ child.parent1_name or '—' }}</div></div>
+            <div class="kv"><div class="k">{{ tr(request, "Γονέας 1 / κύριο τηλέφωνο SMS", "Parent 1 / Primary SMS phone") }}</div><div class="v">{{ child.parent1_phone or '—' }}</div></div>
+            <div class="kv"><div class="k">{{ tr(request, "Όνομα γονέα 2", "Parent 2 name") }}</div><div class="v">{{ child.parent2_name or '—' }}</div></div>
+            <div class="kv"><div class="k">{{ tr(request, "Τηλέφωνο γονέα 2", "Parent 2 phone") }}</div><div class="v">{{ child.parent2_phone or '—' }}</div></div>
           </div>
         </div>
 
         <div class="card">
-          <div class="card-head">Notes</div>
+          <div class="card-head">{{ tr(request, "Σημειώσεις", "Notes") }}</div>
           <div class="card-body">
             <div class="text-slate-700 whitespace-pre-wrap">{{ child.notes or '—' }}</div>
           </div>

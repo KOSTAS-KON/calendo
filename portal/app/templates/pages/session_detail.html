@@ -110,15 +110,15 @@
       <div class="session-card__body">
         <form method="post" action="{{ rp }}/appointments/{{ appt.id }}/attendance" class="stack">
           <div>
-            <label class="label">{{ tr(request, 'Παρουσία', 'Attendance') }} status</label>
+            <label class="label">{{ tr(request, 'Κατάσταση παρουσίας', 'Attendance status') }}</label>
             <select name="attendance_status" class="input" required>
               {% for s in ["CONFIRMED","UNCONFIRMED","ATTENDED","MISSED","CANCELLED_PROVIDER","CANCELLED_ME"] %}
-                <option value="{{ s }}" {% if appt.attendance_status == s %}selected{% endif %}>{{ s|replace('_', ' ')|title }}</option>
+                <option value="{{ s }}" {% if appt.attendance_status == s %}selected{% endif %}>{% if s == "CONFIRMED" %}{{ tr(request, "Επιβεβαιωμένο", "Confirmed") }}{% elif s == "UNCONFIRMED" %}{{ tr(request, "Μη επιβεβαιωμένο", "Unconfirmed") }}{% elif s == "ATTENDED" %}{{ tr(request, "Παρουσία", "Attended") }}{% elif s == "MISSED" %}{{ tr(request, "Απουσία", "Missed") }}{% elif s == "CANCELLED_PROVIDER" %}{{ tr(request, "Ακύρωση από πάροχο", "Cancelled by provider") }}{% elif s == "CANCELLED_ME" %}{{ tr(request, "Ακύρωση από εμάς", "Cancelled by us") }}{% else %}{{ s|replace('_', ' ')|title }}{% endif %}</option>
               {% endfor %}
             </select>
           </div>
           <div>
-            <label class="label">{{ tr(request, 'Παρουσία', 'Attendance') }} note</label>
+            <label class="label">{{ tr(request, 'Σημείωση παρουσίας', 'Attendance note') }}</label>
             <input name="attendance_note" class="input" value="{{ appt.attendance_note or '' }}" placeholder="{{ tr(request, 'Προαιρετική σημείωση για την παρουσία', 'Optional note about attendance') }}" />
           </div>
           {% if appt.attendance_marked_at %}
@@ -140,7 +140,7 @@
         <div class="session-kv"><span>{{ tr(request, 'Παιδί', 'Child') }}</span><strong>{{ appt.child.full_name }}</strong></div>
         <div class="session-kv"><span>{{ tr(request, 'Έναρξη', 'Start') }}</span><strong>{{ appt.starts_at }}</strong></div>
         <div class="session-kv"><span>{{ tr(request, 'Θεραπευτής', 'Therapist') }}</span><strong>{{ appt.therapist_name or '—' }}</strong></div>
-        <div class="session-kv"><span>{{ tr(request, 'Υπηρεσία', 'Procedure') }}</span><strong>{{ appt.procedure or 'Session' }}</strong></div>
+        <div class="session-kv"><span>{{ tr(request, 'Υπηρεσία', 'Procedure') }}</span><strong>{{ appt.procedure or tr(request, 'Συνεδρία', 'Session') }}</strong></div>
         <div class="session-kv"><span>{{ tr(request, 'Τύπος', 'Type') }}</span><strong>{{ appointment_type_label(appt.appointment_type) }}</strong></div>
         <div class="session-kv"><span>{{ tr(request, 'Σειρά', 'Series') }}</span><strong>{% if appt.recurrence_group_id %}{{ tr(request, 'Εβδομαδιαία επανάληψη', 'Weekly recurring') }}{% else %}{{ tr(request, 'Μεμονωμένο ραντεβού', 'Single appointment') }}{% endif %}</strong></div>
       </div>
@@ -194,7 +194,7 @@
               <label class="label">{{ tr(request, 'Διάρκεια', 'Duration') }}</label>
               <select class="input" name="duration_minutes">
                 {% for minutes in [15, 30, 45, 60, 75, 90, 120] %}
-                  <option value="{{ minutes }}" {% if appt_duration_minutes == minutes %}selected{% endif %}>{{ minutes }} min</option>
+                  <option value="{{ minutes }}" {% if appt_duration_minutes == minutes %}selected{% endif %}>{{ minutes }} {{ tr(request, 'λεπτά', 'min') }}</option>
                 {% endfor %}
               </select>
             </div>
@@ -218,26 +218,26 @@
       <div class="session-card__head">
         <div>
           <div class="eyebrow">{{ tr(request, 'Αρχεία', 'Files') }}</div>
-          <div class="section-heading">Documents</div>
-          <p class="section-copy">Upload supporting files without leaving the session workflow.</p>
+          <div class="section-heading">{{ tr(request, "Έγγραφα", "Documents") }}</div>
+          <p class="section-copy">{{ tr(request, "Ανέβασε υποστηρικτικά αρχεία χωρίς να φύγεις από τη ροή της συνεδρίας.", "Upload supporting files without leaving the session workflow.") }}</p>
         </div>
       </div>
       <div class="session-card__body">
         <form method="post" action="{{ rp }}/children/{{ appt.child_id }}/upload" enctype="multipart/form-data" class="stack">
           <input type="file" name="file" class="block w-full text-sm" required />
-          <button class="btn btn-outline" type="submit">Upload document</button>
+          <button class="btn btn-outline" type="submit">{{ tr(request, "Μεταφόρτωση εγγράφου", "Upload document") }}</button>
         </form>
 
         <div class="session-doc-list mt-4">
           {% for u in uploads %}
             <div class="docrow">
               <a class="link truncate" href="{{ rp }}/files/{{ u.id }}">{{ u.original_name }}</a>
-              <form method="post" action="{{ rp }}/attachments/{{ u.id }}/delete" onsubmit="return confirm('Delete this file?');">
-                <button class="btn btn-danger btn-sm" type="submit">Delete</button>
+              <form method="post" action="{{ rp }}/attachments/{{ u.id }}/delete" onsubmit="return confirm('{{ tr(request, 'Να διαγραφεί αυτό το αρχείο;', 'Delete this file?') }}');">
+                <button class="btn btn-danger btn-sm" type="submit">{{ tr(request, "Διαγραφή", "Delete") }}</button>
               </form>
             </div>
           {% else %}
-            <div class="empty-state">No uploaded files yet.</div>
+            <div class="empty-state">{{ tr(request, "Δεν υπάρχουν αρχεία ακόμη.", "No uploaded files yet.") }}</div>
           {% endfor %}
         </div>
       </div>

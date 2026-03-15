@@ -22,11 +22,11 @@
               {% endif %}
               {% if m and m.last_attendance %}
                 {% if m.last_attendance in ["ATTENDED"] %}
-                  <span class="pill p-green">✅ {{ m.last_attendance }}</span>
+                  <span class="pill p-green">✅ {{ tr(request, "Παρουσία", "Attended") }}</span>
                 {% elif m.last_attendance in ["MISSED","CANCELLED"] %}
-                  <span class="pill p-red">⚠ {{ m.last_attendance }}</span>
+                  <span class="pill p-red">⚠ {{ tr(request, "Απουσία / ακύρωση", "Missed / cancelled") }}</span>
                 {% else %}
-                  <span class="pill p-gray">ℹ {{ m.last_attendance }}</span>
+                  <span class="pill p-gray">ℹ {{ m.last_attendance|replace("_", " ")|title }}</span>
                 {% endif %}
               {% endif %}
               {% if m and m.unpaid_count and m.unpaid_count > 0 %}
@@ -83,19 +83,19 @@
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div>
           <label class="label">{{ tr(request, 'Όνομα γονέα/κηδεμόνα 1', 'Parent/Guardian 1 name') }}</label>
-          <input name="parent1_name" class="input" placeholder="e.g., Maria Papadopoulou" />
+          <input name="parent1_name" class="input" placeholder="π.χ. Μαρία Παπαδοπούλου" />
         </div>
         <div>
           <label class="label">{{ tr(request, 'Τηλέφωνο γονέα/κηδεμόνα 1', 'Parent/Guardian 1 phone') }}</label>
-          <input name="parent1_phone" class="input" placeholder="e.g., +30 69..." />
+          <input name="parent1_phone" class="input" placeholder="π.χ. +30 69..." />
         </div>
         <div>
           <label class="label">{{ tr(request, 'Όνομα γονέα/κηδεμόνα 2', 'Parent/Guardian 2 name') }}</label>
-          <input name="parent2_name" class="input" placeholder="optional" />
+          <input name="parent2_name" class="input" placeholder="προαιρετικό" />
         </div>
         <div>
           <label class="label">{{ tr(request, 'Τηλέφωνο γονέα/κηδεμόνα 2', 'Parent/Guardian 2 phone') }}</label>
-          <input name="parent2_phone" class="input" placeholder="optional" />
+          <input name="parent2_phone" class="input" placeholder="προαιρετικό" />
         </div>
       </div>
       <button class="btn w-full" type="submit">{{ tr(request, 'Δημιουργία', 'Create') }}</button>
